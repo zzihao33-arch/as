@@ -242,7 +242,7 @@ export default function App() {
     const pdfFile = pdfKey ? pdfFiles[pdfKey] : null;
 
     if (!pdfFile) {
-      addLog(scannedValue, finalExchangeNumber, '未找到对应的 PDF 文件', 'error', 'print');
+      addLog(scannedValue, finalExchangeNumber ?? '-', '未找到对应的 PDF 文件', 'error', 'print');
       return;
     }
 
