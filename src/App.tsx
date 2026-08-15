@@ -322,34 +322,34 @@ export default function App() {
   }, [lastPrintedCode]);
 
   return (
-    <div onClick={handleContainerClick} className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-900">
+    <div onClick={handleContainerClick} className="min-h-screen bg-dark-bg p-4 md:p-8 font-sans text-text-primary">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Duplicate Scan Modal */}
         {duplicateInfo?.show && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-              <div className="p-6 border-b border-slate-100">
-                <h2 className="text-xl font-bold flex items-center gap-2">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/50 backdrop-blur-sm">
+            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-md rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
+              <div className="p-6 border-b border-white/10">
+                <h2 className="text-xl font-bold flex items-center gap-2 text-text-primary">
                   <AlertCircle className="w-6 h-6 text-amber-500" />
                   重复扫描警告
                 </h2>
               </div>
               <div className="p-8 space-y-6">
-                <p className="text-slate-600">
-                  单号 <span className="font-bold text-slate-800">{duplicateInfo.code}</span> 在最近5分钟内已被打印。
+                <p className="text-text-secondary">
+                  单号 <span className="font-bold text-text-primary">{duplicateInfo.code}</span> 在最近5分钟内已被打印。
                   <br />
                   您确定要强制重复打印吗？
                 </p>
                 <div className="grid grid-cols-2 gap-4 pt-4">
                   <button
                     onClick={() => setDuplicateInfo(null)}
-                    className="w-full bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-3 rounded-xl transition-all active:scale-[0.98]"
+                    className="w-full bg-white/10 hover:bg-white/20 text-text-primary font-bold py-3 rounded-xl transition-all active:scale-[0.98]"
                   >
                     取消
                   </button>
                   <button
                     onClick={() => forcePrint(duplicateInfo.code)}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-amber-200 active:scale-[0.98]"
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-amber-500/20 active:scale-[0.98]"
                   >
                     强制打印
                   </button>
@@ -361,67 +361,61 @@ export default function App() {
 
         {/* Header */}
         {/* Header */}
-        <header className="flex items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <header className="flex items-center justify-between bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10">
           <div className="flex items-center gap-4">
-            <div className="bg-blue-600 p-3 rounded-xl">
-              <Printer className="text-white w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">CM官方换单系统</h1>
-              <p className="text-slate-500 text-sm">导入数据 {'->'} 扫码 {'->'} 自动匹配并打印</p>
-            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-brand-green">CM-HUB</h1>
           </div>
           
           <div className="flex items-center gap-8">
-            <div className="flex gap-6 border-r pr-8 border-slate-100">
+            <div className="flex gap-6 border-r pr-8 border-white/10">
               <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">{stats.excelCount}</div>
-                <div className="text-xs text-slate-500 uppercase font-semibold">Excel 条目</div>
+                <div className="text-2xl font-bold text-text-primary">{stats.excelCount}</div>
+                <div className="text-xs text-text-secondary uppercase font-semibold">Excel 条目</div>
               </div>
-              <div className="text-center border-x px-6 border-slate-100">
-                <div className="text-2xl font-bold text-indigo-600">{stats.pdfCount}</div>
-                <div className="text-xs text-slate-500 uppercase font-semibold">PDF 文件</div>
+              <div className="text-center border-x px-6 border-white/10">
+                <div className="text-2xl font-bold text-text-primary">{stats.pdfCount}</div>
+                <div className="text-xs text-text-secondary uppercase font-semibold">PDF 文件</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{stats.printedCount}</div>
-                <div className="text-xs text-slate-500 uppercase font-semibold">已打印</div>
+                <div className="text-2xl font-bold text-text-primary">{stats.printedCount}</div>
+                <div className="text-xs text-text-secondary uppercase font-semibold">已打印</div>
               </div>
             </div>
             
             <button 
               onClick={() => setShowSettings(true)}
-              className="flex flex-col items-center gap-1 group transition-colors hover:text-blue-600"
+              className="flex flex-col items-center gap-1 group transition-colors hover:text-brand-green"
             >
-              <div className="p-2 bg-slate-50 rounded-lg group-hover:bg-blue-50 transition-colors">
-                <Settings className="w-6 h-6 text-slate-500 group-hover:text-blue-600" />
+              <div className="p-2 bg-white/5 rounded-lg group-hover:bg-white/10 transition-colors">
+                <Settings className="w-6 h-6 text-text-secondary group-hover:text-brand-green" />
               </div>
-              <span className="text-xs font-semibold text-slate-500 group-hover:text-blue-600">打印机设置</span>
+              <span className="text-xs font-semibold text-text-secondary group-hover:text-brand-green">打印机设置</span>
             </button>
           </div>
         </header>
 
         {/* Printer Settings Modal */}
         {showSettings && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-blue-600" />
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/50 backdrop-blur-sm">
+            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-md rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
+              <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                <h2 className="text-xl font-bold flex items-center gap-2 text-text-primary">
+                  <Settings className="w-5 h-5 text-brand-green" />
                   打印机设置
                 </h2>
-                <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-slate-600">
+                <button onClick={() => setShowSettings(false)} className="text-text-secondary hover:text-white">
                   <X className="w-6 h-6" />
                 </button>
               </div>
               
               <div className="p-8 space-y-6">
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold text-slate-700 flex items-center justify-between">
+                  <label className="text-sm font-semibold text-text-primary flex items-center justify-between">
                     选择打印机
                     <button 
                       onClick={fetchPrinters} 
                       disabled={isPrinterLoading}
-                      className="text-blue-600 hover:text-blue-700 flex items-center gap-1 text-xs"
+                      className="text-brand-green hover:text-brand-green/80 flex items-center gap-1 text-xs"
                     >
                       <RefreshCw className={cn("w-3 h-3", isPrinterLoading && "animate-spin")} />
                       刷新列表
@@ -430,20 +424,20 @@ export default function App() {
                   <select
                     value={selectedPrinter}
                     onChange={(e) => setSelectedPrinter(e.target.value)}
-                    className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 transition-all appearance-none cursor-pointer"
+                    className="w-full p-3 bg-white/5 border-2 border-white/10 rounded-xl outline-none focus:border-brand-green transition-all appearance-none cursor-pointer"
                   >
                     <option value="">系统默认打印机</option>
                     {printers.map(printer => (
                       <option key={printer} value={printer}>{printer}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-400">当前绑定：{selectedPrinter || '未选择 (使用默认)'}</p>
+                  <p className="text-xs text-text-secondary/70">当前绑定：{selectedPrinter || '未选择 (使用默认)'}</p>
                 </div>
 
                 <div className="pt-4">
                   <button
                     onClick={savePrinter}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-200 active:scale-[0.98]"
+                    className="w-full bg-brand-green hover:bg-brand-green/80 text-dark-bg font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-brand-green/20 active:scale-[0.98]"
                   >
                     <Save className="w-5 h-5" />
                     保存打印机设置
@@ -458,24 +452,24 @@ export default function App() {
           {/* Left: Controls */}
           <div className="md:col-span-1 space-y-6">
             {/* Excel Import */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10 space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-slate-700">
-                  <FileSpreadsheet className="w-5 h-5 text-green-600" />
+                <div className="flex items-center gap-2 font-semibold text-text-primary">
+                  <FileSpreadsheet className="w-5 h-5 text-brand-green" />
                   <h2>数据导入 (Excel)</h2>
                 </div>
                 {excelFile && (
                   <button 
                     onClick={() => document.getElementById('excel-input')?.click()}
-                    className="text-xs font-semibold text-blue-600 hover:underline"
+                    className="text-xs font-semibold text-brand-green hover:underline"
                   >重新上传</button>
                 )}
               </div>
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
+              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer hover:bg-white/5 transition-colors">
                 {!excelFile ? (
                   <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-8 h-8 text-slate-400 mb-2" />
-                    <p className="text-sm text-slate-500">点击或拖拽上传 Excel</p>
+                    <Upload className="w-8 h-8 text-text-secondary mb-2" />
+                    <p className="text-sm text-text-secondary">点击或拖拽上传 Excel</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center text-center p-2">
@@ -483,10 +477,10 @@ export default function App() {
                       <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" /> : 
                       <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
                     }
-                    <p className="text-sm font-semibold text-slate-700 break-all">{excelFile.name}</p>
+                    <p className="text-sm font-semibold text-text-primary break-all">{excelFile.name}</p>
                     <p className={cn(
                       "text-xs mt-1",
-                      excelFile.status === 'success' ? 'text-slate-500' : 'text-red-600'
+                      excelFile.status === 'success' ? 'text-text-secondary' : 'text-red-500'
                     )}>{excelFile.message}</p>
                   </div>
                 )}
@@ -495,24 +489,24 @@ export default function App() {
             </div>
 
             {/* PDF Import */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10 space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-slate-700">
-                  <FileText className="w-5 h-5 text-red-500" />
+                <div className="flex items-center gap-2 font-semibold text-text-primary">
+                  <FileText className="w-5 h-5 text-brand-green" />
                   <h2>面单库 (PDF 文件夹)</h2>
                 </div>
                 {pdfFolder && (
                    <button 
                     onClick={() => document.getElementById('pdf-input')?.click()}
-                    className="text-xs font-semibold text-blue-600 hover:underline"
+                    className="text-xs font-semibold text-brand-green hover:underline"
                   >重新选择</button>
                 )}
               </div>
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors">
+              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer hover:bg-white/5 transition-colors">
                 {!pdfFolder ? (
                   <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-8 h-8 text-slate-400 mb-2" />
-                    <p className="text-sm text-slate-500 text-center px-2">选择包含 PDF 的文件夹</p>
+                    <Upload className="w-8 h-8 text-text-secondary mb-2" />
+                    <p className="text-sm text-text-secondary text-center px-2">选择包含 PDF 的文件夹</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center text-center p-2">
@@ -520,10 +514,10 @@ export default function App() {
                       <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" /> : 
                       <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
                     }
-                    <p className="text-sm font-semibold text-slate-700 break-all">{pdfFolder.name}</p>
+                    <p className="text-sm font-semibold text-text-primary break-all">{pdfFolder.name}</p>
                     <p className={cn(
                       "text-xs mt-1",
-                      pdfFolder.status === 'success' ? 'text-slate-500' : 'text-red-600'
+                      pdfFolder.status === 'success' ? 'text-text-secondary' : 'text-red-500'
                     )}>{pdfFolder.message}</p>
                   </div>
                 )}
@@ -533,14 +527,14 @@ export default function App() {
             </div>
 
             {/* Status Info */}
-            <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100">
-              <h3 className="text-blue-800 font-semibold mb-2 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
+            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10">
+              <h3 className="text-text-primary font-semibold mb-2 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-brand-green" />
                 使用说明
               </h3>
-              <ul className="text-sm text-blue-700 space-y-2 list-disc list-inside">
-                <li>文件名需包含 Excel 中的<b>转单号</b> (支持模糊匹配)</li>
-                <li>外置扫码枪请设置为<b>回车结束</b>模式</li>
+              <ul className="text-sm text-text-secondary space-y-2 list-disc list-inside">
+                <li>文件名需包含 Excel 中的<b className="text-text-primary">转单号</b> (支持模糊匹配)</li>
+                <li>外置扫码枪请设置为<b className="text-text-primary">回车结束</b>模式</li>
                 <li>建议使用 Chrome 浏览器以获得最佳打印体验</li>
               </ul>
             </div>
@@ -549,14 +543,14 @@ export default function App() {
           {/* Right: Scanner & Logs */}
           <div className="md:col-span-2 space-y-6">
             {/* Scanner Input */}
-            <div className="bg-white p-8 rounded-2xl shadow-sm border-2 border-blue-500 space-y-4">
+            <div className="bg-white/5 backdrop-blur-xl p-8 rounded-4xl border-2 border-brand-green/50 space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-slate-700">
-                  <Scan className="w-6 h-6 text-blue-600" />
+                <div className="flex items-center gap-2 font-semibold text-text-primary">
+                  <Scan className="w-6 h-6 text-brand-green" />
                   <h2 className="text-xl">扫码区域</h2>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full animate-pulse">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
+                <div className="flex items-center gap-2 text-xs font-medium text-brand-green bg-brand-green/10 px-3 py-1 rounded-full animate-pulse">
+                  <div className="w-2 h-2 bg-brand-green rounded-full"></div>
                   已连接扫码枪
                 </div>
               </div>
@@ -567,20 +561,20 @@ export default function App() {
                   value={scanInput}
                   onChange={(e) => setScanInput(e.target.value)}
                   placeholder="等待扫码..."
-                  className="w-full text-3xl font-mono text-center py-6 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all placeholder:text-slate-300"
+                  className="w-full text-3xl font-mono text-center py-6 bg-transparent border-2 border-white/20 rounded-xl focus:border-brand-green focus:ring-4 focus:ring-brand-green/20 outline-none transition-all placeholder:text-text-secondary/50"
                   autoFocus
                 />
             </div>
 
             {/* Logs */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div className="bg-white/5 backdrop-blur-xl rounded-4xl border border-white/10 overflow-hidden">
+              <div className="p-4 border-b border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2 font-semibold text-slate-700 mr-2">
-                    <History className="w-5 h-5 text-slate-500" />
+                  <div className="flex items-center gap-2 font-semibold text-text-primary mr-2">
+                    <History className="w-5 h-5 text-text-secondary" />
                     <h2>操作日志</h2>
                   </div>
-                  <div className="flex bg-slate-200/50 p-1 rounded-lg gap-1">
+                  <div className="flex bg-white/5 p-1 rounded-lg gap-1">
                     {[
                       { id: 'print', label: '打印记录', icon: Printer },
                       { id: 'import', label: '导入记录', icon: FileSpreadsheet },
@@ -592,8 +586,8 @@ export default function App() {
                         className={cn(
                           "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all",
                           activeTab === tab.id 
-                            ? "bg-white text-blue-600 shadow-sm" 
-                            : "text-slate-500 hover:text-slate-700"
+                            ? "bg-brand-green/20 text-brand-green shadow-sm" 
+                            : "text-text-secondary hover:text-text-primary"
                         )}
                       >
                         <tab.icon className="w-3.5 h-3.5" />
@@ -604,14 +598,14 @@ export default function App() {
                 </div>
                 <button 
                   onClick={() => setLogs(logs.filter(l => l.type !== activeTab))}
-                  className="text-xs text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                  className="text-xs text-text-secondary hover:text-red-500 flex items-center gap-1 transition-colors"
                 >
                   <X className="w-3 h-3" /> 清空当前页
                 </button>
               </div>
               <div ref={logContainerRef} className="max-h-[400px] overflow-y-auto">
                 <table className="w-full text-left text-sm">
-                  <thead className="sticky top-0 bg-white border-b border-slate-100 text-slate-500 font-medium">
+                  <thead className="sticky top-0 bg-dark-bg/80 backdrop-blur-xl border-b border-white/10 text-text-secondary font-medium">
                     <tr>
                       <th className="px-4 py-3 w-12">序号</th>
                       <th className="px-6 py-3">时间</th>
@@ -620,13 +614,13 @@ export default function App() {
                       <th className="px-6 py-3 text-right">结果</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
+                  <tbody className="divide-y divide-white/5">
                     {(() => {
                       const filteredLogs = logs.filter(l => l.type === activeTab);
                       if (filteredLogs.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center text-slate-400 italic">
+                            <td colSpan={5} className="px-6 py-12 text-center text-text-secondary/50 italic">
                               当前分类暂无记录...
                             </td>
                           </tr>
@@ -636,26 +630,26 @@ export default function App() {
                         const isLastPrinted = log.type === 'print' && log.firstLeg === lastPrintedCode;
                         return (
                           <tr key={i} className={cn(
-                            "hover:bg-slate-50 transition-all duration-300",
-                            isLastPrinted && "bg-yellow-100 scale-[1.02]"
+                            "hover:bg-white/5 transition-all duration-300",
+                            isLastPrinted && "bg-yellow-500/20 scale-[1.02]"
                           )}>
-                            <td className="px-4 py-4 text-center text-slate-400 font-medium">{filteredLogs.length - i}</td>
-                            <td className="px-6 py-4 text-slate-500 font-mono whitespace-nowrap">{log.time}</td>
+                            <td className="px-4 py-4 text-center text-text-secondary font-medium">{filteredLogs.length - i}</td>
+                            <td className="px-6 py-4 text-text-secondary font-mono whitespace-nowrap">{log.time}</td>
                             <td className={cn("px-6 py-4 font-medium", isLastPrinted && "font-extrabold")}>
                               {log.type === 'print' ? (
                                 <div className="flex flex-col">
-                                  <span className={cn("text-slate-900", isLastPrinted && "text-lg")}>{log.firstLeg}</span>
-                                  <span className="text-xs text-slate-400 font-normal">快递单号: {log.exchange}</span>
+                                  <span className={cn("text-text-primary", isLastPrinted && "text-lg")}>{log.firstLeg}</span>
+                                  <span className="text-xs text-text-secondary/80 font-normal">快递单号: {log.exchange}</span>
                                 </div>
                               ) : log.firstLeg}
                             </td>
-                            <td className="px-6 py-4 text-slate-600">
+                            <td className="px-6 py-4 text-text-secondary">
                               {log.message}
                             </td>
                             <td className="px-6 py-4 text-right">
                               <span className={cn(
                                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
-                                log.status === 'success' ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+                                log.status === 'success' ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
                               )}>
                                 {log.status === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
                                 {log.status === 'success' ? '成功' : '失败'}

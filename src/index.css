@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply antialiased text-slate-900;
+    @apply antialiased bg-dark-bg text-text-primary;
   }
 }
 
@@ -16,5 +16,9 @@
   @apply bg-transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-200 rounded-full hover:bg-slate-300 transition-colors;
+  background-color: #374151; /* gray-700 */
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background-color: #4b5563; /* gray-600 */
 }
