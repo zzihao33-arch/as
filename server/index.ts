@@ -43,7 +43,7 @@ app.get('/api/printers', async (req, res) => {
     if (process.platform === 'win32') {
       try {
         console.log('Trying PowerShell fallback first for Windows...');
-        const { stdout } = await execAsync('powershell "Get-Printer | Select-Object -ExpandProperty Name"');
+        const { stdout } = await execAsync('powershell -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object -ExpandProperty Name"');
         printerNames = stdout.split(/\r?\n/).map(name => name.trim()).filter(name => name !== '');
         console.log('PowerShell found:', printerNames);
       } catch (psError) {
@@ -123,5 +123,5 @@ app.listen(port, '0.0.0.0', () => {
   console.log(`Print server running at http://localhost:${port}`);
 });
 
-// Keep process alive
-process.stdin.resume();
+// Keep the process alive indefinitely, more robust than stdin.resume()
+new Promise(() => {});
