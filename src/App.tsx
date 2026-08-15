@@ -132,17 +132,22 @@ export default function App() {
         if (!worksheet) throw new Error('文件中没有找到工作表。');
 
         const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
+        console.log('Raw data from Excel:', jsonData);
 
         const newMapping: Record<string, string> = {};
         let count = 0;
-        jsonData.forEach((row) => {
-          const firstLeg = String(row['转单号'] || Object.values(row)[0] || '').trim();
-          const exchange = String(row['内单号'] || Object.values(row)[1] || '').trim();
+        jsonData.forEach((row, index) => {
+          // Final robust implementation: Only rely on column names, ignore column order.
+          const firstLeg = String(row['头程单号'] || '').trim();
+          const exchange = String(row['快递单号'] || '').trim();
+          console.log(`Row ${index + 1}: firstLeg='${firstLeg}', exchange='${exchange}'`);
           if (firstLeg && exchange) {
             newMapping[firstLeg] = exchange;
             count++;
           }
         });
+
+        console.log('Constructed mapping:', newMapping);
 
         if (count === 0) {
           throw new Error('无法从文件中解析出有效的单号映射关系。');
@@ -212,23 +217,37 @@ export default function App() {
         return;
       }
     }
-    // 1. Try to find exchange number from mapping (case-insensitive, support fuzzy match if needed, but usually Excel is exact)
-    const mappingKey = Object.keys(mapping).find(k => k.toLowerCase() === scannedValue.toLowerCase());
-    const exchangeNumber = mappingKey ? mapping[mappingKey] : null;
-    
+    // 1. Try to find exchange number from mapping
+    const cleanedScannedValue = scannedValue.trim().toLowerCase();
+    const mappingKey = Object.keys(mapping).find(k => k.trim().toLowerCase() === cleanedScannedValue);
+    let finalExchangeNumber = mappingKey ? mapping[mappingKey] : null;
+
     // According to user: "文件名为头程单号" (Filename is First Leg Number)
     // Priority: 1. Scanned value is start of filename (prefix match) 2. Scanned value is anywhere in filename (fuzzy match)
     const allPdfKeys = Object.keys(pdfFiles);
-    const prefixMatch = allPdfKeys.find(k => k.toLowerCase().startsWith(scannedValue.toLowerCase()));
-    const fuzzyMatch = allPdfKeys.find(k => k.toLowerCase().includes(scannedValue.toLowerCase()));
+    const prefixMatch = allPdfKeys.find(k => k.toLowerCase().startsWith(cleanedScannedValue));
+    const fuzzyMatch = allPdfKeys.find(k => k.toLowerCase().includes(cleanedScannedValue));
 
     const pdfKey = prefixMatch || fuzzyMatch; // Prioritize prefix match
+    
+    // 2. If we found a PDF but still don't have an exchange number, try to find it via the PDF key
+    if (pdfKey && !finalExchangeNumber) {
+        // This is a fallback: maybe the PDF is named with the exchange number?
+        const found = Object.entries(mapping).find(([_, exchangeVal]) => pdfKey.includes(exchangeVal));
+        if (found) {
+            finalExchangeNumber = found[1]; // The exchange number
+        }
+    }
+
     const pdfFile = pdfKey ? pdfFiles[pdfKey] : null;
 
     if (!pdfFile) {
-      addLog(scannedValue, exchangeNumber || '未知', '未找到对应的 PDF 文件', 'error', 'print');
+      addLog(scannedValue, finalExchangeNumber, '未找到对应的 PDF 文件', 'error', 'print');
       return;
     }
+
+    // At this point, if we still don't have it, set to '-'
+    finalExchangeNumber = finalExchangeNumber || '-';
 
     // Convert file to Base64 for backend printing
     const reader = new FileReader();
@@ -248,7 +267,7 @@ export default function App() {
 
         const result = await response.json();
         if (result.success) {
-          addLog(scannedValue, exchangeNumber || '-', '已发送至打印机', 'success', 'print');
+          addLog(scannedValue, finalExchangeNumber, '已发送至打印机', 'success', 'print');
           setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
           // Add to recently printed for deduplication
           const newTimestamp = Date.now();
@@ -256,10 +275,10 @@ export default function App() {
             [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
           );
         } else {
-          addLog(scannedValue, exchangeNumber || '-', `打印失败: ${result.message}`, 'error', 'print');
+          addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
         }
       } catch (error) {
-        addLog(scannedValue, exchangeNumber || '-', '打印服务未响应，请检查后端', 'error', 'print');
+        addLog(scannedValue, finalExchangeNumber, '打印服务未响应，请检查后端', 'error', 'print');
       }
     };
     reader.readAsDataURL(pdfFile);
@@ -626,7 +645,7 @@ export default function App() {
                               {log.type === 'print' ? (
                                 <div className="flex flex-col">
                                   <span className={cn("text-slate-900", isLastPrinted && "text-lg")}>{log.firstLeg}</span>
-                                  <span className="text-xs text-slate-400 font-normal">内单: {log.exchange}</span>
+                                  <span className="text-xs text-slate-400 font-normal">快递单号: {log.exchange}</span>
                                 </div>
                               ) : log.firstLeg}
                             </td>
