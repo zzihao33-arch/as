@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import printJS from 'print-js';
-import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, History, X, Settings, RefreshCw, Save } from 'lucide-react';
+import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -48,6 +50,16 @@ interface FileInfo {
   message?: string;
 }
 
+type SettingsPanel = 'printer' | 'audio';
+type ScanResult = 'success' | 'failure';
+type AudioFocusState = 'idle' | 'playing' | 'failed';
+
+interface ActiveAudio {
+  stop: () => void;
+  startedAt: number;
+  timerId: number;
+}
+
 export default function App() {
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pdfFiles, setPdfFiles] = useState<Record<string, File>>({});
@@ -58,15 +70,44 @@ export default function App() {
   const [excelFile, setExcelFile] = useState<FileInfo | null>(null);
   const [pdfFolder, setPdfFolder] = useState<FileInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('printer');
   const [printers, setPrinters] = useState<string[]>([]);
   const [selectedPrinter, setSelectedPrinter] = useState<string>(localStorage.getItem('selectedPrinter') || '');
+  const [isPrinterDropdownOpen, setIsPrinterDropdownOpen] = useState(false);
   const [isPrinterLoading, setIsPrinterLoading] = useState(false);
+  const [excludedPrinterCount, setExcludedPrinterCount] = useState(0);
+  const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
+  const [audioVolume, setAudioVolume] = useState(() => {
+    if (localStorage.getItem('audioFeedbackSettingsVersion') !== AUDIO_SETTINGS_VERSION) {
+      return 100;
+    }
+    const savedVolumeValue = localStorage.getItem('audioFeedbackVolume');
+    if (savedVolumeValue === null) return 100;
+    const savedVolume = Number(savedVolumeValue);
+    return Number.isFinite(savedVolume) ? Math.min(100, Math.max(0, savedVolume)) : 100;
+  });
+  const [audioFocusState, setAudioFocusState] = useState<AudioFocusState>('idle');
+  const [audioInterruptCount, setAudioInterruptCount] = useState(0);
+  const [lastAudioDuration, setLastAudioDuration] = useState(0);
+  const [lastAudioResult, setLastAudioResult] = useState<ScanResult | null>(null);
   const [recentlyPrinted, setRecentlyPrinted] = useState<RecentlyPrinted[]>([]);
   const [duplicateInfo, setDuplicateInfo] = useState<{ code: string; show: boolean } | null>(null);
   const [lastPrintedCode, setLastPrintedCode] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const printerDropdownRef = useRef<HTMLDivElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const activeAudioRef = useRef<ActiveAudio | null>(null);
+  const audioFailureLoggedRef = useRef(false);
+  const recentAudioRequestsRef = useRef<number[]>([]);
+  const previewLongPressTimerRef = useRef<number | null>(null);
+  const previewLongPressPlayedRef = useRef(false);
   const debouncedScanInput = useDebounce(scanInput, 50);
+  const printerOptions = [
+    { value: '', label: '自动选择可直打打印机', hint: '自动跳过 PDF24 等虚拟设备' },
+    ...printers.map(printer => ({ value: printer, label: printer, hint: '本机已检测到的打印设备' }))
+  ];
+  const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
 
   // Process scan after debounce
   useEffect(() => {
@@ -78,10 +119,59 @@ export default function App() {
 
   // Load printers
   useEffect(() => {
-    if (showSettings) {
+    if (showSettings && settingsPanel === 'printer') {
       fetchPrinters();
+    } else {
+      setIsPrinterDropdownOpen(false);
     }
-  }, [showSettings]);
+  }, [showSettings, settingsPanel]);
+
+  useEffect(() => {
+    localStorage.setItem('audioFeedbackEnabled', String(audioEnabled));
+  }, [audioEnabled]);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (!audioEnabled) return;
+      void getAudioContext().then(context => {
+        if (context.state === 'suspended') {
+          return context.resume();
+        }
+      }).catch(() => undefined);
+    };
+
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, [audioEnabled]);
+
+  useEffect(() => {
+    if (!isPrinterDropdownOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!printerDropdownRef.current?.contains(event.target as Node)) {
+        setIsPrinterDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsPrinterDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPrinterDropdownOpen]);
 
   const fetchPrinters = async () => {
     setIsPrinterLoading(true);
@@ -89,7 +179,16 @@ export default function App() {
       const res = await fetch('http://localhost:3001/api/printers');
       const data = await res.json();
       if (data.success) {
-        setPrinters(data.printers);
+        const directPrinters = Array.isArray(data.printers) ? data.printers : [];
+        const preferredPrinter = typeof data.defaultPrinter === 'string' ? data.defaultPrinter : '';
+        setPrinters(directPrinters);
+        setExcludedPrinterCount(Array.isArray(data.excludedPrinters) ? data.excludedPrinters.length : 0);
+        setSelectedPrinter(currentPrinter => {
+          if (currentPrinter && directPrinters.includes(currentPrinter)) {
+            return currentPrinter;
+          }
+          return preferredPrinter || '';
+        });
       } else {
         addLog('System', '-', `获取打印机列表失败: ${data.message || '未知错误'}`, 'error', 'system');
       }
@@ -103,7 +202,191 @@ export default function App() {
   const savePrinter = () => {
     localStorage.setItem('selectedPrinter', selectedPrinter);
     setShowSettings(false);
-    addLog('System', '-', `已绑定打印机: ${selectedPrinter || '系统默认'}`, 'success', 'system');
+    addLog('System', '-', `已绑定打印机: ${selectedPrinter || '自动选择可直打打印机'}`, 'success', 'system');
+  };
+
+  const openSettings = (panel: SettingsPanel = 'printer') => {
+    setSettingsPanel(panel);
+    setShowSettings(true);
+  };
+
+  const getAudioContext = async () => {
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error('当前浏览器不支持音效播放');
+    }
+
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContextClass();
+    }
+
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+
+    return audioContextRef.current;
+  };
+
+  const stopActiveAudio = () => {
+    if (!activeAudioRef.current) return false;
+
+    const activeAudio = activeAudioRef.current;
+    window.clearTimeout(activeAudio.timerId);
+    activeAudio.stop();
+    setLastAudioDuration(Math.round(performance.now() - activeAudio.startedAt));
+    activeAudioRef.current = null;
+    return true;
+  };
+
+  const recordAudioPlaybackFailure = (message: string) => {
+    setAudioFocusState('failed');
+    if (audioFailureLoggedRef.current) return;
+    audioFailureLoggedRef.current = true;
+    addLog('System', '音效', `音效播放失败，已静默处理: ${message}`, 'error', 'system');
+  };
+
+  const playScanFeedback = async (scanResult: ScanResult, options: { force?: boolean } = {}) => {
+    if (!audioEnabled && !options.force) return;
+
+    const requestTime = performance.now();
+    recentAudioRequestsRef.current = [...recentAudioRequestsRef.current, requestTime].filter(time => requestTime - time <= 1000);
+
+    if (!options.force && scanResult === 'success' && recentAudioRequestsRef.current.length > 10) {
+      return;
+    }
+
+    try {
+      const didInterrupt = stopActiveAudio();
+      if (didInterrupt) {
+        setAudioInterruptCount(count => count + 1);
+      }
+
+      const context = await getAudioContext();
+      const startTime = context.currentTime;
+      const duration = scanResult === 'success' ? 0.18 : 0.68;
+      const volume = Math.max(0, Math.min(1, audioVolume / 100));
+      const masterGain = context.createGain();
+      const primaryOscillator = context.createOscillator();
+      const secondaryOscillator = scanResult === 'failure' ? context.createOscillator() : null;
+
+      masterGain.connect(context.destination);
+      masterGain.gain.setValueAtTime(0.0001, startTime);
+      masterGain.gain.linearRampToValueAtTime((scanResult === 'success' ? 0.22 : 0.18) * volume, startTime + 0.015);
+      masterGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+      primaryOscillator.connect(masterGain);
+      primaryOscillator.type = scanResult === 'success' ? 'triangle' : 'sawtooth';
+
+      if (scanResult === 'success') {
+        primaryOscillator.frequency.setValueAtTime(1120, startTime);
+        primaryOscillator.frequency.exponentialRampToValueAtTime(1560, startTime + 0.08);
+        primaryOscillator.frequency.setValueAtTime(1320, startTime + 0.12);
+      } else {
+        primaryOscillator.frequency.setValueAtTime(210, startTime);
+        primaryOscillator.frequency.linearRampToValueAtTime(150, startTime + duration);
+
+        if (secondaryOscillator) {
+          secondaryOscillator.connect(masterGain);
+          secondaryOscillator.type = 'sine';
+          secondaryOscillator.frequency.setValueAtTime(105, startTime);
+          secondaryOscillator.frequency.linearRampToValueAtTime(95, startTime + duration);
+        }
+      }
+
+      primaryOscillator.start(startTime);
+      primaryOscillator.stop(startTime + duration + 0.02);
+      secondaryOscillator?.start(startTime);
+      secondaryOscillator?.stop(startTime + duration + 0.02);
+
+      const cleanup = () => {
+        try {
+          primaryOscillator.disconnect();
+          secondaryOscillator?.disconnect();
+          masterGain.disconnect();
+        } catch (error) {
+          // Audio nodes may already be disconnected after rapid interruption.
+        }
+      };
+
+      const stop = () => {
+        const stopTime = context.currentTime;
+        try {
+          masterGain.gain.cancelScheduledValues(stopTime);
+          masterGain.gain.setTargetAtTime(0.0001, stopTime, 0.006);
+          primaryOscillator.stop(stopTime + 0.02);
+          secondaryOscillator?.stop(stopTime + 0.02);
+        } catch (error) {
+          // Oscillators can only be stopped once; rapid scans intentionally race here.
+        }
+        window.setTimeout(cleanup, 80);
+      };
+
+      const timerId = window.setTimeout(() => {
+        if (activeAudioRef.current?.stop === stop) {
+          activeAudioRef.current = null;
+          setAudioFocusState('idle');
+          setLastAudioDuration(Math.round(duration * 1000));
+        }
+        cleanup();
+      }, duration * 1000 + 90);
+
+      activeAudioRef.current = {
+        stop,
+        startedAt: requestTime,
+        timerId
+      };
+
+      setAudioFocusState('playing');
+      setLastAudioResult(scanResult);
+    } catch (error) {
+      recordAudioPlaybackFailure(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const toggleAudioEnabled = () => {
+    const nextEnabled = !audioEnabled;
+    if (!nextEnabled) {
+      stopActiveAudio();
+    }
+    setAudioEnabled(nextEnabled);
+    addLog('System', '音效设置', nextEnabled ? '音效反馈已开启' : '音效反馈已关闭', 'success', 'system');
+  };
+
+  const changeAudioVolume = (nextVolume: number) => {
+    const normalizedVolume = Math.min(100, Math.max(0, nextVolume));
+    setAudioVolume(normalizedVolume);
+    localStorage.setItem('audioFeedbackVolume', String(normalizedVolume));
+    localStorage.setItem('audioFeedbackSettingsVersion', AUDIO_SETTINGS_VERSION);
+  };
+
+  const startAudioPreviewPress = () => {
+    previewLongPressPlayedRef.current = false;
+    if (previewLongPressTimerRef.current) {
+      window.clearTimeout(previewLongPressTimerRef.current);
+    }
+
+    previewLongPressTimerRef.current = window.setTimeout(() => {
+      previewLongPressPlayedRef.current = true;
+      void playScanFeedback('failure', { force: true });
+    }, 450);
+  };
+
+  const finishAudioPreviewPress = () => {
+    if (previewLongPressTimerRef.current) {
+      window.clearTimeout(previewLongPressTimerRef.current);
+      previewLongPressTimerRef.current = null;
+    }
+
+    if (!previewLongPressPlayedRef.current) {
+      void playScanFeedback('success', { force: true });
+    }
+  };
+
+  const cancelAudioPreviewPress = () => {
+    if (previewLongPressTimerRef.current) {
+      window.clearTimeout(previewLongPressTimerRef.current);
+      previewLongPressTimerRef.current = null;
+    }
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -213,6 +496,7 @@ export default function App() {
 
       if (isDuplicate) {
         setDuplicateInfo({ code: scannedValue, show: true });
+        void playScanFeedback('failure');
         addLog(scannedValue, '-', '检测到重复扫描，已拦截', 'error', 'system');
         return;
       }
@@ -242,12 +526,14 @@ export default function App() {
     const pdfFile = pdfKey ? pdfFiles[pdfKey] : null;
 
     if (!pdfFile) {
+      void playScanFeedback('failure');
       addLog(scannedValue, finalExchangeNumber ?? '-', '未找到对应的 PDF 文件', 'error', 'print');
       return;
     }
 
     // At this point, if we still don't have it, set to '-'
     finalExchangeNumber = finalExchangeNumber || '-';
+    void playScanFeedback('success');
 
     // Convert file to Base64 for backend printing
     const reader = new FileReader();
@@ -267,7 +553,7 @@ export default function App() {
 
         const result = await response.json();
         if (result.success) {
-          addLog(scannedValue, finalExchangeNumber, '已发送至打印机', 'success', 'print');
+          addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print');
           setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
           // Add to recently printed for deduplication
           const newTimestamp = Date.now();
@@ -275,11 +561,17 @@ export default function App() {
             [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
           );
         } else {
+          void playScanFeedback('failure');
           addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
         }
       } catch (error) {
+        void playScanFeedback('failure');
         addLog(scannedValue, finalExchangeNumber, '打印服务未响应，请检查后端', 'error', 'print');
       }
+    };
+    reader.onerror = () => {
+      void playScanFeedback('failure');
+      addLog(scannedValue, finalExchangeNumber, '读取 PDF 文件失败', 'error', 'print');
     };
     reader.readAsDataURL(pdfFile);
   };
@@ -383,25 +675,25 @@ export default function App() {
             </div>
             
             <button 
-              onClick={() => setShowSettings(true)}
+              onClick={() => openSettings('printer')}
               className="flex flex-col items-center gap-1 group transition-colors hover:text-brand-green"
             >
               <div className="p-2 bg-white/5 rounded-lg group-hover:bg-white/10 transition-colors">
                 <Settings className="w-6 h-6 text-text-secondary group-hover:text-brand-green" />
               </div>
-              <span className="text-xs font-semibold text-text-secondary group-hover:text-brand-green">打印机设置</span>
+              <span className="text-xs font-semibold text-text-secondary group-hover:text-brand-green">系统设置</span>
             </button>
           </div>
         </header>
 
-        {/* Printer Settings Modal */}
+        {/* System Settings Modal */}
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/50 backdrop-blur-sm">
-            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-md rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
+            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-lg rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
               <div className="p-6 border-b border-white/10 flex items-center justify-between">
                 <h2 className="text-xl font-bold flex items-center gap-2 text-text-primary">
                   <Settings className="w-5 h-5 text-brand-green" />
-                  打印机设置
+                  系统设置
                 </h2>
                 <button onClick={() => setShowSettings(false)} className="text-text-secondary hover:text-white">
                   <X className="w-6 h-6" />
@@ -409,7 +701,30 @@ export default function App() {
               </div>
               
               <div className="p-8 space-y-6">
-                <div className="space-y-3">
+                <div className="flex bg-white/5 p-1 rounded-xl gap-1">
+                  {[
+                    { id: 'printer', label: '打印机', icon: Printer },
+                    { id: 'audio', label: '音效', icon: Volume2 }
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setSettingsPanel(tab.id as SettingsPanel)}
+                      className={cn(
+                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all",
+                        settingsPanel === tab.id
+                          ? "bg-brand-green/20 text-brand-green shadow-sm"
+                          : "text-text-secondary hover:text-text-primary hover:bg-white/5"
+                      )}
+                    >
+                      <tab.icon className="w-4 h-4" />
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {settingsPanel === 'printer' ? (
+                  <>
+                    <div className="space-y-3">
                   <label className="text-sm font-semibold text-text-primary flex items-center justify-between">
                     选择打印机
                     <button 
@@ -421,17 +736,91 @@ export default function App() {
                       刷新列表
                     </button>
                   </label>
-                  <select
-                    value={selectedPrinter}
-                    onChange={(e) => setSelectedPrinter(e.target.value)}
-                    className="w-full p-3 bg-white/5 border-2 border-white/10 rounded-xl outline-none focus:border-brand-green transition-all appearance-none cursor-pointer"
-                  >
-                    <option value="">系统默认打印机</option>
-                    {printers.map(printer => (
-                      <option key={printer} value={printer}>{printer}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-text-secondary/70">当前绑定：{selectedPrinter || '未选择 (使用默认)'}</p>
+                  <div className="relative" ref={printerDropdownRef}>
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={isPrinterDropdownOpen}
+                      onClick={() => setIsPrinterDropdownOpen(open => !open)}
+                      className={cn(
+                        "w-full min-h-[58px] px-4 py-3 rounded-xl border-2 text-left outline-none transition-all flex items-center justify-between gap-3",
+                        isPrinterDropdownOpen
+                          ? "bg-dark-bg/95 border-brand-green shadow-lg shadow-brand-green/20"
+                          : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20"
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-base font-semibold text-text-primary">{selectedPrinterLabel}</span>
+                        <span className="block truncate text-xs text-text-secondary/60">
+                          {selectedPrinter ? '已选择的打印设备' : '自动匹配真实打印机'}
+                        </span>
+                      </span>
+                      <ChevronDown className={cn("w-5 h-5 flex-shrink-0 text-brand-green transition-transform", isPrinterDropdownOpen && "rotate-180")} />
+                    </button>
+
+                    {isPrinterDropdownOpen && (
+                      <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border border-brand-green/60 bg-[#111713]/95 shadow-2xl shadow-black/50 backdrop-blur-xl ring-1 ring-white/10">
+                        <div role="listbox" className="max-h-64 overflow-y-auto p-1">
+                          {printerOptions.map(option => {
+                            const isSelected = option.value === selectedPrinter;
+
+                            return (
+                              <button
+                                key={option.value || 'system-default-printer'}
+                                type="button"
+                                role="option"
+                                aria-selected={isSelected}
+                                onClick={() => {
+                                  setSelectedPrinter(option.value);
+                                  setIsPrinterDropdownOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full rounded-lg px-3 py-3 text-left transition-all flex items-center gap-3",
+                                  isSelected
+                                    ? "bg-brand-green text-dark-bg"
+                                    : "text-text-primary hover:bg-brand-green/15 hover:text-brand-green"
+                                )}
+                              >
+                                <span className={cn(
+                                  "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border",
+                                  isSelected ? "border-dark-bg/40 bg-dark-bg/10" : "border-white/20"
+                                )}>
+                                  {isSelected && <Check className="w-3.5 h-3.5" />}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate font-semibold">{option.label}</span>
+                                  <span className={cn("block truncate text-xs", isSelected ? "text-dark-bg/70" : "text-text-secondary/55")}>
+                                    {option.hint}
+                                  </span>
+                                </span>
+                              </button>
+                            );
+                          })}
+
+                          {isPrinterLoading && (
+                            <div className="px-3 py-3 text-sm text-text-secondary flex items-center gap-2">
+                              <RefreshCw className="w-4 h-4 animate-spin text-brand-green" />
+                              正在刷新打印机列表...
+                            </div>
+                          )}
+
+                          {!isPrinterLoading && printers.length === 0 && (
+                            <div className="px-3 pb-3 pt-2 text-xs text-text-secondary/70">
+                              暂未检测到可直打打印机，请先连接或安装标签打印机。
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-secondary/70">
+                    当前绑定：{selectedPrinter || '自动选择可直打打印机'}
+                    {excludedPrinterCount > 0 && (
+                      <span className="block mt-1 text-text-secondary/50">
+                        已隐藏 {excludedPrinterCount} 个 PDF/Fax/OneNote 虚拟打印设备
+                      </span>
+                    )}
+                  </p>
                 </div>
 
                 <div className="pt-4">
@@ -443,6 +832,108 @@ export default function App() {
                     保存打印机设置
                   </button>
                 </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-5">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-brand-green/10 flex items-center justify-center">
+                            {audioEnabled ? (
+                              <Volume2 className="w-5 h-5 text-brand-green" />
+                            ) : (
+                              <VolumeX className="w-5 h-5 text-text-secondary" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-text-primary">音效总开关</div>
+                            <div className="text-xs text-text-secondary/60">
+                              {audioEnabled ? '扫描反馈已开启' : '扫描反馈已关闭'}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={audioEnabled}
+                          onClick={toggleAudioEnabled}
+                          className={cn(
+                            "relative h-8 w-14 rounded-full transition-colors",
+                            audioEnabled ? "bg-brand-green" : "bg-white/15"
+                          )}
+                        >
+                          <span className={cn(
+                            "absolute top-1 h-6 w-6 rounded-full bg-dark-bg shadow-lg transition-transform",
+                            audioEnabled ? "translate-x-7" : "translate-x-1"
+                          )} />
+                        </button>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label htmlFor="audio-volume" className="text-sm font-semibold text-text-primary">
+                            音量调节
+                          </label>
+                          <span className="text-xs font-semibold text-brand-green">
+                            {audioVolume === 100 ? '跟随系统媒体音量' : `${audioVolume}%`}
+                          </span>
+                        </div>
+                        <input
+                          id="audio-volume"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={audioVolume}
+                          onChange={(event) => changeAudioVolume(Number(event.target.value))}
+                          className="w-full accent-brand-green cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[11px] text-text-secondary/50">
+                          <span>静音</span>
+                          <span>独立调节</span>
+                          <span>系统上限</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onPointerDown={startAudioPreviewPress}
+                        onPointerUp={finishAudioPreviewPress}
+                        onPointerLeave={cancelAudioPreviewPress}
+                        onPointerCancel={cancelAudioPreviewPress}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            void playScanFeedback('success', { force: true });
+                          }
+                        }}
+                        className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-brand-green/50 text-text-primary font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                      >
+                        <PlayCircle className="w-5 h-5 text-brand-green" />
+                        试听音效
+                        <span className="text-xs font-medium text-text-secondary/60">点击成功 / 长按失败</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-xs">
+                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                        <div className="text-text-secondary/60">音频状态</div>
+                        <div className="mt-1 font-semibold text-text-primary">
+                          {audioFocusState === 'playing' ? '播放中' : audioFocusState === 'failed' ? '异常' : '就绪'}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                        <div className="text-text-secondary/60">截断次数</div>
+                        <div className="mt-1 font-semibold text-text-primary">{audioInterruptCount}</div>
+                      </div>
+                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                        <div className="text-text-secondary/60">最近音效</div>
+                        <div className="mt-1 font-semibold text-text-primary">
+                          {lastAudioResult ? `${lastAudioResult === 'success' ? '成功' : '失败'} · ${lastAudioDuration}ms` : '暂无'}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -627,18 +1118,18 @@ export default function App() {
                         );
                       }
                       return filteredLogs.map((log, i) => {
-                        const isLastPrinted = log.type === 'print' && log.firstLeg === lastPrintedCode;
+                        const isLastPrinted = i === 0 && log.type === 'print' && log.firstLeg === lastPrintedCode;
                         return (
                           <tr key={i} className={cn(
-                            "hover:bg-white/5 transition-all duration-300",
-                            isLastPrinted && "bg-yellow-500/20 scale-[1.02]"
+                            "hover:bg-white/5 transition-colors duration-300",
+                            isLastPrinted && "bg-white/[0.075] shadow-[inset_3px_0_0_rgba(128,255,0,0.28)]"
                           )}>
                             <td className="px-4 py-4 text-center text-text-secondary font-medium">{filteredLogs.length - i}</td>
                             <td className="px-6 py-4 text-text-secondary font-mono whitespace-nowrap">{log.time}</td>
-                            <td className={cn("px-6 py-4 font-medium", isLastPrinted && "font-extrabold")}>
+                            <td className="px-6 py-4 font-medium">
                               {log.type === 'print' ? (
                                 <div className="flex flex-col">
-                                  <span className={cn("text-text-primary", isLastPrinted && "text-lg")}>{log.firstLeg}</span>
+                                  <span className="text-text-primary">{log.firstLeg}</span>
                                   <span className="text-xs text-text-secondary/80 font-normal">快递单号: {log.exchange}</span>
                                 </div>
                               ) : log.firstLeg}
