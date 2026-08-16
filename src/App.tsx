@@ -10,6 +10,9 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
+const LOCAL_PRINT_SERVER_ENDPOINTS = ['http://127.0.0.1:3001', 'http://localhost:3001'];
+
+type LocalPrintServerStatus = 'unknown' | 'connected' | 'offline';
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -76,6 +79,9 @@ export default function App() {
   const [isPrinterDropdownOpen, setIsPrinterDropdownOpen] = useState(false);
   const [isPrinterLoading, setIsPrinterLoading] = useState(false);
   const [excludedPrinterCount, setExcludedPrinterCount] = useState(0);
+  const [printServerStatus, setPrintServerStatus] = useState<LocalPrintServerStatus>('unknown');
+  const [printServerBaseUrl, setPrintServerBaseUrl] = useState(localStorage.getItem('localPrintServerBaseUrl') || '');
+  const [printServerMessage, setPrintServerMessage] = useState('');
   const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
   const [audioVolume, setAudioVolume] = useState(() => {
     if (localStorage.getItem('audioFeedbackSettingsVersion') !== AUDIO_SETTINGS_VERSION) {
@@ -176,11 +182,14 @@ export default function App() {
   const fetchPrinters = async () => {
     setIsPrinterLoading(true);
     try {
-      const res = await fetch('http://localhost:3001/api/printers');
+      const { response: res, endpoint } = await requestLocalPrintServer('/api/printers');
       const data = await res.json();
       if (data.success) {
         const directPrinters = Array.isArray(data.printers) ? data.printers : [];
         const preferredPrinter = typeof data.defaultPrinter === 'string' ? data.defaultPrinter : '';
+        setPrintServerStatus('connected');
+        setPrintServerBaseUrl(endpoint);
+        setPrintServerMessage(`已连接本机打印服务：${endpoint}`);
         setPrinters(directPrinters);
         setExcludedPrinterCount(Array.isArray(data.excludedPrinters) ? data.excludedPrinters.length : 0);
         setSelectedPrinter(currentPrinter => {
@@ -193,10 +202,43 @@ export default function App() {
         addLog('System', '-', `获取打印机列表失败: ${data.message || '未知错误'}`, 'error', 'system');
       }
     } catch (error) {
-      addLog('System', '-', '无法连接到打印服务 (http://localhost:3001)', 'error', 'system');
+      const message = error instanceof Error ? error.message : '无法连接到本机打印服务';
+      setPrintServerStatus('offline');
+      setPrintServerBaseUrl('');
+      setPrintServerMessage(message);
+      addLog('System', '-', message, 'error', 'system');
     } finally {
       setIsPrinterLoading(false);
     }
+  };
+
+  const requestLocalPrintServer = async (path: string, init?: RequestInit) => {
+    const savedEndpoint = localStorage.getItem('localPrintServerBaseUrl');
+    const endpoints = savedEndpoint && LOCAL_PRINT_SERVER_ENDPOINTS.includes(savedEndpoint)
+      ? [savedEndpoint, ...LOCAL_PRINT_SERVER_ENDPOINTS.filter(endpoint => endpoint !== savedEndpoint)]
+      : LOCAL_PRINT_SERVER_ENDPOINTS;
+    const errors: string[] = [];
+
+    for (const endpoint of endpoints) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+
+      try {
+        const response = await fetch(`${endpoint}${path}`, {
+          ...init,
+          signal: controller.signal
+        });
+
+        localStorage.setItem('localPrintServerBaseUrl', endpoint);
+        return { response, endpoint };
+      } catch (error) {
+        errors.push(`${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }
+
+    throw new Error(`无法连接本机打印服务。请先在当前电脑启动本地打印服务，再刷新列表。已尝试：${endpoints.join('、')}`);
   };
 
   const savePrinter = () => {
@@ -541,7 +583,7 @@ export default function App() {
       const base64 = (reader.result as string).split(',')[1];
       
       try {
-        const response = await fetch('http://localhost:3001/api/print', {
+        const { response, endpoint } = await requestLocalPrintServer('/api/print', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -550,6 +592,9 @@ export default function App() {
             fileName: pdfFile.name
           })
         });
+        setPrintServerStatus('connected');
+        setPrintServerBaseUrl(endpoint);
+        setPrintServerMessage(`已连接本机打印服务：${endpoint}`);
 
         const result = await response.json();
         if (result.success) {
@@ -566,7 +611,11 @@ export default function App() {
         }
       } catch (error) {
         void playScanFeedback('failure');
-        addLog(scannedValue, finalExchangeNumber, '打印服务未响应，请检查后端', 'error', 'print');
+        const message = error instanceof Error ? error.message : '打印服务未响应，请检查后端';
+        setPrintServerStatus('offline');
+        setPrintServerBaseUrl('');
+        setPrintServerMessage(message);
+        addLog(scannedValue, finalExchangeNumber, message, 'error', 'print');
       }
     };
     reader.onerror = () => {
@@ -815,6 +864,16 @@ export default function App() {
                   </div>
                   <p className="text-xs text-text-secondary/70">
                     当前绑定：{selectedPrinter || '自动选择可直打打印机'}
+                    <span className={cn(
+                      "block mt-1",
+                      printServerStatus === 'connected' ? "text-brand-green" : printServerStatus === 'offline' ? "text-red-400" : "text-text-secondary/50"
+                    )}>
+                      {printServerStatus === 'connected'
+                        ? `本地打印服务已连接：${printServerBaseUrl}`
+                        : printServerStatus === 'offline'
+                          ? printServerMessage
+                          : '部署页面需要当前电脑同时运行本地打印服务'}
+                    </span>
                     {excludedPrinterCount > 0 && (
                       <span className="block mt-1 text-text-secondary/50">
                         已隐藏 {excludedPrinterCount} 个 PDF/Fax/OneNote 虚拟打印设备
