@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import printJS from 'print-js';
+import qz from 'qz-tray';
 import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -14,8 +15,19 @@ function cn(...inputs: ClassValue[]) {
 const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
 const LOCAL_PRINT_SERVER_ENDPOINTS = ['http://127.0.0.1:3001', 'http://localhost:3001'];
 const LOCAL_WEB_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+const VIRTUAL_PRINTER_KEYWORDS = [
+  'pdf24',
+  'microsoft print to pdf',
+  'onenote',
+  'fax',
+  'xps',
+  'wps pdf',
+  'adobe pdf',
+  '导出为wps pdf'
+];
 
 type LocalPrintServerStatus = 'unknown' | 'connected' | 'offline';
+type PrinterBridge = 'none' | 'qz' | 'local';
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -56,6 +68,24 @@ interface FileInfo {
   message?: string;
 }
 
+const normalizePrinterName = (name: unknown) => String(name || '').trim();
+
+const isVirtualPrinterName = (name: string) => {
+  const normalizedName = name.toLowerCase();
+  return VIRTUAL_PRINTER_KEYWORDS.some(keyword => normalizedName.includes(keyword));
+};
+
+const dedupePrinterNames = (printerNames: string[]) => {
+  const seen = new Set<string>();
+  return printerNames.filter(printerName => {
+    const normalizedName = normalizePrinterName(printerName);
+    const key = normalizedName.toLowerCase();
+    if (!normalizedName || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 type SettingsPanel = 'printer' | 'audio';
 type ScanResult = 'success' | 'failure';
 type AudioFocusState = 'idle' | 'playing' | 'failed';
@@ -83,6 +113,7 @@ export default function App() {
   const [isPrinterLoading, setIsPrinterLoading] = useState(false);
   const [excludedPrinterCount, setExcludedPrinterCount] = useState(0);
   const [printServerStatus, setPrintServerStatus] = useState<LocalPrintServerStatus>('unknown');
+  const [printerBridge, setPrinterBridge] = useState<PrinterBridge>('none');
   const [printServerBaseUrl, setPrintServerBaseUrl] = useState(localStorage.getItem('localPrintServerBaseUrl') || '');
   const [printServerMessage, setPrintServerMessage] = useState('');
   const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
@@ -107,14 +138,15 @@ export default function App() {
   const printerDropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeAudioRef = useRef<ActiveAudio | null>(null);
+  const qzConnectPromiseRef = useRef<Promise<void> | null>(null);
   const audioFailureLoggedRef = useRef(false);
   const recentAudioRequestsRef = useRef<number[]>([]);
   const previewLongPressTimerRef = useRef<number | null>(null);
   const previewLongPressPlayedRef = useRef(false);
   const debouncedScanInput = useDebounce(scanInput, 50);
   const printerOptions = [
-    { value: '', label: '自动选择可直打打印机', hint: '自动跳过 PDF24 等虚拟设备' },
-    ...printers.map(printer => ({ value: printer, label: printer, hint: '本机已检测到的打印设备' }))
+    { value: '', label: '自动选择可直打打印机', hint: printerBridge === 'qz' ? '自动通过 QZ Tray 匹配真实打印机' : '自动跳过 PDF24 等虚拟设备' },
+    ...printers.map(printer => ({ value: printer, label: printer, hint: printerBridge === 'qz' ? 'QZ Tray 已检测到的本机设备' : '本机已检测到的打印设备' }))
   ];
   const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
 
@@ -128,6 +160,17 @@ export default function App() {
     endpoint || '本地开发代理 /api → 127.0.0.1:3001'
   );
 
+  const formatQzError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/connection|connect|websocket|socket|refused|timed out|closed/i.test(message)) {
+      return 'QZ Tray 未连接。请确认 QZ Tray 已安装并在右下角托盘保持运行，然后刷新列表。';
+    }
+    if (/certificate|signature|security|denied|reject|permission|unauthorized/i.test(message)) {
+      return 'QZ Tray 授权未完成。浏览器或 QZ Tray 弹窗出现时，请点击允许/信任后再刷新列表。';
+    }
+    return `QZ Tray 连接失败：${message}`;
+  };
+
   const getLocalPrintServerEndpoints = () => {
     const savedEndpoint = localStorage.getItem('localPrintServerBaseUrl');
     const baseEndpoints = canUseSameOriginPrintProxy()
@@ -138,6 +181,81 @@ export default function App() {
       : baseEndpoints;
 
     return Array.from(new Set(endpoints));
+  };
+
+  const ensureQzConnected = async () => {
+    if (qz.websocket.isActive()) return;
+
+    if (!qzConnectPromiseRef.current) {
+      qzConnectPromiseRef.current = qz.websocket
+        .connect({ retries: 2, delay: 1 })
+        .finally(() => {
+          qzConnectPromiseRef.current = null;
+        });
+    }
+
+    await qzConnectPromiseRef.current;
+  };
+
+  const getQzPrinterInventory = async () => {
+    await ensureQzConnected();
+    const [qzPrinters, qzDefaultPrinter] = await Promise.all([
+      qz.printers.find(),
+      qz.printers.getDefault().catch(() => '')
+    ]);
+    const allPrinterNames = dedupePrinterNames(Array.isArray(qzPrinters) ? qzPrinters.map(normalizePrinterName) : [normalizePrinterName(qzPrinters)]);
+    const directPrinters = allPrinterNames.filter(printer => !isVirtualPrinterName(printer));
+    const excludedPrinters = allPrinterNames.filter(isVirtualPrinterName);
+    const defaultPrinter = normalizePrinterName(qzDefaultPrinter);
+    const preferredPrinter = directPrinters.includes(defaultPrinter)
+      ? defaultPrinter
+      : (directPrinters.length === 1 ? directPrinters[0] : '');
+
+    return {
+      allPrinterNames,
+      directPrinters,
+      excludedPrinters,
+      preferredPrinter
+    };
+  };
+
+  const getSelectedQzPrinterName = async () => {
+    if (selectedPrinter) return selectedPrinter;
+
+    if (printers.length === 1) {
+      return printers[0];
+    }
+
+    const inventory = await getQzPrinterInventory();
+    if (inventory.preferredPrinter) return inventory.preferredPrinter;
+    if (inventory.directPrinters.length === 1) return inventory.directPrinters[0];
+
+    throw new Error('检测到多台真实打印机，请先在系统设置中选择一台。');
+  };
+
+  const printPdfWithQz = async (pdfBase64: string) => {
+    await ensureQzConnected();
+    const printerName = await getSelectedQzPrinterName();
+    const config = qz.configs.create(printerName, {
+      scaleContent: false,
+      colorType: 'grayscale'
+    });
+    const data = [{
+      type: 'pixel',
+      format: 'pdf',
+      flavor: 'base64',
+      data: pdfBase64,
+      options: {
+        ignoreTransparency: true
+      }
+    }];
+
+    await qz.print(config, data);
+
+    return {
+      printerName,
+      message: `打印任务已通过 QZ Tray 提交到 ${printerName}`
+    };
   };
 
   // Process scan after debounce
@@ -206,6 +324,30 @@ export default function App() {
 
   const fetchPrinters = async () => {
     setIsPrinterLoading(true);
+    const connectionErrors: string[] = [];
+    try {
+      const qzInventory = await getQzPrinterInventory();
+      if (qzInventory.directPrinters.length > 0) {
+        setPrintServerStatus('connected');
+        setPrinterBridge('qz');
+        setPrintServerBaseUrl('QZ Tray 本机连接');
+        setPrintServerMessage('QZ Tray 已连接，可直接读取当前电脑打印机');
+        setPrinters(qzInventory.directPrinters);
+        setExcludedPrinterCount(qzInventory.excludedPrinters.length);
+        setSelectedPrinter(currentPrinter => {
+          if (currentPrinter && qzInventory.directPrinters.includes(currentPrinter)) {
+            return currentPrinter;
+          }
+          return qzInventory.preferredPrinter || '';
+        });
+        return;
+      }
+
+      connectionErrors.push('QZ Tray 已连接，但未检测到可直打的真实打印机。');
+    } catch (qzError) {
+      connectionErrors.push(formatQzError(qzError));
+    }
+
     try {
       const { response: res, endpoint } = await requestLocalPrintServer('/api/printers');
       const data = await res.json();
@@ -213,6 +355,7 @@ export default function App() {
         const directPrinters = Array.isArray(data.printers) ? data.printers : [];
         const preferredPrinter = typeof data.defaultPrinter === 'string' ? data.defaultPrinter : '';
         setPrintServerStatus('connected');
+        setPrinterBridge('local');
         setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
         setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
         setPrinters(directPrinters);
@@ -227,8 +370,13 @@ export default function App() {
         addLog('System', '-', `获取打印机列表失败: ${data.message || '未知错误'}`, 'error', 'system');
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : '无法连接到本机打印服务';
+      const localMessage = error instanceof Error ? error.message : '无法连接到本机打印服务';
+      const message = [
+        ...connectionErrors,
+        localMessage
+      ].filter(Boolean).join('；');
       setPrintServerStatus('offline');
+      setPrinterBridge('none');
       setPrintServerBaseUrl('');
       setPrintServerMessage(message);
       addLog('System', '-', message, 'error', 'system');
@@ -609,35 +757,68 @@ export default function App() {
       const base64 = (reader.result as string).split(',')[1];
       
       try {
-        const { response, endpoint } = await requestLocalPrintServer('/api/print', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pdfBase64: base64,
-            printerName: selectedPrinter,
-            fileName: pdfFile.name
-          })
-        });
-        setPrintServerStatus('connected');
-        setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
-        setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
-
-        const result = await response.json();
-        if (result.success) {
-          addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print');
+        if (printerBridge === 'qz') {
+          const result = await printPdfWithQz(base64);
+          setPrintServerStatus('connected');
+          setPrinterBridge('qz');
+          setPrintServerBaseUrl('QZ Tray 本机连接');
+          setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
+          addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print');
           setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
-          // Add to recently printed for deduplication
           const newTimestamp = Date.now();
           setRecentlyPrinted(prev => 
             [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
           );
         } else {
-          void playScanFeedback('failure');
-          addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
+          try {
+            const { response, endpoint } = await requestLocalPrintServer('/api/print', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                pdfBase64: base64,
+                printerName: selectedPrinter,
+                fileName: pdfFile.name
+              })
+            });
+            setPrintServerStatus('connected');
+            setPrinterBridge('local');
+            setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
+            setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
+
+            const result = await response.json();
+            if (result.success) {
+              addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print');
+              setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
+              const newTimestamp = Date.now();
+              setRecentlyPrinted(prev => 
+                [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
+              );
+            } else {
+              void playScanFeedback('failure');
+              addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
+            }
+          } catch (localPrintError) {
+            const result = await printPdfWithQz(base64).catch(qzPrintError => {
+              const localMessage = localPrintError instanceof Error ? localPrintError.message : String(localPrintError);
+              throw new Error(`本地打印服务失败：${localMessage}；${formatQzError(qzPrintError)}`);
+            });
+            setPrintServerStatus('connected');
+            setPrinterBridge('qz');
+            setPrintServerBaseUrl('QZ Tray 本机连接');
+            setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
+            addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print');
+            setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
+            const newTimestamp = Date.now();
+            setRecentlyPrinted(prev => 
+              [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
+            );
+          }
         }
       } catch (error) {
         void playScanFeedback('failure');
-        const message = error instanceof Error ? error.message : '打印服务未响应，请检查后端';
+        const message = printerBridge === 'qz'
+          ? formatQzError(error)
+          : (error instanceof Error ? error.message : '打印服务未响应，请检查后端');
         setPrintServerStatus('offline');
         setPrintServerBaseUrl('');
         setPrintServerMessage(message);
