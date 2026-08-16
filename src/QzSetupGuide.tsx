@@ -1,4 +1,4 @@
-import { BookOpen, CheckCircle2, Download, ExternalLink, MonitorCheck, PlugZap, Printer, ShieldCheck } from 'lucide-react';
+import { BookOpen, CheckCircle2, Download, ExternalLink, KeyRound, MonitorCheck, PlugZap, Printer, ShieldCheck } from 'lucide-react';
 
 const qzSteps = [
   {
@@ -12,8 +12,13 @@ const qzSteps = [
     icon: Printer
   },
   {
-    title: '允许网页连接本机助手',
-    description: '首次使用时，如果浏览器或 QZ Tray 弹出授权提示，只对公司页面点击允许或信任。',
+    title: '官方证书签名',
+    description: '系统已接入 QZ 官方证书签名。管理员完成 Vercel 证书配置后，打印请求会以可信身份发送，减少每次确认弹窗。',
+    icon: KeyRound
+  },
+  {
+    title: '允许首次连接',
+    description: '新电脑首次连接 QZ Tray 时，如出现连接授权，只对公司正式页面点击允许；正常打单不应每单重复弹窗。',
     icon: ShieldCheck
   },
   {
@@ -38,7 +43,7 @@ export default function QzSetupGuide() {
             </div>
             <h2 className="mt-3 text-2xl font-bold text-text-primary">QZ Tray 下载与官方教程</h2>
             <p className="mt-2 text-sm leading-6 text-text-secondary/75 max-w-3xl">
-              QZ Tray 是网页连接本机打印机的桥接程序。新电脑按下面步骤安装、授权、刷新打印机后，就能更稳定地访问本机标签打印机。
+              QZ Tray 是网页连接本机打印机的桥接程序。当前系统已采用 QZ 官方证书签名方案：新电脑只需安装 QZ Tray、确认打印机驱动、刷新列表即可测试直打。
             </p>
           </div>
         </div>
@@ -55,19 +60,19 @@ export default function QzSetupGuide() {
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
           <a
-            href="https://qz.io/docs/getting-started"
+            href="https://qz.io/docs/signing-examples"
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-text-primary hover:border-brand-green/40 hover:bg-brand-green/10 hover:text-brand-green transition-all active:scale-[0.98]"
           >
             <BookOpen className="w-4 h-4" />
-            官方教程
+            官方签名教程
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-3 p-5 md:p-6">
+      <div className="grid md:grid-cols-5 gap-3 p-5 md:p-6">
         {qzSteps.map((step, index) => (
           <div key={step.title} className="rounded-2xl border border-white/10 bg-dark-bg/40 p-4">
             <div className="flex items-center gap-3">

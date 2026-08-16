@@ -28,6 +28,12 @@ const VIRTUAL_PRINTER_KEYWORDS = [
 
 type LocalPrintServerStatus = 'unknown' | 'connected' | 'offline';
 type PrinterBridge = 'none' | 'qz' | 'local';
+type QzSecurityState = 'unknown' | 'signed' | 'unsigned' | 'error';
+
+interface QzSecurityStatus {
+  state: QzSecurityState;
+  message: string;
+}
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -116,6 +122,10 @@ export default function App() {
   const [printerBridge, setPrinterBridge] = useState<PrinterBridge>('none');
   const [printServerBaseUrl, setPrintServerBaseUrl] = useState(localStorage.getItem('localPrintServerBaseUrl') || '');
   const [printServerMessage, setPrintServerMessage] = useState('');
+  const [qzSecurityStatus, setQzSecurityStatus] = useState<QzSecurityStatus>({
+    state: 'unknown',
+    message: '尚未检测 QZ 官方证书签名'
+  });
   const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
   const [audioVolume, setAudioVolume] = useState(() => {
     if (localStorage.getItem('audioFeedbackSettingsVersion') !== AUDIO_SETTINGS_VERSION) {
@@ -139,6 +149,7 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeAudioRef = useRef<ActiveAudio | null>(null);
   const qzConnectPromiseRef = useRef<Promise<void> | null>(null);
+  const qzSecurityPromiseRef = useRef<Promise<QzSecurityStatus> | null>(null);
   const audioFailureLoggedRef = useRef(false);
   const recentAudioRequestsRef = useRef<number[]>([]);
   const previewLongPressTimerRef = useRef<number | null>(null);
@@ -166,9 +177,93 @@ export default function App() {
       return 'QZ Tray 未连接。请确认 QZ Tray 已安装并在右下角托盘保持运行，然后刷新列表。';
     }
     if (/certificate|signature|security|denied|reject|permission|unauthorized/i.test(message)) {
-      return 'QZ Tray 授权未完成。浏览器或 QZ Tray 弹窗出现时，请点击允许/信任后再刷新列表。';
+      return 'QZ Tray 授权或官方证书签名未完成。请确认 Vercel 已配置 QZ_CERTIFICATE 与 QZ_PRIVATE_KEY，并重新部署。';
     }
     return `QZ Tray 连接失败：${message}`;
+  };
+
+  const configureQzSecurity = async (): Promise<QzSecurityStatus> => {
+    if (qzSecurityPromiseRef.current) {
+      return qzSecurityPromiseRef.current;
+    }
+
+    qzSecurityPromiseRef.current = (async () => {
+      try {
+        const certificateResponse = await fetch('/api/qz-certificate', {
+          cache: 'no-store',
+          headers: {
+            Accept: 'text/plain'
+          }
+        });
+
+        if (!certificateResponse.ok) {
+          const detail = await certificateResponse.text().catch(() => '');
+          const status: QzSecurityStatus = {
+            state: 'unsigned',
+            message: detail || '未配置 QZ 官方证书，打印时 QZ 仍可能弹出授权确认'
+          };
+          setQzSecurityStatus(status);
+          return status;
+        }
+
+        const certificate = (await certificateResponse.text()).trim();
+        if (!certificate.includes('BEGIN CERTIFICATE')) {
+          throw new Error('QZ_CERTIFICATE 内容不是有效的 PEM 证书');
+        }
+
+        qz.security.setCertificatePromise((resolve: (certificate: string) => void) => {
+          resolve(certificate);
+        }, { rejectOnFailure: true });
+
+        qz.security.setSignatureAlgorithm('SHA512');
+        qz.security.setSignaturePromise((toSign: string) => {
+          return async (
+            resolve: (signature: string) => void,
+            reject: (reason?: unknown) => void
+          ) => {
+            try {
+              const signatureResponse = await fetch('/api/qz-sign', {
+                method: 'POST',
+                cache: 'no-store',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Accept: 'text/plain'
+                },
+                body: JSON.stringify({ request: toSign })
+              });
+              const signature = (await signatureResponse.text()).trim();
+
+              if (!signatureResponse.ok) {
+                throw new Error(signature || `签名接口返回 HTTP ${signatureResponse.status}`);
+              }
+              if (!signature) {
+                throw new Error('签名接口返回为空');
+              }
+
+              resolve(signature);
+            } catch (error) {
+              reject(error);
+            }
+          };
+        });
+
+        const status: QzSecurityStatus = {
+          state: 'signed',
+          message: 'QZ 官方证书签名已启用，可减少/消除每次打印授权弹窗'
+        };
+        setQzSecurityStatus(status);
+        return status;
+      } catch (error) {
+        const status: QzSecurityStatus = {
+          state: 'error',
+          message: `QZ 官方证书签名配置异常：${error instanceof Error ? error.message : String(error)}`
+        };
+        setQzSecurityStatus(status);
+        return status;
+      }
+    })();
+
+    return qzSecurityPromiseRef.current;
   };
 
   const getLocalPrintServerEndpoints = () => {
@@ -184,7 +279,8 @@ export default function App() {
   };
 
   const ensureQzConnected = async () => {
-    if (qz.websocket.isActive()) return;
+    const securityStatus = await configureQzSecurity();
+    if (qz.websocket.isActive()) return securityStatus;
 
     if (!qzConnectPromiseRef.current) {
       qzConnectPromiseRef.current = qz.websocket
@@ -195,10 +291,11 @@ export default function App() {
     }
 
     await qzConnectPromiseRef.current;
+    return securityStatus;
   };
 
   const getQzPrinterInventory = async () => {
-    await ensureQzConnected();
+    const securityStatus = await ensureQzConnected();
     const [qzPrinters, qzDefaultPrinter] = await Promise.all([
       qz.printers.find(),
       qz.printers.getDefault().catch(() => '')
@@ -215,7 +312,8 @@ export default function App() {
       allPrinterNames,
       directPrinters,
       excludedPrinters,
-      preferredPrinter
+      preferredPrinter,
+      securityStatus
     };
   };
 
@@ -234,7 +332,7 @@ export default function App() {
   };
 
   const printPdfWithQz = async (pdfBase64: string) => {
-    await ensureQzConnected();
+    const securityStatus = await ensureQzConnected();
     const printerName = await getSelectedQzPrinterName();
     const config = qz.configs.create(printerName, {
       scaleContent: false,
@@ -254,7 +352,9 @@ export default function App() {
 
     return {
       printerName,
-      message: `打印任务已通过 QZ Tray 提交到 ${printerName}`
+      message: securityStatus.state === 'signed'
+        ? `打印任务已通过 QZ Tray 官方证书签名提交到 ${printerName}`
+        : `打印任务已通过 QZ Tray 提交到 ${printerName}（官方签名未完成，QZ 可能弹授权确认）`
     };
   };
 
@@ -331,7 +431,10 @@ export default function App() {
         setPrintServerStatus('connected');
         setPrinterBridge('qz');
         setPrintServerBaseUrl('QZ Tray 本机连接');
-        setPrintServerMessage('QZ Tray 已连接，可直接读取当前电脑打印机');
+        setPrintServerMessage(qzInventory.securityStatus.state === 'signed'
+          ? 'QZ Tray 已连接，官方证书签名已启用'
+          : 'QZ Tray 已连接，但官方证书签名未完成，打印时可能弹出授权确认'
+        );
         setPrinters(qzInventory.directPrinters);
         setExcludedPrinterCount(qzInventory.excludedPrinters.length);
         setSelectedPrinter(currentPrinter => {
@@ -1088,6 +1191,21 @@ export default function App() {
                     {excludedPrinterCount > 0 && (
                       <span className="block mt-1 text-text-secondary/50">
                         已隐藏 {excludedPrinterCount} 个 PDF/Fax/OneNote 虚拟打印设备
+                      </span>
+                    )}
+                    <span className={cn(
+                      "block mt-1",
+                      qzSecurityStatus.state === 'signed'
+                        ? "text-brand-green"
+                        : qzSecurityStatus.state === 'unknown'
+                          ? "text-text-secondary/50"
+                          : "text-amber-300"
+                    )}>
+                      QZ 官方签名：{qzSecurityStatus.message}
+                    </span>
+                    {qzSecurityStatus.state !== 'signed' && qzSecurityStatus.state !== 'unknown' && (
+                      <span className="block mt-1 text-text-secondary/50">
+                        管理员需在 Vercel 配置 QZ 官方 certificate/private key 后重新部署，才能消除每次打印授权弹窗。
                       </span>
                     )}
                   </p>
