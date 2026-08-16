@@ -22,3 +22,48 @@
 ::-webkit-scrollbar-thumb:hover {
     background-color: #4b5563; /* gray-600 */
 }
+
+.bol-letter-page {
+  box-sizing: border-box;
+  aspect-ratio: 8.5 / 11;
+}
+
+@media print {
+  @page {
+    size: Letter;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .bol-print-target,
+  .bol-print-target * {
+    visibility: visible !important;
+  }
+
+  .bol-print-target {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 8.5in !important;
+    min-height: 11in !important;
+    background: #ffffff !important;
+  }
+
+  .bol-letter-page {
+    width: 8.5in !important;
+    min-height: 11in !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

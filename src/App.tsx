@@ -4,6 +4,8 @@ import printJS from 'print-js';
 import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import BolManager from './BolManager';
+import QzSetupGuide from './QzSetupGuide';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -11,6 +13,7 @@ function cn(...inputs: ClassValue[]) {
 
 const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
 const LOCAL_PRINT_SERVER_ENDPOINTS = ['http://127.0.0.1:3001', 'http://localhost:3001'];
+const LOCAL_WEB_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
 type LocalPrintServerStatus = 'unknown' | 'connected' | 'offline';
 
@@ -115,6 +118,28 @@ export default function App() {
   ];
   const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
 
+  const canUseSameOriginPrintProxy = () => (
+    import.meta.env.DEV &&
+    LOCAL_WEB_HOSTS.includes(window.location.hostname) &&
+    ['5173', '5174', '5175'].includes(window.location.port)
+  );
+
+  const formatPrintServerEndpoint = (endpoint: string) => (
+    endpoint || '本地开发代理 /api → 127.0.0.1:3001'
+  );
+
+  const getLocalPrintServerEndpoints = () => {
+    const savedEndpoint = localStorage.getItem('localPrintServerBaseUrl');
+    const baseEndpoints = canUseSameOriginPrintProxy()
+      ? ['', ...LOCAL_PRINT_SERVER_ENDPOINTS]
+      : LOCAL_PRINT_SERVER_ENDPOINTS;
+    const endpoints = savedEndpoint && baseEndpoints.includes(savedEndpoint) && savedEndpoint !== ''
+      ? ['', savedEndpoint, ...baseEndpoints.filter(endpoint => endpoint !== '' && endpoint !== savedEndpoint)]
+      : baseEndpoints;
+
+    return Array.from(new Set(endpoints));
+  };
+
   // Process scan after debounce
   useEffect(() => {
     if (debouncedScanInput) {
@@ -188,8 +213,8 @@ export default function App() {
         const directPrinters = Array.isArray(data.printers) ? data.printers : [];
         const preferredPrinter = typeof data.defaultPrinter === 'string' ? data.defaultPrinter : '';
         setPrintServerStatus('connected');
-        setPrintServerBaseUrl(endpoint);
-        setPrintServerMessage(`已连接本机打印服务：${endpoint}`);
+        setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
+        setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
         setPrinters(directPrinters);
         setExcludedPrinterCount(Array.isArray(data.excludedPrinters) ? data.excludedPrinters.length : 0);
         setSelectedPrinter(currentPrinter => {
@@ -213,15 +238,13 @@ export default function App() {
   };
 
   const requestLocalPrintServer = async (path: string, init?: RequestInit) => {
-    const savedEndpoint = localStorage.getItem('localPrintServerBaseUrl');
-    const endpoints = savedEndpoint && LOCAL_PRINT_SERVER_ENDPOINTS.includes(savedEndpoint)
-      ? [savedEndpoint, ...LOCAL_PRINT_SERVER_ENDPOINTS.filter(endpoint => endpoint !== savedEndpoint)]
-      : LOCAL_PRINT_SERVER_ENDPOINTS;
+    const endpoints = getLocalPrintServerEndpoints();
     const errors: string[] = [];
 
     for (const endpoint of endpoints) {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+      const timeoutMs = path === '/api/printers' ? 10000 : 60000;
+      const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const response = await fetch(`${endpoint}${path}`, {
@@ -229,16 +252,29 @@ export default function App() {
           signal: controller.signal
         });
 
-        localStorage.setItem('localPrintServerBaseUrl', endpoint);
+        if (!response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const responseText = await response.clone().text().catch(() => '');
+            errors.push(`${formatPrintServerEndpoint(endpoint)}: HTTP ${response.status}${responseText ? ` ${responseText.slice(0, 120)}` : ''}`);
+            continue;
+          }
+        }
+
+        if (endpoint) {
+          localStorage.setItem('localPrintServerBaseUrl', endpoint);
+        } else {
+          localStorage.removeItem('localPrintServerBaseUrl');
+        }
         return { response, endpoint };
       } catch (error) {
-        errors.push(`${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
+        errors.push(`${formatPrintServerEndpoint(endpoint)}: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         window.clearTimeout(timeoutId);
       }
     }
 
-    throw new Error(`无法连接本机打印服务。请先在当前电脑启动本地打印服务，再刷新列表。已尝试：${endpoints.join('、')}`);
+    throw new Error(`无法连接本机打印服务。请先在当前电脑启动本地打印服务，再刷新列表。已尝试：${endpoints.map(formatPrintServerEndpoint).join('、')}。详情：${errors.join('；')}`);
   };
 
   const savePrinter = () => {
@@ -431,16 +467,6 @@ export default function App() {
     }
   };
 
-  const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // If the click is on a non-interactive element, focus the scan input
-    const target = e.target as HTMLElement;
-    if (['DIV', 'HEADER', 'H1', 'P', 'UL', 'LI'].includes(target.tagName)) {
-      inputRef.current?.focus();
-    }
-  };
-
-
-
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -593,8 +619,8 @@ export default function App() {
           })
         });
         setPrintServerStatus('connected');
-        setPrintServerBaseUrl(endpoint);
-        setPrintServerMessage(`已连接本机打印服务：${endpoint}`);
+        setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
+        setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
 
         const result = await response.json();
         if (result.success) {
@@ -663,7 +689,7 @@ export default function App() {
   }, [lastPrintedCode]);
 
   return (
-    <div onClick={handleContainerClick} className="min-h-screen bg-dark-bg p-4 md:p-8 font-sans text-text-primary">
+    <div className="min-h-screen bg-dark-bg p-4 md:p-8 font-sans text-text-primary">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Duplicate Scan Modal */}
         {duplicateInfo?.show && (
@@ -734,6 +760,10 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        <QzSetupGuide />
+
+        <BolManager />
 
         {/* System Settings Modal */}
         {showSettings && (
@@ -1093,7 +1123,10 @@ export default function App() {
           {/* Right: Scanner & Logs */}
           <div className="md:col-span-2 space-y-6">
             {/* Scanner Input */}
-            <div className="bg-white/5 backdrop-blur-xl p-8 rounded-4xl border-2 border-brand-green/50 space-y-4">
+            <div
+              onClick={() => inputRef.current?.focus({ preventScroll: true })}
+              className="bg-white/5 backdrop-blur-xl p-8 rounded-4xl border-2 border-brand-green/50 space-y-4"
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 font-semibold text-text-primary">
                   <Scan className="w-6 h-6 text-brand-green" />

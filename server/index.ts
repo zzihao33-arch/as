@@ -93,19 +93,81 @@ const readPrintersWithPackage = async (): Promise<PrinterRecord[]> => {
   }));
 };
 
+const readDefaultPrinterFromUserRegistry = async () => {
+  try {
+    const { stdout } = await execAsync(
+      'reg query "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows" /v Device'
+    );
+    const deviceLine = stdout
+      .split(/\r?\n/)
+      .find(line => /\sDevice\s+REG_\w+\s+/i.test(line));
+
+    if (!deviceLine) return '';
+
+    const [, deviceValue = ''] = deviceLine.split(/\sREG_\w+\s+/i);
+    return normalizePrinterName(deviceValue.split(',')[0]);
+  } catch (error) {
+    return '';
+  }
+};
+
+const readPrintersFromUserRegistry = async (): Promise<PrinterRecord[]> => {
+  const { stdout } = await execAsync(
+    'reg query "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Devices"'
+  );
+  const defaultPrinterName = await readDefaultPrinterFromUserRegistry();
+  const printers = stdout
+    .split(/\r?\n/)
+    .map(line => {
+      const match = line.match(/^\s+(.+?)\s+REG_\w+\s+/i);
+      const name = normalizePrinterName(match?.[1]);
+
+      if (!name) return null;
+
+      return {
+        name,
+        isDefault: Boolean(defaultPrinterName && name.toLowerCase() === defaultPrinterName.toLowerCase()),
+        isVirtual: isVirtualPrinterName(name)
+      };
+    })
+    .filter((printer): printer is PrinterRecord => Boolean(printer));
+
+  return dedupePrinters(printers);
+};
+
 const getPrinterInventory = async () => {
   let allPrinters: PrinterRecord[] = [];
+  const discoveryErrors: string[] = [];
 
   if (process.platform === 'win32') {
     try {
+      allPrinters = await readPrintersFromUserRegistry();
+    } catch (registryError) {
+      discoveryErrors.push(`Registry: ${registryError instanceof Error ? registryError.message : String(registryError)}`);
+      console.error('Registry printer inventory failed:', registryError);
+    }
+  }
+
+  if (process.platform === 'win32' && allPrinters.length === 0) {
+    try {
       allPrinters = await readPrintersWithPowerShell();
     } catch (psError) {
+      discoveryErrors.push(`PowerShell: ${psError instanceof Error ? psError.message : String(psError)}`);
       console.error('PowerShell printer inventory failed:', psError);
     }
   }
 
   if (allPrinters.length === 0) {
-    allPrinters = await readPrintersWithPackage();
+    try {
+      allPrinters = await readPrintersWithPackage();
+    } catch (packageError) {
+      discoveryErrors.push(`pdf-to-printer: ${packageError instanceof Error ? packageError.message : String(packageError)}`);
+      console.error('pdf-to-printer inventory failed:', packageError);
+    }
+  }
+
+  if (allPrinters.length === 0 && discoveryErrors.length > 0) {
+    throw new Error(discoveryErrors.join(' | '));
   }
 
   const directPrinters = allPrinters.filter(printer => !printer.isVirtual);
@@ -164,6 +226,10 @@ const corsOptions: cors.CorsOptions = {
   }
 };
 
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  next();
+});
 app.use(cors(corsOptions));
 app.use(bodyParser.json({ limit: '50mb' }));
 
