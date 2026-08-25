@@ -1,0 +1,78 @@
+:root {
+  color-scheme: light;
+
+  --cmhub-primary: var(--primary-6);
+  --cmhub-primary-hover: var(--primary-7);
+  --cmhub-primary-subtle: var(--color-primary-light-1);
+  --cmhub-canvas: var(--color-bg-2);
+  --cmhub-surface: var(--color-bg-1);
+  --cmhub-surface-raised: var(--color-bg-3);
+  --cmhub-surface-hover: var(--color-fill-2);
+  --cmhub-line: var(--color-border-2);
+  --cmhub-line-strong: var(--color-border-3);
+  --cmhub-text: var(--color-text-1);
+  --cmhub-text-secondary: var(--color-text-2);
+  --cmhub-text-muted: var(--color-text-3);
+  --cmhub-danger: var(--danger-6);
+  --cmhub-success: var(--success-6);
+  --cmhub-warning: var(--warning-6);
+  --cmhub-document-paper: var(--color-bg-white);
+  --cmhub-document-ink: var(--color-neutral-10);
+  --cmhub-shadow-elevated: 0 14px 36px color-mix(in srgb, var(--color-text-1) 18%, transparent);
+  --cmhub-shadow-drawer: 12px 0 32px color-mix(in srgb, var(--color-text-1) 24%, transparent);
+  --cmhub-radius-lg: 16px;
+  --cmhub-radius-md: 12px;
+  --cmhub-space-1: 4px;
+  --cmhub-space-2: 8px;
+  --cmhub-space-3: 12px;
+  --cmhub-space-4: 16px;
+  --cmhub-space-5: 20px;
+  --cmhub-space-6: 24px;
+  --cmhub-space-8: 32px;
+  --duration-micro: 80ms;
+  --duration-quick: 150ms;
+  --duration-fast: 250ms;
+  --duration-medium: 350ms;
+  --duration-slow: 400ms;
+  --duration-very-slow: 500ms;
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: ease-in-out;
+  --ease-linear: linear;
+  --distance-micro: 4px;
+  --scale-large: 0.96;
+  --scale-small: 0.98;
+  --blur-small: 2px;
+  --acc-expand: 250ms;
+  --acc-collapse: 250ms;
+  --acc-chevron: 250ms;
+  --acc-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tabs-dur: 250ms;
+  --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tabs-text-muted: var(--color-text-2);
+  --tabs-text-active: var(--color-text-1);
+  --tabs-bar-bg: var(--color-fill-2);
+  --tabs-pill-bg: var(--color-bg-1);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* Arco publishes its palette variables on body. Rebind print-document tokens
+   there so the BOL masks stay opaque in both application themes. */
+body {
+  --cmhub-document-paper: var(--color-white);
+  --cmhub-document-ink: var(--color-black);
+  /* Exact neutral-grey timestamp ink from the approved Figma BOL template. */
+  --cmhub-document-timestamp: rgb(191 191 191);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+  }
+}

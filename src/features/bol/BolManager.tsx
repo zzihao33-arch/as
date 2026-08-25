@@ -1,4 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert as ArcoAlert,
+  Button as ArcoButton,
+  Card as ArcoCard,
+  DatePicker as ArcoDatePicker,
+  Empty,
+  Input as ArcoInput,
+  Select as ArcoSelect,
+  Table as ArcoTable,
+  Typography
+} from '@arco-design/web-react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -12,7 +23,6 @@ import {
   Download,
   FileCheck2,
   FileText,
-  PackageCheck,
   Printer,
   RotateCcw,
   Save,
@@ -21,6 +31,7 @@ import {
 import bolTemplateUrl from './assets/bol-template-figma.svg';
 
 const BOL_STORAGE_KEY = 'cmhub-bol-records-v1';
+const MAX_BOL_RECORDS = 5;
 
 type BolStage = 'list' | 'edit' | 'confirm' | 'output';
 type QuantityField = 'packages' | 'boxes' | 'pallets';
@@ -118,12 +129,48 @@ function createEmptyForm(): BolForm {
   };
 }
 
+function getRecordTimestamp(record: BolRecord) {
+  const timestamp = Date.parse(record.updatedAt || record.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function keepLatestBolRecords(records: BolRecord[]) {
+  return [...records]
+    .sort((left, right) => getRecordTimestamp(right) - getRecordTimestamp(left))
+    .slice(0, MAX_BOL_RECORDS);
+}
+
 function safeParseRecords(raw: string | null): BolRecord[] {
   if (!raw) return [];
 
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+
+    // Keep only the supported persisted schema when records are read. This
+    // also clears any retired, unknown fields from older browser storage.
+    const normalizedRecords = parsed.map(record => {
+      const stored = record as BolRecord;
+      return {
+        id: stored.id,
+        status: stored.status,
+        version: stored.version,
+        createdAt: stored.createdAt,
+        updatedAt: stored.updatedAt,
+        printCount: stored.printCount,
+        renderedHtml: stored.renderedHtml,
+        bolNo: stored.bolNo,
+        channelIds: stored.channelIds,
+        activeChannelId: stored.activeChannelId,
+        channelQuantities: stored.channelQuantities,
+        channelId: stored.channelId,
+        packages: stored.packages,
+        boxes: stored.boxes,
+        pallets: stored.pallets,
+        pickupAt: stored.pickupAt
+      } satisfies BolRecord;
+    });
+    return keepLatestBolRecords(normalizedRecords);
   } catch {
     return [];
   }
@@ -295,11 +342,11 @@ function formatQuantitySummary(form: BolForm) {
 
 function validateBolForm(form: BolForm, records: BolRecord[], editingId?: string): BolErrors {
   const errors: BolErrors = {};
-  const normalizedBolNo = form.bolNo.trim().toLowerCase();
+  const normalizedBolNo = normalizeBolNumber(form.bolNo).toLowerCase();
 
   if (!normalizedBolNo) {
     errors.bolNo = '请输入 BOL 单号';
-  } else if (records.some(record => record.id !== editingId && record.bolNo.trim().toLowerCase() === normalizedBolNo)) {
+  } else if (records.some(record => record.id !== editingId && normalizeBolNumber(record.bolNo).toLowerCase() === normalizedBolNo)) {
     errors.bolNo = '该 BOL 单号已生成，不能重复保存';
   }
 
@@ -329,21 +376,6 @@ function isBolValid(errors: BolErrors) {
   return Object.keys(errors).length === 0;
 }
 
-function pt(value: number) {
-  return `${value}pt`;
-}
-
-function figmaFont(size: number, lineHeight = 12.858, fontWeight: CSSProperties['fontWeight'] = 400): CSSProperties {
-  return {
-    fontFamily: '"IBM Plex Mono", "Courier New", monospace',
-    fontSize: pt(size),
-    fontStyle: 'normal',
-    fontWeight,
-    letterSpacing: 0,
-    lineHeight: pt(lineHeight)
-  };
-}
-
 function formatFigmaReceiptParts(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -357,36 +389,283 @@ function formatFigmaReceiptParts(value: string) {
   };
 }
 
-const bolQuantityRows: Array<{ id: string; y: number }> = [
-  { id: 'gofo', y: 374 },
-  { id: 'ywe', y: 399 },
-  { id: 'uniuni', y: 425 },
-  { id: 'speedx', y: 446 },
-  { id: 'swiftx', y: 473 },
-  { id: 'usps', y: 498 },
-  { id: 'ups', y: 523 },
-  { id: 'fedex', y: 549 },
-  { id: 'dhl', y: 574 }
-];
-
-const bolQuantityColumns: Record<QuantityField, number> = {
-  packages: 190,
-  boxes: 323,
-  pallets: 456
+const bolQuantityCells: Record<QuantityField, { left: number; right: number; textX: number }> = {
+  packages: { left: 171.974, right: 305.224, textX: 190.606 },
+  boxes: { left: 305.224, right: 438.474, textX: 323.84 },
+  pallets: { left: 438.474, right: 572, textX: 457.105 }
 };
 
-const figmaTemplateSamplePatches = [
-  { x: 57, y: 263, width: 196, height: 38 },
-  { x: 321, y: 373, width: 18, height: 16 },
-  { x: 188, y: 398, width: 18, height: 16 },
-  { x: 321, y: 424, width: 18, height: 16 },
-  { x: 321, y: 445, width: 18, height: 16 },
-  { x: 321, y: 472, width: 18, height: 16 },
-  { x: 321, y: 497, width: 18, height: 16 },
-  { x: 321, y: 522, width: 18, height: 16 },
-  { x: 188, y: 548, width: 18, height: 16 },
-  { x: 448, y: 713, width: 128, height: 29 }
+// The exported Figma SVG contains several baked-in sample quantities whose
+// paths do not line up with the grid. Rebuild this small, fixed table on the
+// canvas so the printable result has exactly one source of truth for every
+// row and column.
+const bolRoutingTable = {
+  left: 39,
+  right: 572,
+  titleTop: 304.724,
+  headerTop: 344.724,
+  headerBottom: 369.724,
+  bottom: 592.724,
+  columns: [171.974, 305.224, 438.474]
+} as const;
+
+const bolRoutingRows: Array<{ id: string; label: string; top: number; bottom: number }> = [
+  { id: 'gofo', label: 'GOFO', top: 369.724, bottom: 393.724 },
+  { id: 'ywe', label: 'YWE', top: 393.724, bottom: 417.724 },
+  { id: 'uniuni', label: 'UniUni', top: 417.724, bottom: 442.724 },
+  { id: 'speedx', label: 'SpeedX', top: 442.724, bottom: 467.724 },
+  { id: 'swiftx', label: 'SwiftX', top: 467.724, bottom: 491.724 },
+  { id: 'usps', label: 'USPS', top: 491.724, bottom: 516.724 },
+  { id: 'ups', label: 'UPS', top: 516.724, bottom: 543.724 },
+  { id: 'fedex', label: 'Fedex', top: 543.724, bottom: 568.724 },
+  { id: 'dhl', label: 'DHL', top: 568.724, bottom: 592.724 }
 ];
+
+const BOL_NUMBER_LINE_LENGTH = 25;
+const BOL_NUMBER_LINE_HEIGHT = 9;
+const BOL_NUMBER_MAX_LINES = 4;
+
+// The Figma source is a flattened SVG which still contains example values.
+// These masks remove only those sample values before live BOL data is rendered.
+const figmaTemplateStaticMasks = [
+  // The flattened Figma SVG contains a sample BOL number. Reserve the entire
+  // value region because live BOL numbers may wrap over multiple lines.
+  { x: 57, y: 261, width: 238, height: 42 },
+  // The Figma sample timestamp uses a fractal-noise filter. Cover the entire
+  // sample filter bounds before drawing the selected pickup timestamp.
+  { x: 448, y: 722, width: 118, height: 20 }
+];
+
+const BOL_TEMPLATE_WIDTH = 612;
+const BOL_TEMPLATE_HEIGHT = 792;
+const BOL_OUTPUT_SCALE = 300 / 72;
+
+// These are the fixed ink colors from the approved BOL template. They are used
+// only inside the isolated canvas used for PDF/browser-print output, so that
+// application theme styles cannot leak into the document artifact.
+const BOL_OUTPUT_COLORS = {
+  paper: 'rgb(255, 255, 255)',
+  ink: 'rgb(0, 0, 0)',
+  timestamp: 'rgb(191, 191, 191)'
+} as const;
+
+function loadImageFromSource(source: string, errorMessage: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(errorMessage));
+    image.src = source;
+  });
+}
+
+function loadBolTemplateImage() {
+  return loadImageFromSource(bolTemplateUrl, 'BOL 模板加载失败，请刷新后重试');
+}
+
+function drawCellCenteredText(
+  context: CanvasRenderingContext2D,
+  value: string,
+  x: number,
+  top: number,
+  bottom: number
+) {
+  // `actualBoundingBox*` differs between the bundled font and a browser
+  // fallback while fonts are resolving. Canvas' middle baseline is stable in
+  // both cases, so every fixed label and every number shares the same cell
+  // centre instead of the first table row drifting toward its upper border.
+  context.textBaseline = 'middle';
+  context.fillText(value, x, (top + bottom) / 2);
+}
+
+function normalizeBolNumber(value: string) {
+  const segments = value.trim().split(/\s+/).filter(Boolean);
+  // Preserve separators for the standard BOL segments users paste from the
+  // shipping system, while stripping display-only wraps from a continuous
+  // scanner payload.
+  if (segments.length > 1 && segments.every(isBolNumberSegment)) {
+    return segments.join(' ');
+  }
+
+  return value.replace(/[\r\n]+/g, '').trim();
+}
+
+function isBolNumberSegment(value: string) {
+  return /^\d{3}-\d{8}$/.test(value);
+}
+
+function formatBolNumberInput(value: string) {
+  const segments = value.trim().split(/\s+/).filter(Boolean);
+  // A four-line clipboard payload such as 994-30289630 / 936-02735880 is
+  // displayed as two grouped lines, with one real space between each pair.
+  if (segments.length > 1 && segments.every(isBolNumberSegment)) {
+    return Array.from(
+      { length: Math.ceil(segments.length / 2) },
+      (_, lineIndex) => segments.slice(lineIndex * 2, (lineIndex + 1) * 2).join(' ')
+    ).join('\n');
+  }
+
+  const characters = Array.from(value.replace(/[\r\n]+/g, ''));
+  return Array.from(
+    { length: Math.ceil(characters.length / BOL_NUMBER_LINE_LENGTH) },
+    (_, lineIndex) => characters
+      .slice(lineIndex * BOL_NUMBER_LINE_LENGTH, (lineIndex + 1) * BOL_NUMBER_LINE_LENGTH)
+      .join('')
+  ).join('\n');
+}
+
+function splitBolNumberForOutput(value: string) {
+  const normalizedValue = normalizeBolNumber(value) || '—';
+  const lines = formatBolNumberInput(normalizedValue).split('\n');
+
+  if (lines.length <= BOL_NUMBER_MAX_LINES) {
+    return lines;
+  }
+
+  return [
+    ...lines.slice(0, BOL_NUMBER_MAX_LINES - 1),
+    `${lines[BOL_NUMBER_MAX_LINES - 1].slice(0, BOL_NUMBER_LINE_LENGTH - 1)}…`
+  ];
+}
+
+function drawBolRoutingTable(context: CanvasRenderingContext2D, form: BolForm) {
+  context.save();
+  context.fillStyle = BOL_OUTPUT_COLORS.paper;
+  context.fillRect(
+    bolRoutingTable.left,
+    bolRoutingTable.titleTop,
+    bolRoutingTable.right - bolRoutingTable.left,
+    bolRoutingTable.bottom - bolRoutingTable.titleTop
+  );
+
+  context.strokeStyle = 'rgb(205, 205, 205)';
+  context.lineWidth = 0.5;
+  const horizontalLines = [
+    bolRoutingTable.titleTop,
+    bolRoutingTable.headerTop,
+    bolRoutingTable.headerBottom,
+    ...bolRoutingRows.map(row => row.bottom)
+  ];
+  horizontalLines.forEach(y => {
+    context.beginPath();
+    context.moveTo(bolRoutingTable.left, y);
+    context.lineTo(bolRoutingTable.right, y);
+    context.stroke();
+  });
+
+  bolRoutingTable.columns.forEach(x => {
+    context.beginPath();
+    context.moveTo(x, bolRoutingTable.headerTop);
+    context.lineTo(x, bolRoutingTable.bottom);
+    context.stroke();
+  });
+
+  context.fillStyle = BOL_OUTPUT_COLORS.ink;
+  context.textBaseline = 'top';
+  context.font = '400 11px "IBM Plex Mono"';
+  context.fillText('ROUTING & TRANSPORT DETAILS', 57, 327);
+
+  context.font = '400 8px "IBM Plex Mono"';
+  context.fillText('Logistics Provider', 57, 353);
+  context.fillText('Packages', bolQuantityCells.packages.textX, 353);
+  context.fillText('Boxes', bolQuantityCells.boxes.textX, 353);
+  context.fillText('Pallets', bolQuantityCells.pallets.textX, 353);
+
+  context.font = '400 9px "IBM Plex Mono"';
+  bolRoutingRows.forEach(row => {
+    drawCellCenteredText(context, row.label, 57, row.top, row.bottom);
+  });
+
+  // Keep quantity values on the same geometric center as their row label.
+  // The table is redrawn from coordinates above, so no SVG sample glyph can
+  // remain in a header cell or bleed across the row boundary.
+  context.font = '400 10px "IBM Plex Mono"';
+  getSelectedChannels(form).forEach(channel => {
+    const row = bolRoutingRows.find(tableRow => tableRow.id === channel.id);
+    if (!row) return;
+
+    const quantities = getQuantityValuesForChannel(form, channel.id);
+    quantityFields.forEach(field => {
+      const value = formatInteger(quantities[field.key]);
+      if (value) {
+        drawCellCenteredText(
+          context,
+          value,
+          bolQuantityCells[field.key].textX,
+          row.top,
+          row.bottom
+        );
+      }
+    });
+  });
+  context.restore();
+}
+
+/**
+ * Produces a self-contained Letter canvas from the original Figma SVG.  This
+ * deliberately avoids DOM screenshotting: html2canvas parses every stylesheet
+ * in the host application and fails on newer CSS color() functions.
+ */
+async function renderBolOutputCanvas(form: BolForm, scale = BOL_OUTPUT_SCALE) {
+  if ('fonts' in document) {
+    // IBM Plex Mono is bundled as WOFF2 by @fontsource (see src/main.tsx).
+    // Wait for the exact output roles before rasterizing so PDF/browser print
+    // receives their glyph pixels and never depends on a printer PC font.
+    await Promise.all([
+      document.fonts.load('400 8px "IBM Plex Mono"'),
+      document.fonts.load('400 10px "IBM Plex Mono"'),
+      document.fonts.ready
+    ]);
+  }
+
+  const templateImage = await loadBolTemplateImage();
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(BOL_TEMPLATE_WIDTH * scale);
+  canvas.height = Math.round(BOL_TEMPLATE_HEIGHT * scale);
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('浏览器无法创建 BOL 导出画布');
+  }
+
+  context.save();
+  context.scale(canvas.width / BOL_TEMPLATE_WIDTH, canvas.height / BOL_TEMPLATE_HEIGHT);
+  context.fillStyle = BOL_OUTPUT_COLORS.paper;
+  context.fillRect(0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
+  context.drawImage(templateImage, 0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
+
+  context.fillStyle = BOL_OUTPUT_COLORS.paper;
+  figmaTemplateStaticMasks.forEach(mask => {
+    context.fillRect(mask.x, mask.y, mask.width, mask.height);
+  });
+
+  context.textBaseline = 'top';
+  context.fillStyle = BOL_OUTPUT_COLORS.ink;
+  // Canvas logical units match the 612 × 792 Figma frame. Use px here (not
+  // CSS pt), otherwise each dynamic value becomes 33% larger than the vector
+  // template once the Letter page is scaled for screen or print.
+  // BOL number: IBM Plex Mono Regular, 8px — matches the approved template.
+  context.font = '400 8px "IBM Plex Mono"';
+  splitBolNumberForOutput(form.bolNo).forEach((line, index) => {
+    context.fillText(line, 57, 263 + index * BOL_NUMBER_LINE_HEIGHT);
+  });
+
+  drawBolRoutingTable(context, form);
+
+  const receipt = formatFigmaReceiptParts(form.pickupAt);
+  context.textBaseline = 'top';
+  context.fillStyle = BOL_OUTPUT_COLORS.timestamp;
+  context.filter = `blur(${0.15 * scale}px)`;
+  context.font = '500 11.678px Inter, Arial, sans-serif';
+  context.fillText(receipt.date, 452, 726);
+  context.font = '400 8.5px Inter, Arial, sans-serif';
+  context.fillText(receipt.meridiem, 511, 729.024);
+  context.font = '500 11.678px Inter, Arial, sans-serif';
+  context.fillText(receipt.time, 531, 726);
+  context.filter = 'none';
+  context.restore();
+
+  return canvas;
+}
 
 function BolDateTimePicker({
   value,
@@ -477,10 +756,10 @@ function BolDateTimePicker({
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         onClick={() => setIsOpen(open => !open)}
-        className={`flex w-full items-center justify-between rounded-2xl border bg-[#07100b]/80 px-4 py-3 text-left outline-none transition-all ${
+        className={`flex w-full items-center justify-between rounded-2xl border bg-dark-bg/80 px-4 py-3 text-left outline-none transition-all ${
           hasError
             ? 'border-red-400/70 ring-4 ring-red-400/10'
-            : 'border-brand-green/80 shadow-[0_0_0_1px_rgba(106,255,0,0.12)] hover:border-brand-green focus:border-brand-green focus:ring-4 focus:ring-brand-green/15'
+            : 'border-brand-green/80 shadow-sm shadow-brand-green/20 hover:border-brand-green focus:border-brand-green focus:ring-4 focus:ring-brand-green/15'
         }`}
       >
         <span className="flex items-center gap-3">
@@ -496,7 +775,7 @@ function BolDateTimePicker({
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full z-40 mt-3 w-[540px] max-w-[calc(100vw-2rem)] rounded-2xl border border-brand-green/60 bg-[#07100b]/95 p-4 shadow-[0_24px_70px_rgba(106,255,0,0.2)] backdrop-blur-xl">
+        <div className="absolute left-0 top-full z-40 mt-3 w-[540px] max-w-[calc(100vw-2rem)] rounded-2xl border border-brand-green/60 bg-dark-bg/95 p-4 shadow-2xl shadow-brand-green/20 backdrop-blur-xl">
           <div className="grid gap-4 md:grid-cols-[1.08fr_0.92fr]">
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
               <div className="mb-3 flex items-center justify-between">
@@ -535,7 +814,7 @@ function BolDateTimePicker({
                       onClick={() => chooseDay(day)}
                       className={`flex h-9 items-center justify-center rounded-xl text-sm font-bold transition-all ${
                         isSelected
-                          ? 'bg-brand-green text-black shadow-[0_8px_20px_rgba(106,255,0,0.28)]'
+                          ? 'bg-brand-green text-black shadow-lg shadow-brand-green/30'
                           : isCurrentMonth
                             ? 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
                             : 'text-text-secondary/35 hover:bg-white/5 hover:text-text-secondary'
@@ -647,86 +926,42 @@ function BolDocument({
   form: BolForm;
   printable: boolean;
 }) {
-  const selectedChannels = getSelectedChannels(form);
-  const receipt = formatFigmaReceiptParts(form.pickupAt);
+  const [documentImage, setDocumentImage] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void renderBolOutputCanvas(form, 2).then(canvas => {
+      if (!cancelled) {
+        setDocumentImage(canvas.toDataURL('image/png'));
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setDocumentImage('');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form]);
 
   return (
     <div className={printable ? 'bol-print-target' : ''}>
-      <div className="bol-letter-page relative mx-auto h-[11in] min-h-[11in] w-[8.5in] overflow-hidden bg-white text-black shadow-2xl shadow-black/40">
-        <img src={bolTemplateUrl} alt="" className="absolute inset-0 h-full w-full select-none object-fill" />
-
-        {figmaTemplateSamplePatches.map(patch => (
-          <div
-            key={`${patch.x}-${patch.y}`}
-            aria-hidden="true"
-            className="absolute bg-white"
-            style={{
-              left: pt(patch.x),
-              top: pt(patch.y),
-              width: pt(patch.width),
-              height: pt(patch.height)
-            }}
+      <div
+        className="bol-letter-page relative isolate mx-auto h-[11in] min-h-[11in] w-[8.5in] overflow-hidden"
+        style={{
+          backgroundColor: 'var(--cmhub-document-paper)',
+          color: 'var(--cmhub-document-ink)'
+        }}
+      >
+        {documentImage && (
+          <img
+            src={documentImage}
+            alt="BOL 预览"
+            className="absolute inset-0 h-full w-full select-none object-fill"
           />
-        ))}
-
-        <div
-          className="absolute whitespace-pre-wrap text-black"
-          style={{
-            ...figmaFont(8),
-            left: pt(57),
-            top: pt(263),
-            width: pt(191),
-            height: pt(38)
-          }}
-        >
-          {form.bolNo.trim() || '—'}
-        </div>
-
-        {selectedChannels.flatMap(channel => {
-          const selectedRow = bolQuantityRows.find(row => row.id === channel.id);
-          if (!selectedRow) return [];
-          const channelQuantities = getQuantityValuesForChannel(form, channel.id);
-
-          return quantityFields.map(field => {
-            const value = formatInteger(channelQuantities[field.key]);
-            if (!value) return null;
-
-            return (
-              <div
-                key={`${channel.id}-${field.key}`}
-                className="absolute text-black"
-                style={{
-                  ...figmaFont(8),
-                  left: pt(bolQuantityColumns[field.key]),
-                  top: pt(selectedRow.y),
-                  width: pt(45),
-                  height: pt(16)
-                }}
-              >
-                {value}
-              </div>
-            );
-          });
-        })}
-
-        <div
-          className="absolute flex items-end gap-[2pt] text-[#bfbfbf]"
-          style={{
-            left: pt(452),
-            top: pt(726),
-            height: pt(14)
-          }}
-        >
-          <span style={{ fontFamily: 'Inter, Arial, sans-serif', fontSize: pt(11.678), lineHeight: pt(14), fontWeight: 500 }}>
-            {receipt.date}
-          </span>
-          <span style={{ fontFamily: 'Inter, Arial, sans-serif', fontSize: pt(8.5), lineHeight: pt(10.977) }}>
-            {receipt.meridiem}
-          </span>
-          <span style={{ fontFamily: 'Inter, Arial, sans-serif', fontSize: pt(11.678), lineHeight: pt(14), fontWeight: 500, marginLeft: pt(3) }}>
-            {receipt.time}
-          </span>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -741,25 +976,20 @@ export default function BolManager() {
   const [activeRecord, setActiveRecord] = useState<BolRecord | null>(null);
   const [notice, setNotice] = useState('');
   const [isExporting, setIsExporting] = useState(false);
-  const [isChannelDropdownOpen, setIsChannelDropdownOpen] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
-  const channelDropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedChannels = useMemo(
     () => getSelectedChannels(form),
     [form.channelIds, form.channelId]
   );
   const selectedChannelIds = useMemo(() => selectedChannels.map(channel => channel.id), [selectedChannels]);
-  const selectedChannelLabel = selectedChannels.length > 0
-    ? selectedChannels.map(channel => channel.name).join('、')
-    : '请选择渠道';
   const activeChannelId = useMemo(() => getActiveChannelId(form), [form]);
   const activeChannel = BOL_CHANNELS.find(channel => channel.id === activeChannelId);
   const activeChannelQuantities = useMemo(
     () => activeChannelId ? getQuantityValuesForChannel(form, activeChannelId) : createEmptyQuantityValues(),
     [form, activeChannelId]
   );
-
   useEffect(() => {
     localStorage.setItem(BOL_STORAGE_KEY, JSON.stringify(records));
   }, [records]);
@@ -771,27 +1001,6 @@ export default function BolManager() {
     return () => window.clearTimeout(timer);
   }, [form]);
 
-  useEffect(() => {
-    const closeChannelDropdown = (event: MouseEvent) => {
-      if (!channelDropdownRef.current?.contains(event.target as Node)) {
-        setIsChannelDropdownOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsChannelDropdownOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', closeChannelDropdown);
-    document.addEventListener('keydown', closeOnEscape);
-
-    return () => {
-      document.removeEventListener('mousedown', closeChannelDropdown);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, []);
-
   const startNewBol = () => {
     const nextForm = createEmptyForm();
     setForm(nextForm);
@@ -799,12 +1008,12 @@ export default function BolManager() {
     setErrors({});
     setNotice('');
     setActiveRecord(null);
-    setIsChannelDropdownOpen(false);
     setStage('edit');
   };
 
   const updateFormField = (field: 'bolNo' | 'pickupAt', value: string) => {
-    setForm(current => ({ ...current, [field]: value }));
+    const nextValue = field === 'bolNo' ? formatBolNumberInput(value) : value;
+    setForm(current => ({ ...current, [field]: nextValue }));
     setErrors(current => ({ ...current, [field]: undefined }));
   };
 
@@ -825,6 +1034,57 @@ export default function BolManager() {
       };
     });
     setErrors(current => ({ ...current, channelId: undefined }));
+  };
+
+  const updateSelectedChannels = (nextChannelIds: string[]) => {
+    const validChannelIds = new Set(BOL_CHANNELS.map(channel => channel.id));
+    const normalizedIds = Array.from(new Set(nextChannelIds)).filter(channelId => validChannelIds.has(channelId));
+
+    setForm(current => {
+      const currentIds = getNormalizedChannelIds(current);
+      const newlySelectedId = normalizedIds.find(channelId => !currentIds.includes(channelId));
+      const nextActiveChannelId = newlySelectedId
+        ?? (current.activeChannelId && normalizedIds.includes(current.activeChannelId)
+          ? current.activeChannelId
+          : normalizedIds[0] ?? '');
+      const nextChannelQuantities = { ...current.channelQuantities };
+
+      normalizedIds.forEach(channelId => {
+        nextChannelQuantities[channelId] = getQuantityValuesForChannel(current, channelId);
+      });
+
+      const nextActiveQuantities = nextActiveChannelId
+        ? getQuantityValuesForChannel({ ...current, channelQuantities: nextChannelQuantities }, nextActiveChannelId)
+        : createEmptyQuantityValues();
+
+      return {
+        ...current,
+        channelIds: normalizedIds,
+        channelId: normalizedIds[0],
+        activeChannelId: nextActiveChannelId,
+        channelQuantities: nextChannelQuantities,
+        packages: nextActiveQuantities.packages,
+        boxes: nextActiveQuantities.boxes,
+        pallets: nextActiveQuantities.pallets
+      };
+    });
+    setErrors(current => ({ ...current, channelId: undefined }));
+  };
+
+  const setActiveChannel = (channelId: string) => {
+    setForm(current => {
+      const selectedIds = getNormalizedChannelIds(current);
+      if (!selectedIds.includes(channelId)) return current;
+      const values = getQuantityValuesForChannel(current, channelId);
+
+      return {
+        ...current,
+        activeChannelId: channelId,
+        packages: values.packages,
+        boxes: values.boxes,
+        pallets: values.pallets
+      };
+    });
   };
 
   const removeChannel = (channelId: string) => {
@@ -877,9 +1137,13 @@ export default function BolManager() {
       return;
     }
 
-    setPreviewForm(form);
-    setNotice('');
-    setStage('confirm');
+    const openPreview = () => {
+      setPreviewForm(form);
+      setNotice('');
+      setStage('confirm');
+    };
+
+    openPreview();
   };
 
   const confirmBol = () => {
@@ -902,7 +1166,7 @@ export default function BolManager() {
       : createEmptyQuantityValues();
     const record: BolRecord = {
       ...form,
-      bolNo: form.bolNo.trim(),
+      bolNo: normalizeBolNumber(form.bolNo),
       channelIds: normalizedChannelIds,
       channelId: normalizedChannelIds[0],
       activeChannelId: normalizedActiveChannelId,
@@ -919,7 +1183,7 @@ export default function BolManager() {
       renderedHtml: previewRef.current?.outerHTML ?? ''
     };
 
-    setRecords(current => [record, ...current.filter(item => item.id !== record.id)]);
+    setRecords(current => keepLatestBolRecords([record, ...current.filter(item => item.id !== record.id)]));
     setActiveRecord(record);
     setNotice('BOL 已保存，可打印或下载 PDF。');
     setStage('output');
@@ -937,7 +1201,7 @@ export default function BolManager() {
 
     setActiveRecord(record);
     setForm({
-      bolNo: record.bolNo,
+      bolNo: formatBolNumberInput(record.bolNo),
       channelIds: normalizedChannelIds,
       channelId: normalizedChannelIds[0],
       activeChannelId: normalizedActiveChannelId,
@@ -950,35 +1214,21 @@ export default function BolManager() {
     setPreviewForm(record);
     setErrors({});
     setNotice('');
-    setIsChannelDropdownOpen(false);
     setStage('output');
   };
 
   const downloadPdf = async () => {
-    if (!previewRef.current) return;
-
     setIsExporting(true);
     setNotice('');
 
     try {
-      const printablePage = previewRef.current.querySelector('.bol-letter-page') as HTMLElement | null;
-      if (!printablePage) {
-        throw new Error('未找到可导出的 BOL 预览区域');
-      }
-
-      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import('html2canvas'),
+      const [canvas, { default: jsPDF }] = await Promise.all([
+        renderBolOutputCanvas(form),
         import('jspdf')
       ]);
-
-      const canvas = await html2canvas(printablePage, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true
-      });
       const imageData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-      pdf.addImage(imageData, 'PNG', 0, 0, 612, 792);
+      pdf.addImage(imageData, 'PNG', 0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
       pdf.save(`${(activeRecord?.bolNo || form.bolNo || 'BOL').replace(/[^\w-]+/g, '_')}_v${activeRecord?.version ?? 1}.pdf`);
       setNotice('PDF 已生成并开始下载。');
     } catch (error) {
@@ -988,16 +1238,68 @@ export default function BolManager() {
     }
   };
 
-  const printBol = () => {
-    if (activeRecord) {
-      setRecords(current => current.map(record => (
-        record.id === activeRecord.id
-          ? { ...record, printCount: record.printCount + 1, updatedAt: new Date().toISOString() }
-          : record
-      )));
-      setActiveRecord(current => current ? { ...current, printCount: current.printCount + 1 } : current);
+  const printBol = async () => {
+    // Open synchronously while handling the click, otherwise browser popup
+    // policies can block the print document after the canvas has rendered.
+    const printWindow = window.open('', '_blank', 'width=816,height=1056');
+    if (!printWindow) {
+      setNotice('浏览器阻止了打印窗口，请允许本网站弹窗后重试。');
+      return;
     }
-    window.print();
+
+    setIsPrinting(true);
+    setNotice('');
+
+    try {
+      const canvas = await renderBolOutputCanvas(form);
+      const documentImage = canvas.toDataURL('image/png');
+
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <title>BOL Print</title>
+            <style>
+              @page { size: Letter portrait; margin: 0; }
+              html, body { width: 8.5in; height: 11in; margin: 0; padding: 0; background: rgb(255, 255, 255); }
+              img { display: block; width: 8.5in; height: 11in; object-fit: fill; }
+            </style>
+          </head>
+          <body><img src="${documentImage}" alt="BOL" /></body>
+        </html>`);
+      printWindow.document.close();
+
+      const printImage = printWindow.document.querySelector('img');
+      if (!printImage) {
+        throw new Error('打印文件准备失败');
+      }
+      if (!printImage.complete) {
+        await new Promise<void>((resolve, reject) => {
+          printImage.addEventListener('load', () => resolve(), { once: true });
+          printImage.addEventListener('error', () => reject(new Error('打印文件加载失败')), { once: true });
+        });
+      }
+
+      printWindow.addEventListener('afterprint', () => printWindow.close(), { once: true });
+      printWindow.focus();
+      printWindow.print();
+
+      if (activeRecord) {
+        setRecords(current => keepLatestBolRecords(current.map(record => (
+          record.id === activeRecord.id
+            ? { ...record, printCount: record.printCount + 1, updatedAt: new Date().toISOString() }
+            : record
+        ))));
+        setActiveRecord(current => current ? { ...current, printCount: current.printCount + 1 } : current);
+      }
+      setNotice('完整 Letter 版 BOL 已送入浏览器打印队列。');
+    } catch (error) {
+      printWindow.close();
+      setNotice(`打印准备失败：${error instanceof Error ? error.message : '请重试'}`);
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   const resetForm = () => {
@@ -1006,248 +1308,146 @@ export default function BolManager() {
     setPreviewForm(nextForm);
     setErrors({});
     setNotice('');
-    setIsChannelDropdownOpen(false);
   };
 
   return (
-    <section className="bg-white/[0.045] backdrop-blur-xl rounded-4xl border border-white/10 overflow-hidden">
-      <div className="no-print flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 p-5 md:p-6 border-b border-white/10">
-        <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-brand-green/15 flex items-center justify-center border border-brand-green/25">
+    <ArcoCard className="cmhub-bol-card" bordered bodyStyle={{ padding: 0 }}>
+      <div className="no-print cmhub-bol-toolbar">
+        <div className="cmhub-bol-toolbar-heading">
+          <div className="cmhub-bol-toolbar-icon">
             <FileCheck2 className="w-6 h-6 text-brand-green" />
           </div>
           <div>
-            <div className="text-xs font-black text-brand-green uppercase tracking-[0.18em]">Bill of Lading</div>
-            <h2 className="mt-1 text-2xl font-bold text-text-primary">BOL 管理</h2>
-            <p className="mt-1 text-sm text-text-secondary/70">录入单号、渠道、装货数量和提货时间，实时生成标准 Letter 提货单。</p>
+            <Typography.Title heading={3} className="!mb-0">BOL管理</Typography.Title>
+            <Typography.Paragraph type="secondary" className="!mb-0">录入单号、渠道、装货数量和提货时间，实时生成标准 BOL 提货单。</Typography.Paragraph>
           </div>
         </div>
-        <div className="flex flex-wrap gap-3">
+        <div className="cmhub-bol-toolbar-actions">
           {stage !== 'list' && (
-            <button
-              type="button"
+            <ArcoButton
               onClick={() => setStage('list')}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-text-primary hover:bg-white/10 transition-all"
+              icon={<ArrowLeft className="w-4 h-4" />}
             >
-              <ArrowLeft className="w-4 h-4" />
               返回列表
-            </button>
+            </ArcoButton>
           )}
-          <button
-            type="button"
-            onClick={startNewBol}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 transition-all active:scale-[0.98]"
-          >
-            <FileText className="w-4 h-4" />
-            新建 BOL
-          </button>
+          {stage === 'list' && (
+            <ArcoButton
+              type="primary"
+              onClick={startNewBol}
+              icon={<FileText className="w-4 h-4" />}
+            >
+              新建 BOL
+            </ArcoButton>
+          )}
         </div>
       </div>
 
       {notice && (
-        <div className="no-print mx-5 mt-5 rounded-2xl border border-brand-green/20 bg-brand-green/10 px-4 py-3 text-sm text-brand-green">
-          {notice}
-        </div>
+        <div className="no-print mx-5 mt-5"><ArcoAlert type="success" showIcon content={notice} /></div>
       )}
 
       {stage === 'list' && (
-        <div className="no-print p-5 md:p-6">
+        <div className="no-print cmhub-bol-list">
           {records.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-white/15 bg-dark-bg/40 px-6 py-12 text-center">
-              <PackageCheck className="mx-auto h-10 w-10 text-brand-green" />
-              <h3 className="mt-4 text-xl font-bold text-text-primary">还没有生成过 BOL</h3>
-              <p className="mt-2 text-sm text-text-secondary/65">点击“新建 BOL”，扫码或输入 BOL 单号后即可生成预览。</p>
-            </div>
+            <Empty description="还没有生成过 BOL。点击“新建 BOL”，扫码或输入 BOL 单号后即可生成预览。" />
           ) : (
-            <div className="overflow-hidden rounded-3xl border border-white/10">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-dark-bg/70 text-text-secondary">
-                  <tr>
-                    <th className="px-5 py-4">BOL 单号</th>
-                    <th className="px-5 py-4">渠道</th>
-                    <th className="px-5 py-4">数量</th>
-                    <th className="px-5 py-4">提货时间</th>
-                    <th className="px-5 py-4">版本/打印</th>
-                    <th className="px-5 py-4 text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {records.map(record => (
-                    <tr key={record.id} className="hover:bg-white/[0.04] transition-colors">
-                      <td className="px-5 py-4 font-mono font-bold text-text-primary">{record.bolNo}</td>
-                      <td className="px-5 py-4 text-text-secondary">{formatChannelNames(record)}</td>
-                      <td className="px-5 py-4 text-text-secondary">{formatQuantitySummary(record)}</td>
-                      <td className="px-5 py-4 text-text-secondary">{formatPickupTime(record.pickupAt)}</td>
-                      <td className="px-5 py-4 text-text-secondary">v{record.version} · 已打印 {record.printCount}</td>
-                      <td className="px-5 py-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openRecord(record)}
-                          className="rounded-lg bg-brand-green/15 px-3 py-2 text-xs font-bold text-brand-green hover:bg-brand-green/25 transition-colors"
-                        >
-                          预览/输出
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ArcoTable
+              rowKey="id"
+              data={records}
+              border={false}
+              pagination={false}
+              columns={[
+                { title: 'BOL 单号', dataIndex: 'bolNo' },
+                { title: '渠道', render: (_: unknown, record: BolRecord) => formatChannelNames(record) },
+                { title: '数量', render: (_: unknown, record: BolRecord) => formatQuantitySummary(record) },
+                { title: '提货时间', dataIndex: 'pickupAt', render: (pickupAt: string) => formatPickupTime(pickupAt) },
+                { title: '版本/打印', render: (_: unknown, record: BolRecord) => `v${record.version} · 已打印 ${record.printCount}` },
+                {
+                  title: '操作',
+                  width: 118,
+                  render: (_: unknown, record: BolRecord) => (
+                    <ArcoButton type="text" size="mini" onClick={() => openRecord(record)}>预览/输出</ArcoButton>
+                  )
+                }
+              ]}
+            />
           )}
         </div>
       )}
 
       {stage === 'edit' && (
-        <div className="grid xl:grid-cols-[390px_1fr] gap-6 p-5 md:p-6">
-          <div className="no-print space-y-5">
-            <div className="rounded-3xl border border-white/10 bg-dark-bg/45 p-5 space-y-5">
+        <div className="cmhub-bol-editor">
+          <div className="no-print cmhub-bol-form-column">
+            <div className="cmhub-bol-form-panel">
               <div>
                 <label className="text-sm font-bold text-text-primary">BOL 单号 <span className="text-red-400">*</span></label>
-                <input
-                  type="text"
+                <ArcoInput.TextArea
                   value={form.bolNo}
-                  onChange={event => updateFormField('bolNo', event.target.value)}
+                  onChange={value => updateFormField('bolNo', value)}
                   placeholder="扫码或手动输入 BOL Number"
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 font-mono text-text-primary outline-none transition-all placeholder:text-text-secondary/40 focus:border-brand-green focus:ring-4 focus:ring-brand-green/15"
+                  className="mt-2 cmhub-bol-number-input"
+                  autoSize={{ minRows: 1, maxRows: BOL_NUMBER_MAX_LINES }}
                   autoFocus
                 />
                 {errors.bolNo && <p className="mt-2 text-xs text-red-400">{errors.bolNo}</p>}
               </div>
 
-              <div>
+              <div className="cmhub-bol-field">
                 <label className="text-sm font-bold text-text-primary">渠道 <span className="text-red-400">*</span></label>
-                <div ref={channelDropdownRef} className="relative mt-2">
-                  <button
-                    type="button"
-                    aria-haspopup="listbox"
-                    aria-expanded={isChannelDropdownOpen}
-                    onClick={() => setIsChannelDropdownOpen(isOpen => !isOpen)}
-                    className={`flex w-full items-center justify-between rounded-2xl border bg-[#07100b]/80 px-4 py-3 text-left outline-none transition-all ${
-                      errors.channelId
-                        ? 'border-red-400/70 ring-4 ring-red-400/10'
-                        : 'border-brand-green/80 shadow-[0_0_0_1px_rgba(106,255,0,0.12)] hover:border-brand-green focus:border-brand-green focus:ring-4 focus:ring-brand-green/15'
-                    }`}
-                  >
-                    <span>
-                      <span className="block text-lg font-black leading-tight text-text-primary">{selectedChannelLabel}</span>
-                      <span className="mt-1 block text-xs font-semibold text-text-secondary/60">
-                        {selectedChannels.length > 0 ? `已选择 ${selectedChannels.length} 个渠道` : '点击选择一个或多个渠道'}
-                      </span>
-                    </span>
-                    <ChevronDown className={`h-5 w-5 text-brand-green transition-transform ${isChannelDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {isChannelDropdownOpen && (
-                    <div
-                      role="listbox"
-                      aria-multiselectable="true"
-                      className="absolute left-0 right-0 top-full z-30 mt-3 max-h-96 overflow-y-auto rounded-2xl border border-brand-green/60 bg-[#07100b]/95 p-1 shadow-[0_24px_70px_rgba(106,255,0,0.18)] backdrop-blur-xl"
-                    >
-                      {BOL_CHANNELS.map(channel => {
-                        const isSelected = selectedChannelIds.includes(channel.id);
-                        const isActive = channel.id === activeChannelId;
-                        const quantityParts = getQuantitySummaryParts(getQuantityValuesForChannel(form, channel.id));
-                        return (
-                          <div
-                            key={channel.id}
-                            role="option"
-                            aria-selected={isSelected}
-                            className={`flex items-center gap-2 rounded-xl transition-all ${
-                              isActive
-                                ? 'bg-brand-green text-black shadow-[0_10px_24px_rgba(106,255,0,0.28)]'
-                                : isSelected
-                                  ? 'bg-brand-green/15 text-text-primary ring-1 ring-brand-green/30'
-                                  : 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => selectChannelForEditing(channel.id)}
-                              className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left"
-                            >
-                              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
-                                isActive
-                                  ? 'border-black/30 bg-black/10'
-                                  : isSelected
-                                    ? 'border-brand-green/70 bg-brand-green/15 text-brand-green'
-                                    : 'border-white/20 bg-white/[0.03]'
-                              }`}
-                              >
-                                {isSelected && <Check className="h-4 w-4" />}
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-base font-black">{channel.name}</span>
-                                <span className={`mt-0.5 block truncate text-xs font-semibold ${
-                                  isActive ? 'text-black/60' : 'text-text-secondary/60'
-                                }`}
-                                >
-                                  {isActive
-                                    ? '正在填写该渠道数量'
-                                    : isSelected
-                                      ? quantityParts.length > 0 ? quantityParts.join(' / ') : '已选择，数量为空'
-                                      : '点击添加并填写数量'}
-                                </span>
-                              </span>
-                            </button>
-                            {isSelected && (
-                              <button
-                                type="button"
-                                onClick={() => removeChannel(channel.id)}
-                                className={`mr-2 rounded-lg px-2 py-1 text-xs font-black transition-colors ${
-                                  isActive
-                                    ? 'bg-black/10 text-black/70 hover:bg-black/20'
-                                    : 'bg-white/5 text-text-secondary hover:bg-red-400/15 hover:text-red-300'
-                                }`}
-                              >
-                                移除
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <div className="mt-1 border-t border-white/10 p-3">
-                        <p className="text-xs font-semibold text-text-secondary/60">
-                          可多选；点击渠道切换当前填写对象，切换后会加载该渠道已填写数量，空白按 0 处理。
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setIsChannelDropdownOpen(false)}
-                          className="mt-3 w-full rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 transition-all"
-                        >
-                          完成选择
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <ArcoSelect
+                  mode="multiple"
+                  value={selectedChannelIds}
+                  options={BOL_CHANNELS.map(channel => ({ label: channel.name, value: channel.id }))}
+                  placeholder="选择一个或多个渠道"
+                  onChange={value => updateSelectedChannels(Array.isArray(value) ? value.map(String) : [])}
+                  onSelect={value => setActiveChannel(String(value))}
+                  status={errors.channelId ? 'error' : undefined}
+                  className="cmhub-bol-channel-select"
+                />
+                <Typography.Text type="secondary" className="cmhub-bol-field-help">选择新渠道后会自动切换填写对象；每个渠道已填写的数量将被保留。</Typography.Text>
                 {errors.channelId && <p className="mt-2 text-xs text-red-400">{errors.channelId}</p>}
               </div>
 
-              <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="cmhub-bol-quantity-panel">
+                <div className="cmhub-bol-quantity-heading">
                   <div>
-                    <p className="text-xs font-black uppercase tracking-[0.16em] text-text-secondary/55">当前填写渠道</p>
-                    <p className="mt-1 text-lg font-black text-text-primary">{activeChannel?.name ?? '请选择渠道'}</p>
+                    <Typography.Text type="secondary">当前填写渠道</Typography.Text>
+                    <Typography.Title heading={5} className="!mb-0">{activeChannel?.name ?? '请选择渠道'}</Typography.Title>
                   </div>
-                  <div className="rounded-full bg-brand-green/10 px-3 py-1 text-xs font-bold text-brand-green">
+                  <Typography.Text className="cmhub-bol-quantity-summary">
                     {getQuantitySummaryParts(activeChannelQuantities).length > 0
                       ? getQuantitySummaryParts(activeChannelQuantities).join(' / ')
                       : '数量为空'}
-                  </div>
+                  </Typography.Text>
                 </div>
+
+                {selectedChannels.length > 1 && (
+                  <div className="cmhub-bol-channel-switcher" role="group" aria-label="切换当前填写渠道">
+                    {selectedChannels.map(channel => (
+                      <ArcoButton
+                        key={channel.id}
+                        size="small"
+                        type={channel.id === activeChannelId ? 'primary' : 'secondary'}
+                        onClick={() => setActiveChannel(channel.id)}
+                      >
+                        {channel.name}
+                      </ArcoButton>
+                    ))}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-3">
                   {quantityFields.map(field => (
                     <div key={field.key}>
                       <label className="text-xs font-bold text-text-secondary">{field.label}</label>
-                      <input
-                        type="text"
+                      <ArcoInput
                         inputMode="numeric"
                         value={activeChannelQuantities[field.key]}
-                        onChange={event => updateQuantity(field.key, event.target.value)}
+                        onChange={value => updateQuantity(field.key, value)}
                         placeholder="0"
                         disabled={!activeChannel}
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-center font-mono text-lg font-bold text-text-primary outline-none transition-all placeholder:text-text-secondary/35 focus:border-brand-green focus:ring-4 focus:ring-brand-green/15 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="mt-2"
                       />
                     </div>
                   ))}
@@ -1255,38 +1455,41 @@ export default function BolManager() {
               </div>
               {errors.quantities && <p className="-mt-3 text-xs text-red-400">{errors.quantities}</p>}
 
-              <div>
+              <div className="cmhub-bol-field">
                 <label className="text-sm font-bold text-text-primary">提货时间 <span className="text-red-400">*</span></label>
-                <BolDateTimePicker
-                  value={form.pickupAt}
-                  onChange={nextValue => updateFormField('pickupAt', nextValue)}
-                  hasError={Boolean(errors.pickupAt)}
+                <ArcoDatePicker
+                  value={parsePickupDate(form.pickupAt)}
+                  onChange={(_value, date) => updateFormField('pickupAt', toDateTimeInputValue(date.toDate()))}
+                  showTime={{ use12Hours: true }}
+                  showNowBtn
+                  allowClear={false}
+                  format="MM/DD/YYYY hh:mm A"
+                  status={errors.pickupAt ? 'error' : undefined}
+                  className="cmhub-bol-date-picker"
                 />
                 {errors.pickupAt && <p className="mt-2 text-xs text-red-400">{errors.pickupAt}</p>}
               </div>
+
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
+            <div className="cmhub-bol-form-actions">
+              <ArcoButton
                 onClick={resetForm}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-text-primary hover:bg-white/10 transition-all"
+                icon={<RotateCcw className="w-4 h-4" />}
               >
-                <RotateCcw className="w-4 h-4" />
                 重置
-              </button>
-              <button
-                type="button"
+              </ArcoButton>
+              <ArcoButton
+                type="primary"
                 onClick={submitForPreview}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 transition-all active:scale-[0.98]"
+                icon={<Save className="w-4 h-4" />}
               >
-                <Save className="w-4 h-4" />
                 生成 BOL
-              </button>
+              </ArcoButton>
             </div>
           </div>
 
-          <div className="overflow-auto rounded-3xl border border-white/10 bg-dark-bg/55 p-4">
+          <div className="cmhub-bol-preview-surface">
             <BolDocument form={previewForm} printable={false} />
           </div>
         </div>
@@ -1303,22 +1506,19 @@ export default function BolManager() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button
-                type="button"
+              <ArcoButton
                 onClick={() => setStage('edit')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-text-primary hover:bg-white/10 transition-all"
+                icon={<ArrowLeft className="w-4 h-4" />}
               >
-                <ArrowLeft className="w-4 h-4" />
                 返回修改
-              </button>
-              <button
-                type="button"
+              </ArcoButton>
+              <ArcoButton
+                type="primary"
                 onClick={confirmBol}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 transition-all active:scale-[0.98]"
+                icon={<CheckCircle2 className="w-4 h-4" />}
               >
-                <CheckCircle2 className="w-4 h-4" />
                 确认生成
-              </button>
+              </ArcoButton>
             </div>
           </div>
 
@@ -1341,39 +1541,38 @@ export default function BolManager() {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
+              <ArcoButton
                 onClick={() => setStage('edit')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-text-primary hover:bg-white/10 transition-all"
+                icon={<ArrowLeft className="w-4 h-4" />}
               >
-                <ArrowLeft className="w-4 h-4" />
                 返回修改
-              </button>
-              <button
-                type="button"
-                onClick={printBol}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-brand-green/30 bg-brand-green/15 px-4 py-3 text-sm font-black text-brand-green hover:bg-brand-green/25 transition-all"
+              </ArcoButton>
+              <ArcoButton
+                onClick={() => void printBol()}
+                disabled={isPrinting}
+                loading={isPrinting}
+                icon={<Printer className="w-4 h-4" />}
               >
-                <Printer className="w-4 h-4" />
-                打印
-              </button>
-              <button
-                type="button"
+                {isPrinting ? '准备打印...' : '打印'}
+              </ArcoButton>
+              <ArcoButton
+                type="primary"
                 onClick={() => void downloadPdf()}
                 disabled={isExporting}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 disabled:opacity-60 transition-all active:scale-[0.98]"
+                loading={isExporting}
+                icon={<Download className="w-4 h-4" />}
               >
-                <Download className="w-4 h-4" />
                 {isExporting ? '生成中...' : '下载 PDF'}
-              </button>
+              </ArcoButton>
             </div>
           </div>
 
           <div ref={previewRef} className="overflow-auto rounded-3xl border border-white/10 bg-dark-bg/55 p-4">
             <BolDocument form={form} printable={true} />
           </div>
+
         </div>
       )}
-    </section>
+    </ArcoCard>
   );
 }

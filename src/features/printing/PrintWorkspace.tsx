@@ -1,18 +1,40 @@
-import { useState, useEffect, useRef } from 'react';
-import * as XLSX from 'xlsx';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import printJS from 'print-js';
 import qz from 'qz-tray';
-import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle } from 'lucide-react';
+import {
+  Alert as ArcoAlert,
+  Button as ArcoButton,
+  Card as ArcoCard,
+  Drawer,
+  Input as ArcoInput,
+  Modal as ArcoModal,
+  Slider,
+  Space as ArcoSpace,
+  Switch,
+  Tabs,
+  Tooltip,
+  Typography
+} from '@arco-design/web-react';
+import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import BolManager from './BolManager';
-import QzSetupGuide from './QzSetupGuide';
+import { useLocation, useNavigate } from 'react-router-dom';
+import QzSetupGuide from '../settings/QzSetupGuide';
+import InterceptAlertOverlay from '../intercepts/InterceptAlertOverlay';
+import { findStoredInterceptRule, type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
+import PrintLogTable from './PrintLogTable';
+import { usePrintLogs, MAX_PRINT_LOG_ENTRIES } from './hooks/usePrintLogs';
+import { useScanFeedback } from './hooks/useScanFeedback';
+import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome } from './printingTypes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
+const LOGS_PER_PAGE = 20;
+const QZ_PRINT_TIMEOUT_MS = 3_000;
+const AUDIO_PREVIEW_LONG_PRESS_MS = 450;
 const LOCAL_PRINT_SERVER_ENDPOINTS = ['http://127.0.0.1:3001', 'http://localhost:3001'];
 const LOCAL_WEB_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 const VIRTUAL_PRINTER_KEYWORDS = [
@@ -29,38 +51,16 @@ const VIRTUAL_PRINTER_KEYWORDS = [
 type LocalPrintServerStatus = 'unknown' | 'connected' | 'offline';
 type PrinterBridge = 'none' | 'qz' | 'local';
 type QzSecurityState = 'unknown' | 'signed' | 'unsigned' | 'error';
+type QzConnectionHealth = 'idle' | 'healthy' | 'offline';
 
 interface QzSecurityStatus {
   state: QzSecurityState;
   message: string;
 }
 
-// Debounce hook
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-  return debouncedValue;
-}
-
 interface MappingData {
   firstLeg: string;
   exchange: string;
-}
-
-interface PrintLog {
-  time: string;
-  firstLeg: string;
-  exchange: string;
-  status: 'success' | 'error';
-  message: string;
-  type: 'import' | 'print' | 'system';
 }
 
 interface RecentlyPrinted {
@@ -70,9 +70,31 @@ interface RecentlyPrinted {
 
 interface FileInfo {
   name: string;
-  status: 'success' | 'error';
+  status: 'loading' | 'success' | 'error';
   message?: string;
 }
+
+const sanitizeBarcode = (value: string) => value.trim().replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+const normalizeBarcode = (value: string) => sanitizeBarcode(value).toLowerCase();
+
+type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
+
+const createPaginationItems = (currentPage: number, totalPages: number): PaginationItem[] => {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages: PaginationItem[] = [1];
+  const windowStart = Math.max(2, currentPage - 2);
+  const windowEnd = Math.min(totalPages - 1, currentPage + 2);
+
+  if (windowStart > 2) pages.push('ellipsis-left');
+  for (let page = windowStart; page <= windowEnd; page += 1) pages.push(page);
+  if (windowEnd < totalPages - 1) pages.push('ellipsis-right');
+  pages.push(totalPages);
+
+  return pages;
+};
 
 const normalizePrinterName = (name: unknown) => String(name || '').trim();
 
@@ -103,12 +125,19 @@ interface ActiveAudio {
 }
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pdfFiles, setPdfFiles] = useState<Record<string, File>>({});
   const [scanInput, setScanInput] = useState('');
-  const [logs, setLogs] = useState<PrintLog[]>([]);
-  const [activeTab, setActiveTab] = useState<'import' | 'print' | 'system'>('print');
+  const { logs, lastLogId, addLog: appendLog, clearLogsByType } = usePrintLogs();
+  const { scanFeedback, announceScanFeedback } = useScanFeedback();
+  const { findRule: findInterceptRule, storageStatus: interceptStorageStatus } = useInterceptRules();
+  const [activeTab, setActiveTab] = useState<PrintLogTab>('print');
+  const [logPage, setLogPage] = useState(1);
   const [stats, setStats] = useState({ excelCount: 0, pdfCount: 0, printedCount: 0 });
+  const [isDataImportOpen, setIsDataImportOpen] = useState(false);
+  const [isQzGuideOpen, setIsQzGuideOpen] = useState(false);
   const [excelFile, setExcelFile] = useState<FileInfo | null>(null);
   const [pdfFolder, setPdfFolder] = useState<FileInfo | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -126,6 +155,7 @@ export default function App() {
     state: 'unknown',
     message: '尚未检测 QZ 官方证书签名'
   });
+  const [qzConnectionHealth, setQzConnectionHealth] = useState<QzConnectionHealth>('idle');
   const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
   const [audioVolume, setAudioVolume] = useState(() => {
     if (localStorage.getItem('audioFeedbackSettingsVersion') !== AUDIO_SETTINGS_VERSION) {
@@ -142,9 +172,8 @@ export default function App() {
   const [lastAudioResult, setLastAudioResult] = useState<ScanResult | null>(null);
   const [recentlyPrinted, setRecentlyPrinted] = useState<RecentlyPrinted[]>([]);
   const [duplicateInfo, setDuplicateInfo] = useState<{ code: string; show: boolean } | null>(null);
-  const [lastPrintedCode, setLastPrintedCode] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const logContainerRef = useRef<HTMLDivElement>(null);
+  const [interceptedScan, setInterceptedScan] = useState<{ code: string; rule: InterceptRule } | null>(null);
+  const interceptScanLockRef = useRef<string | null>(null);
   const printerDropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeAudioRef = useRef<ActiveAudio | null>(null);
@@ -154,12 +183,106 @@ export default function App() {
   const recentAudioRequestsRef = useRef<number[]>([]);
   const previewLongPressTimerRef = useRef<number | null>(null);
   const previewLongPressPlayedRef = useRef(false);
-  const debouncedScanInput = useDebounce(scanInput, 50);
+  const mappingWorkerRef = useRef<Worker | null>(null);
+  const pendingExcelFileNameRef = useRef('');
+  const logTabListRef = useRef<HTMLDivElement>(null);
+  const logTabPillRef = useRef<HTMLSpanElement>(null);
+  const logSectionRef = useRef<HTMLElement>(null);
+  const logTabMotionInitializedRef = useRef(false);
+  const interceptStorageNoticeLoggedRef = useRef(false);
   const printerOptions = [
     { value: '', label: '自动选择可直打打印机', hint: printerBridge === 'qz' ? '自动通过 QZ Tray 匹配真实打印机' : '自动跳过 PDF24 等虚拟设备' },
     ...printers.map(printer => ({ value: printer, label: printer, hint: printerBridge === 'qz' ? 'QZ Tray 已检测到的本机设备' : '本机已检测到的打印设备' }))
   ];
   const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
+  const filteredLogs = useMemo(
+    () => logs.filter(log => log.type === activeTab),
+    [logs, activeTab]
+  );
+  const totalLogPages = Math.max(1, Math.ceil(filteredLogs.length / LOGS_PER_PAGE));
+  const currentLogPage = Math.min(logPage, totalLogPages);
+  const visibleLogs = useMemo(() => {
+    const startIndex = (currentLogPage - 1) * LOGS_PER_PAGE;
+    return filteredLogs
+      .slice(startIndex, startIndex + LOGS_PER_PAGE)
+      .map((log, index) => ({
+        ...log,
+        rowNumber: filteredLogs.length - (startIndex + index)
+      }));
+  }, [currentLogPage, filteredLogs]);
+  const paginationItems = useMemo(
+    () => createPaginationItems(currentLogPage, totalLogPages),
+    [currentLogPage, totalLogPages]
+  );
+
+  const ensureMappingWorker = () => {
+    if (mappingWorkerRef.current) return mappingWorkerRef.current;
+
+    const worker = new Worker(new URL('./mappingWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent<{
+      type: 'success' | 'error';
+      mapping?: Record<string, string>;
+      count?: number;
+      message?: string;
+    }>) => {
+      const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
+      if (event.data.type === 'success' && event.data.mapping && event.data.count) {
+        setMapping(event.data.mapping);
+        setStats(prev => ({ ...prev, excelCount: event.data.count ?? 0 }));
+        addLog('System', fileName, `Excel 导入成功，共 ${event.data.count} 条记录`, 'success', 'import');
+        setExcelFile({ name: fileName, status: 'success', message: `成功导入 ${event.data.count} 条` });
+        return;
+      }
+
+      const message = event.data.message || 'Excel 解析失败。';
+      setMapping({});
+      setStats(prev => ({ ...prev, excelCount: 0 }));
+      addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
+      setExcelFile({ name: fileName, status: 'error', message });
+    };
+    worker.onerror = () => {
+      const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
+      const message = 'Excel 解析线程异常，请重新上传。';
+      setMapping({});
+      setStats(prev => ({ ...prev, excelCount: 0 }));
+      addLog('System', fileName, message, 'error', 'import');
+      setExcelFile({ name: fileName, status: 'error', message });
+    };
+    mappingWorkerRef.current = worker;
+    return worker;
+  };
+
+  const parseExcelOnMainThread = async (file: File) => {
+    try {
+      const [XLSX, buffer] = await Promise.all([import('xlsx'), file.arrayBuffer()]);
+      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      if (!worksheet) throw new Error('文件中没有找到工作表。');
+
+      const mapping: Record<string, string> = {};
+      let count = 0;
+      for (const row of XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]) {
+        const firstLeg = String(row['头程单号'] || '').trim();
+        const exchange = String(row['快递单号'] || '').trim();
+        if (!firstLeg || !exchange) continue;
+        mapping[firstLeg] = exchange;
+        count += 1;
+      }
+      if (count === 0) throw new Error('无法从文件中解析出有效的单号映射关系。');
+
+      setMapping(mapping);
+      setStats(prev => ({ ...prev, excelCount: count }));
+      addLog('System', file.name, `Excel 导入成功，共 ${count} 条记录`, 'success', 'import');
+      setExcelFile({ name: file.name, status: 'success', message: `成功导入 ${count} 条` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Excel 解析失败。';
+      setMapping({});
+      setStats(prev => ({ ...prev, excelCount: 0 }));
+      addLog('System', file.name, `Excel 导入失败: ${message}`, 'error', 'import');
+      setExcelFile({ name: file.name, status: 'error', message });
+    }
+  };
 
   const canUseSameOriginPrintProxy = () => (
     import.meta.env.DEV &&
@@ -279,19 +402,25 @@ export default function App() {
   };
 
   const ensureQzConnected = async () => {
-    const securityStatus = await configureQzSecurity();
-    if (qz.websocket.isActive()) return securityStatus;
+    try {
+      const securityStatus = await configureQzSecurity();
+      if (!qz.websocket.isActive()) {
+        if (!qzConnectPromiseRef.current) {
+          qzConnectPromiseRef.current = qz.websocket
+            .connect({ retries: 2, delay: 1 })
+            .finally(() => {
+              qzConnectPromiseRef.current = null;
+            });
+        }
 
-    if (!qzConnectPromiseRef.current) {
-      qzConnectPromiseRef.current = qz.websocket
-        .connect({ retries: 2, delay: 1 })
-        .finally(() => {
-          qzConnectPromiseRef.current = null;
-        });
+        await qzConnectPromiseRef.current;
+      }
+      setQzConnectionHealth('healthy');
+      return securityStatus;
+    } catch (error) {
+      setQzConnectionHealth('offline');
+      throw error;
     }
-
-    await qzConnectPromiseRef.current;
-    return securityStatus;
   };
 
   const getQzPrinterInventory = async () => {
@@ -348,7 +477,24 @@ export default function App() {
       }
     }];
 
-    await qz.print(config, data);
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        void qz.websocket.disconnect().catch(() => undefined);
+        setQzConnectionHealth('offline');
+        reject(new Error('QZ Tray 响应超时（超过 3 秒），已中断本次打印。'));
+      }, QZ_PRINT_TIMEOUT_MS);
+
+      qz.print(config, data).then(
+        () => {
+          window.clearTimeout(timeoutId);
+          resolve();
+        },
+        (error: unknown) => {
+          window.clearTimeout(timeoutId);
+          reject(error);
+        }
+      );
+    });
 
     return {
       printerName,
@@ -357,14 +503,6 @@ export default function App() {
         : `打印任务已通过 QZ Tray 提交到 ${printerName}（官方签名未完成，QZ 可能弹授权确认）`
     };
   };
-
-  // Process scan after debounce
-  useEffect(() => {
-    if (debouncedScanInput) {
-      processScan(debouncedScanInput, false);
-      setScanInput('');
-    }
-  }, [debouncedScanInput]);
 
   // Load printers
   useEffect(() => {
@@ -376,8 +514,37 @@ export default function App() {
   }, [showSettings, settingsPanel]);
 
   useEffect(() => {
+    if (qzConnectionHealth === 'idle') return;
+
+    const heartbeat = async () => {
+      try {
+        if (!qz.websocket.isActive()) {
+          await ensureQzConnected();
+          return;
+        }
+        await qz.printers.getDefault();
+        setQzConnectionHealth('healthy');
+      } catch {
+        setQzConnectionHealth('offline');
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void heartbeat();
+    }, 5_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [qzConnectionHealth]);
+
+  useEffect(() => {
     localStorage.setItem('audioFeedbackEnabled', String(audioEnabled));
   }, [audioEnabled]);
+
+  useEffect(() => () => mappingWorkerRef.current?.terminate(), []);
+
+  useEffect(() => {
+    setLogPage(currentPage => Math.min(currentPage, totalLogPages));
+  }, [totalLogPages]);
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -539,6 +706,33 @@ export default function App() {
     setShowSettings(true);
   };
 
+  const openDataImport = () => {
+    setIsDataImportOpen(true);
+  };
+
+  useEffect(() => {
+    const panel = new URLSearchParams(location.search).get('settings');
+    if (panel === 'printer' || panel === 'audio') {
+      openSettings(panel);
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    if (location.hash === '#data-import') {
+      openDataImport();
+    }
+  }, [location.hash]);
+
+  useEffect(() => {
+    if (location.hash !== '#operation-log') return;
+
+    const frameId = window.requestAnimationFrame(() => {
+      logSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [location.hash]);
+
   const getAudioContext = async () => {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) {
@@ -592,45 +786,32 @@ export default function App() {
 
       const context = await getAudioContext();
       const startTime = context.currentTime;
-      const duration = scanResult === 'success' ? 0.18 : 0.68;
+      const duration = scanResult === 'success' ? 0.15 : 0.75;
       const volume = Math.max(0, Math.min(1, audioVolume / 100));
       const masterGain = context.createGain();
       const primaryOscillator = context.createOscillator();
-      const secondaryOscillator = scanResult === 'failure' ? context.createOscillator() : null;
 
       masterGain.connect(context.destination);
       masterGain.gain.setValueAtTime(0.0001, startTime);
-      masterGain.gain.linearRampToValueAtTime((scanResult === 'success' ? 0.22 : 0.18) * volume, startTime + 0.015);
+      masterGain.gain.linearRampToValueAtTime((scanResult === 'success' ? 0.22 : 0.28) * volume, startTime + 0.015);
       masterGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
 
       primaryOscillator.connect(masterGain);
-      primaryOscillator.type = scanResult === 'success' ? 'triangle' : 'sawtooth';
+      primaryOscillator.type = scanResult === 'success' ? 'triangle' : 'sine';
 
       if (scanResult === 'success') {
-        primaryOscillator.frequency.setValueAtTime(1120, startTime);
-        primaryOscillator.frequency.exponentialRampToValueAtTime(1560, startTime + 0.08);
-        primaryOscillator.frequency.setValueAtTime(1320, startTime + 0.12);
+        primaryOscillator.frequency.setValueAtTime(1000, startTime);
+        primaryOscillator.frequency.setValueAtTime(1200, startTime + 0.075);
       } else {
-        primaryOscillator.frequency.setValueAtTime(210, startTime);
-        primaryOscillator.frequency.linearRampToValueAtTime(150, startTime + duration);
-
-        if (secondaryOscillator) {
-          secondaryOscillator.connect(masterGain);
-          secondaryOscillator.type = 'sine';
-          secondaryOscillator.frequency.setValueAtTime(105, startTime);
-          secondaryOscillator.frequency.linearRampToValueAtTime(95, startTime + duration);
-        }
+        primaryOscillator.frequency.setValueAtTime(200, startTime);
       }
 
       primaryOscillator.start(startTime);
       primaryOscillator.stop(startTime + duration + 0.02);
-      secondaryOscillator?.start(startTime);
-      secondaryOscillator?.stop(startTime + duration + 0.02);
 
       const cleanup = () => {
         try {
           primaryOscillator.disconnect();
-          secondaryOscillator?.disconnect();
           masterGain.disconnect();
         } catch (error) {
           // Audio nodes may already be disconnected after rapid interruption.
@@ -643,7 +824,6 @@ export default function App() {
           masterGain.gain.cancelScheduledValues(stopTime);
           masterGain.gain.setTargetAtTime(0.0001, stopTime, 0.006);
           primaryOscillator.stop(stopTime + 0.02);
-          secondaryOscillator?.stop(stopTime + 0.02);
         } catch (error) {
           // Oscillators can only be stopped once; rapid scans intentionally race here.
         }
@@ -672,6 +852,78 @@ export default function App() {
     }
   };
 
+  const playInterceptAlert = async () => {
+    try {
+      const didInterrupt = stopActiveAudio();
+      if (didInterrupt) setAudioInterruptCount(count => count + 1);
+
+      const context = await getAudioContext();
+      const startTime = context.currentTime;
+      const startedAt = performance.now();
+      const masterGain = context.createGain();
+      const oscillators: OscillatorNode[] = [];
+
+      masterGain.connect(context.destination);
+      // Browsers cannot override the computer's system mute state. This is the
+      // maximum safe gain available through the browser media channel.
+      masterGain.gain.setValueAtTime(0.0001, startTime);
+      masterGain.gain.linearRampToValueAtTime(0.9, startTime + 0.01);
+      masterGain.gain.setValueAtTime(0.9, startTime + 5.8);
+      masterGain.gain.exponentialRampToValueAtTime(0.0001, startTime + 6);
+
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        const cycleStart = startTime + cycle * 2;
+        const oscillator = context.createOscillator();
+        const toneGain = context.createGain();
+        oscillator.type = 'square';
+        oscillator.frequency.setValueAtTime(2_240, cycleStart);
+        oscillator.frequency.setValueAtTime(2_760, cycleStart + 0.24);
+        oscillator.frequency.setValueAtTime(2_240, cycleStart + 0.48);
+        oscillator.frequency.setValueAtTime(2_760, cycleStart + 0.72);
+        oscillator.frequency.setValueAtTime(2_240, cycleStart + 0.96);
+        toneGain.gain.setValueAtTime(0.34, cycleStart);
+        toneGain.gain.exponentialRampToValueAtTime(0.0001, cycleStart + 1.55);
+        oscillator.connect(toneGain);
+        toneGain.connect(masterGain);
+        oscillator.start(cycleStart);
+        oscillator.stop(cycleStart + 1.6);
+        oscillators.push(oscillator);
+      }
+
+      const cleanup = () => {
+        oscillators.forEach(oscillator => {
+          try { oscillator.disconnect(); } catch { /* already released */ }
+        });
+        try { masterGain.disconnect(); } catch { /* already released */ }
+      };
+      const stop = () => {
+        const stopTime = context.currentTime;
+        try {
+          masterGain.gain.cancelScheduledValues(stopTime);
+          masterGain.gain.setTargetAtTime(0.0001, stopTime, 0.006);
+          oscillators.forEach(oscillator => oscillator.stop(stopTime + 0.03));
+        } catch {
+          // Alert tone may already have completed when the operator confirms it.
+        }
+        window.setTimeout(cleanup, 90);
+      };
+      const timerId = window.setTimeout(() => {
+        if (activeAudioRef.current?.stop === stop) {
+          activeAudioRef.current = null;
+          setAudioFocusState('idle');
+          setLastAudioDuration(6_000);
+        }
+        cleanup();
+      }, 6_090);
+
+      activeAudioRef.current = { stop, startedAt, timerId };
+      setAudioFocusState('playing');
+      setLastAudioResult('failure');
+    } catch (error) {
+      recordAudioPlaybackFailure(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const toggleAudioEnabled = () => {
     const nextEnabled = !audioEnabled;
     if (!nextEnabled) {
@@ -690,14 +942,18 @@ export default function App() {
 
   const startAudioPreviewPress = () => {
     previewLongPressPlayedRef.current = false;
+    // This call happens within the direct pointer gesture. It unlocks the
+    // browser audio context before the long-press timer fires.
+    void getAudioContext().catch(() => undefined);
     if (previewLongPressTimerRef.current) {
       window.clearTimeout(previewLongPressTimerRef.current);
     }
 
     previewLongPressTimerRef.current = window.setTimeout(() => {
+      previewLongPressTimerRef.current = null;
       previewLongPressPlayedRef.current = true;
       void playScanFeedback('failure', { force: true });
-    }, 450);
+    }, AUDIO_PREVIEW_LONG_PRESS_MS);
   };
 
   const finishAudioPreviewPress = () => {
@@ -718,60 +974,46 @@ export default function App() {
     }
   };
 
-  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => () => {
+    if (previewLongPressTimerRef.current) {
+      window.clearTimeout(previewLongPressTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (interceptStorageStatus === 'ready' || interceptStorageNoticeLoggedRef.current) return;
+    interceptStorageNoticeLoggedRef.current = true;
+    appendLog({
+      firstLeg: 'System',
+      exchange: '拦截名单',
+      message: interceptStorageStatus === 'corrupted'
+        ? '拦截库读取异常，当前扫码将跳过拦截判断。'
+        : '拦截库无法写入本机缓存，当前名单在关闭页面后将失效。',
+      status: 'error',
+      type: 'system'
+    });
+  }, [appendLog, interceptStorageStatus]);
+
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setExcelFile({ name: file.name, status: 'success' }); // Optimistically set
+    setExcelFile({ name: file.name, status: 'loading', message: '正在读取并解析 Excel…' });
+    pendingExcelFileNameRef.current = file.name;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = new Uint8Array(event.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
-        if (!worksheet) throw new Error('文件中没有找到工作表。');
+    if (typeof Worker === 'undefined') {
+      await parseExcelOnMainThread(file);
+      return;
+    }
 
-        const jsonData = XLSX.utils.sheet_to_json(worksheet) as any[];
-        console.log('Raw data from Excel:', jsonData);
-
-        const newMapping: Record<string, string> = {};
-        let count = 0;
-        jsonData.forEach((row, index) => {
-          // Final robust implementation: Only rely on column names, ignore column order.
-          const firstLeg = String(row['头程单号'] || '').trim();
-          const exchange = String(row['快递单号'] || '').trim();
-          console.log(`Row ${index + 1}: firstLeg='${firstLeg}', exchange='${exchange}'`);
-          if (firstLeg && exchange) {
-            newMapping[firstLeg] = exchange;
-            count++;
-          }
-        });
-
-        console.log('Constructed mapping:', newMapping);
-
-        if (count === 0) {
-          throw new Error('无法从文件中解析出有效的单号映射关系。');
-        }
-
-        setMapping(newMapping);
-        setStats(prev => ({ ...prev, excelCount: Object.keys(newMapping).length }));
-        addLog('System', file.name, `Excel 导入成功，共 ${count} 条记录`, 'success', 'import');
-        setExcelFile({ name: file.name, status: 'success', message: `成功导入 ${count} 条` });
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : '未知错误';
-        addLog('System', file.name, `Excel 导入失败: ${errorMessage}`, 'error', 'import');
-        setExcelFile({ name: file.name, status: 'error', message: errorMessage });
-        setMapping({});
-        setStats(prev => ({ ...prev, excelCount: 0 }));
-      }
-    };
-    reader.onerror = () => {
-      addLog('System', file.name, '读取文件失败', 'error', 'import');
-      setExcelFile({ name: file.name, status: 'error', message: '读取文件失败' });
-    };
-    reader.readAsArrayBuffer(file);
+    try {
+      const buffer = await file.arrayBuffer();
+      ensureMappingWorker().postMessage({ type: 'parse', buffer }, [buffer]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '读取文件失败';
+      addLog('System', file.name, `Excel 导入失败: ${message}`, 'error', 'import');
+      setExcelFile({ name: file.name, status: 'error', message });
+    }
   };
 
   const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -805,23 +1047,47 @@ export default function App() {
     setPdfFolder({ name: `已选择 ${pdfCount} 个 PDF`, status: 'success', message });
   };
 
+  const processScan = (rawScannedValue: string, bypassDuplicateCheck = false, isDuplicateOverride = false) => {
+    const scannedValue = sanitizeBarcode(rawScannedValue);
+    if (!scannedValue) return;
 
-  const processScan = (scannedValue: string, bypassDuplicateCheck = false) => {
+    // Always check persisted rules as well as the in-memory index. This prevents
+    // a scan from slipping through if the list was just changed in another view.
+    const interceptedRule = findInterceptRule(scannedValue) ?? findStoredInterceptRule(scannedValue);
+    if (interceptedRule) {
+      const normalizedInterceptedValue = normalizeBarcode(scannedValue);
+      if (interceptScanLockRef.current === normalizedInterceptedValue) return;
+      interceptScanLockRef.current = normalizedInterceptedValue;
+      setInterceptedScan({ code: scannedValue, rule: interceptedRule });
+      announceScanFeedback('error');
+      void playInterceptAlert();
+      addLog(scannedValue, '-', '命中拦截名单，已阻断当前扫描与打印任务。', 'error', 'system');
+      return;
+    }
+
     // 0. Check for duplicates
     if (!bypassDuplicateCheck) {
       const now = Date.now();
       const fiveMinutesAgo = now - 5 * 60 * 1000;
-      const isDuplicate = recentlyPrinted.some(p => p.code === scannedValue && p.timestamp > fiveMinutesAgo);
+      const normalizedScannedValue = normalizeBarcode(scannedValue);
+      const isDuplicate = recentlyPrinted.some(p => normalizeBarcode(p.code) === normalizedScannedValue && p.timestamp > fiveMinutesAgo)
+        || logs.some(log => (
+          log.type === 'print'
+          && normalizeBarcode(log.firstLeg) === normalizedScannedValue
+          && log.createdAt > fiveMinutesAgo
+          && (log.outcome === 'SUCCESS' || log.outcome === 'DUPLICATE_OVERRIDE')
+        ));
 
       if (isDuplicate) {
         setDuplicateInfo({ code: scannedValue, show: true });
+        announceScanFeedback('error');
         void playScanFeedback('failure');
         addLog(scannedValue, '-', '检测到重复扫描，已拦截', 'error', 'system');
         return;
       }
     }
     // 1. Try to find exchange number from mapping
-    const cleanedScannedValue = scannedValue.trim().toLowerCase();
+    const cleanedScannedValue = normalizeBarcode(scannedValue);
     const mappingKey = Object.keys(mapping).find(k => k.trim().toLowerCase() === cleanedScannedValue);
     let finalExchangeNumber = mappingKey ? mapping[mappingKey] : null;
 
@@ -845,6 +1111,7 @@ export default function App() {
     const pdfFile = pdfKey ? pdfFiles[pdfKey] : null;
 
     if (!pdfFile) {
+      announceScanFeedback('error');
       void playScanFeedback('failure');
       addLog(scannedValue, finalExchangeNumber ?? '-', '未找到对应的 PDF 文件', 'error', 'print');
       return;
@@ -852,6 +1119,7 @@ export default function App() {
 
     // At this point, if we still don't have it, set to '-'
     finalExchangeNumber = finalExchangeNumber || '-';
+    announceScanFeedback('processing');
     void playScanFeedback('success');
 
     // Convert file to Base64 for backend printing
@@ -866,7 +1134,8 @@ export default function App() {
           setPrinterBridge('qz');
           setPrintServerBaseUrl('QZ Tray 本机连接');
           setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
-          addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print');
+          announceScanFeedback('success');
+          addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
           setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
           const newTimestamp = Date.now();
           setRecentlyPrinted(prev => 
@@ -890,13 +1159,15 @@ export default function App() {
 
             const result = await response.json();
             if (result.success) {
-              addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print');
+              announceScanFeedback('success');
+              addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
               setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
               const newTimestamp = Date.now();
               setRecentlyPrinted(prev => 
                 [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
               );
             } else {
+              announceScanFeedback('error');
               void playScanFeedback('failure');
               addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
             }
@@ -909,7 +1180,8 @@ export default function App() {
             setPrinterBridge('qz');
             setPrintServerBaseUrl('QZ Tray 本机连接');
             setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
-            addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print');
+            announceScanFeedback('success');
+            addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
             setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
             const newTimestamp = Date.now();
             setRecentlyPrinted(prev => 
@@ -918,6 +1190,7 @@ export default function App() {
           }
         }
       } catch (error) {
+        announceScanFeedback('error');
         void playScanFeedback('failure');
         const message = printerBridge === 'qz'
           ? formatQzError(error)
@@ -925,10 +1198,11 @@ export default function App() {
         setPrintServerStatus('offline');
         setPrintServerBaseUrl('');
         setPrintServerMessage(message);
-        addLog(scannedValue, finalExchangeNumber, message, 'error', 'print');
+        addLog(scannedValue, finalExchangeNumber, message, 'error', 'print', message.includes('超时') ? 'TIMEOUT' : 'FAILED');
       }
     };
     reader.onerror = () => {
+      announceScanFeedback('error');
       void playScanFeedback('failure');
       addLog(scannedValue, finalExchangeNumber, '读取 PDF 文件失败', 'error', 'print');
     };
@@ -938,87 +1212,138 @@ export default function App() {
   const forcePrint = (codeToPrint: string) => {
     // Bypasses the duplicate check
     setDuplicateInfo(null);
-    processScan(codeToPrint, true);
+    processScan(codeToPrint, true, true);
   };
 
-  const addLog = (firstLeg: string, exchange: string, message: string, status: 'success' | 'error', type: 'import' | 'print' | 'system') => {
-    const newLog: PrintLog = {
-      time: new Date().toLocaleTimeString(),
+  const closeInterceptAlert = () => {
+    stopActiveAudio();
+    interceptScanLockRef.current = null;
+    setInterceptedScan(null);
+    setScanInput('');
+  };
+
+  const handleScanInputChange = (nextValue: string) => {
+    setScanInput(nextValue);
+
+    // Barcode scanners normally submit Enter. For manual typing or scanners
+    // without a suffix key, an exact intercept hit must still halt immediately.
+    const interceptedRule = findInterceptRule(nextValue) ?? findStoredInterceptRule(nextValue);
+    if (!interceptedRule) return;
+
+    setScanInput('');
+    processScan(nextValue, false);
+  };
+
+  const addLog = (
+    firstLeg: string,
+    exchange: string,
+    message: string,
+    status: 'success' | 'error',
+    type: PrintLogType,
+    outcome?: PrintOutcome
+  ) => {
+    appendLog({
       firstLeg,
       exchange,
       status,
       message,
-      type
-    };
-    setLogs(prev => [newLog, ...prev].slice(0, 200));
-    if (type === 'print' && status === 'success') {
-      setLastPrintedCode(firstLeg);
-    }
+      type,
+      outcome
+    });
   };
 
   useEffect(() => {
-    // Scroll to top of logs when a new log is added
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = 0;
-    }
-  }, [logs]);
+    if (!duplicateInfo?.show) return;
+
+    const confirmDuplicatePrint = (event: KeyboardEvent) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        forcePrint(duplicateInfo.code);
+      }
+      if (event.key === 'Escape') {
+        setDuplicateInfo(null);
+      }
+    };
+
+    document.addEventListener('keydown', confirmDuplicatePrint);
+    return () => document.removeEventListener('keydown', confirmDuplicatePrint);
+  }, [duplicateInfo]);
 
   useEffect(() => {
-    if (lastPrintedCode) {
-      const timer = setTimeout(() => {
-        setLastPrintedCode(null);
-      }, 3000); // Highlight for 3 seconds
-      return () => clearTimeout(timer);
-    }
-  }, [lastPrintedCode]);
+    const tabList = logTabListRef.current;
+    const pill = logTabPillRef.current;
+    const activeTabButton = tabList?.querySelector<HTMLButtonElement>(`[data-log-tab="${activeTab}"]`);
+    if (!tabList || !pill || !activeTabButton) return;
+
+    const movePill = (shouldAnimate: boolean) => {
+      const originalTransition = pill.style.transition;
+      if (!shouldAnimate) pill.style.transition = 'none';
+      pill.style.transform = `translateX(${activeTabButton.offsetLeft}px)`;
+      pill.style.width = `${activeTabButton.offsetWidth}px`;
+
+      if (!shouldAnimate) {
+        void pill.offsetWidth;
+        pill.style.transition = originalTransition;
+      }
+    };
+
+    const frameId = window.requestAnimationFrame(() => {
+      movePill(logTabMotionInitializedRef.current);
+      logTabMotionInitializedRef.current = true;
+    });
+    const handleResize = () => movePill(false);
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [activeTab]);
+
+  const scanFeedbackCopy = SCAN_FEEDBACK_COPY[scanFeedback];
 
   return (
-    <div className="min-h-screen bg-dark-bg p-4 md:p-8 font-sans text-text-primary">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="cmhub-operating-workspace min-h-full p-4 md:p-6 xl:p-8">
+      <div className="w-full space-y-5">
+        {interceptedScan && (
+          <InterceptAlertOverlay
+            rule={interceptedScan.rule}
+            scannedValue={interceptedScan.code}
+            onConfirm={closeInterceptAlert}
+          />
+        )}
+
         {/* Duplicate Scan Modal */}
         {duplicateInfo?.show && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/50 backdrop-blur-sm">
-            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-md rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
-              <div className="p-6 border-b border-white/10">
-                <h2 className="text-xl font-bold flex items-center gap-2 text-text-primary">
-                  <AlertCircle className="w-6 h-6 text-amber-500" />
-                  重复扫描警告
-                </h2>
-              </div>
-              <div className="p-8 space-y-6">
-                <p className="text-text-secondary">
-                  单号 <span className="font-bold text-text-primary">{duplicateInfo.code}</span> 在最近5分钟内已被打印。
-                  <br />
-                  您确定要强制重复打印吗？
-                </p>
-                <div className="grid grid-cols-2 gap-4 pt-4">
-                  <button
-                    onClick={() => setDuplicateInfo(null)}
-                    className="w-full bg-white/10 hover:bg-white/20 text-text-primary font-bold py-3 rounded-xl transition-all active:scale-[0.98]"
-                  >
-                    取消
-                  </button>
-                  <button
-                    onClick={() => forcePrint(duplicateInfo.code)}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-amber-500/20 active:scale-[0.98]"
-                  >
-                    强制打印
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ArcoModal
+            visible
+            className="cmhub-confirm-modal"
+            title={<ArcoSpace><AlertTriangle size={20} /><span>重复扫描警告</span></ArcoSpace>}
+            onCancel={() => setDuplicateInfo(null)}
+            footer={
+              <ArcoSpace>
+                <ArcoButton onClick={() => setDuplicateInfo(null)}>取消</ArcoButton>
+                <ArcoButton status="danger" type="primary" autoFocus onClick={() => forcePrint(duplicateInfo.code)}>
+                  确认强制打印（Enter）
+                </ArcoButton>
+              </ArcoSpace>
+            }
+          >
+            <Typography.Paragraph>
+              单号 <Typography.Text bold>{duplicateInfo.code}</Typography.Text> 在最近 5 分钟内已被打印。您确定要强制重复打印吗？
+            </Typography.Paragraph>
+          </ArcoModal>
         )}
 
         {/* Header */}
-        {/* Header */}
-        <header className="flex items-center justify-between bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10">
-          <div className="flex items-center gap-4">
-            <h1 className="text-3xl font-bold tracking-tight text-brand-green">CM-HUB</h1>
+        <ArcoCard className="cmhub-operating-card" bordered>
+        <header className="cmhub-operating-header">
+          <div className="cmhub-operating-title">
+            <Typography.Title heading={3} className="!mb-0">扫码与本机打印工作台</Typography.Title>
           </div>
           
-          <div className="flex items-center gap-8">
-            <div className="flex gap-6 border-r pr-8 border-white/10">
+          <div className="cmhub-operating-header-actions">
+            <div className="cmhub-header-metrics">
               <div className="text-center">
                 <div className="text-2xl font-bold text-text-primary">{stats.excelCount}</div>
                 <div className="text-xs text-text-secondary uppercase font-semibold">Excel 条目</div>
@@ -1033,71 +1358,115 @@ export default function App() {
               </div>
             </div>
             
-            <button 
-              onClick={() => openSettings('printer')}
-              className="flex flex-col items-center gap-1 group transition-colors hover:text-brand-green"
-            >
-              <div className="p-2 bg-white/5 rounded-lg group-hover:bg-white/10 transition-colors">
-                <Settings className="w-6 h-6 text-text-secondary group-hover:text-brand-green" />
-              </div>
-              <span className="text-xs font-semibold text-text-secondary group-hover:text-brand-green">系统设置</span>
-            </button>
+            <div className="cmhub-header-utilities" role="toolbar" aria-label="扫码打单快捷操作">
+              <Tooltip content="QZ Tray 教程与新电脑配置">
+                <ArcoButton
+                  type="text"
+                  shape="circle"
+                  size="large"
+                  aria-label="打开 QZ Tray 教程与新电脑配置"
+                  icon={<PlugZap size={20} />}
+                  onClick={() => setIsQzGuideOpen(true)}
+                />
+              </Tooltip>
+              <Tooltip content="拦截名单管理">
+                <ArcoButton
+                  type="text"
+                  shape="circle"
+                  size="large"
+                  aria-label="打开拦截名单管理"
+                  icon={<ShieldAlert size={20} />}
+                  onClick={() => navigate('/operations/intercepts')}
+                />
+              </Tooltip>
+              <Tooltip content="导入 Excel 映射与 PDF 面单">
+                <ArcoButton
+                  type="text"
+                  shape="circle"
+                  size="large"
+                  aria-label="打开数据导入"
+                  icon={<FileSpreadsheet size={20} />}
+                  onClick={openDataImport}
+                />
+              </Tooltip>
+              <Tooltip content="系统设置">
+                <ArcoButton
+                  type="text"
+                  shape="circle"
+                  size="large"
+                  aria-label="打开系统设置"
+                  icon={<Settings size={20} />}
+                  onClick={() => openSettings('printer')}
+                />
+              </Tooltip>
+            </div>
           </div>
         </header>
+        </ArcoCard>
 
-        <QzSetupGuide />
+        {qzConnectionHealth === 'offline' && (
+          <ArcoAlert
+            type="warning"
+            showIcon
+            content="QZ Tray 连接已中断，系统正在每 5 秒自动尝试重连；请确认 QZ Tray 正在当前电脑运行。"
+          />
+        )}
 
-        <BolManager />
+        {interceptStorageStatus !== 'ready' && (
+          <ArcoAlert
+            type="warning"
+            showIcon
+            content={interceptStorageStatus === 'corrupted'
+              ? '拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。'
+              : '拦截名单无法保存到本机缓存，本次会话关闭后将失效。'}
+          />
+        )}
+
+        <Drawer
+          visible={isQzGuideOpen}
+          className="cmhub-utility-drawer"
+          width={680}
+          title={<ArcoSpace><PlugZap size={20} /><span>QZ Tray 教程与新电脑配置</span></ArcoSpace>}
+          footer={null}
+          onCancel={() => setIsQzGuideOpen(false)}
+        >
+          <QzSetupGuide />
+        </Drawer>
 
         {/* System Settings Modal */}
         {showSettings && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/50 backdrop-blur-sm">
-            <div className="bg-dark-bg/80 backdrop-blur-xl w-full max-w-lg rounded-4xl shadow-2xl border border-white/10 overflow-hidden">
-              <div className="p-6 border-b border-white/10 flex items-center justify-between">
-                <h2 className="text-xl font-bold flex items-center gap-2 text-text-primary">
-                  <Settings className="w-5 h-5 text-brand-green" />
-                  系统设置
-                </h2>
-                <button onClick={() => setShowSettings(false)} className="text-text-secondary hover:text-white">
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-              
-              <div className="p-8 space-y-6">
-                <div className="flex bg-white/5 p-1 rounded-xl gap-1">
-                  {[
-                    { id: 'printer', label: '打印机', icon: Printer },
-                    { id: 'audio', label: '音效', icon: Volume2 }
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setSettingsPanel(tab.id as SettingsPanel)}
-                      className={cn(
-                        "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all",
-                        settingsPanel === tab.id
-                          ? "bg-brand-green/20 text-brand-green shadow-sm"
-                          : "text-text-secondary hover:text-text-primary hover:bg-white/5"
-                      )}
-                    >
-                      <tab.icon className="w-4 h-4" />
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+          <ArcoModal
+            visible
+            className="cmhub-settings-modal"
+            title={<ArcoSpace><Settings size={20} /><span>系统设置</span></ArcoSpace>}
+            onCancel={() => setShowSettings(false)}
+            footer={null}
+            style={{ width: 620 }}
+          >
+              <div className="space-y-6">
+                <Tabs
+                  activeTab={settingsPanel}
+                  onChange={(key) => setSettingsPanel(key as SettingsPanel)}
+                  type="rounded"
+                >
+                  <Tabs.TabPane key="printer" title={<ArcoSpace size="mini"><Printer size={16} />打印机</ArcoSpace>} />
+                  <Tabs.TabPane key="audio" title={<ArcoSpace size="mini"><Volume2 size={16} />音效</ArcoSpace>} />
+                </Tabs>
 
                 {settingsPanel === 'printer' ? (
                   <>
                     <div className="space-y-3">
                   <label className="text-sm font-semibold text-text-primary flex items-center justify-between">
                     选择打印机
-                    <button 
+                    <ArcoButton
+                      type="text"
+                      size="mini"
                       onClick={fetchPrinters} 
-                      disabled={isPrinterLoading}
-                      className="text-brand-green hover:text-brand-green/80 flex items-center gap-1 text-xs"
+                      loading={isPrinterLoading}
+                      icon={<RefreshCw className="w-3 h-3" />}
                     >
-                      <RefreshCw className={cn("w-3 h-3", isPrinterLoading && "animate-spin")} />
                       刷新列表
-                    </button>
+                    </ArcoButton>
                   </label>
                   <div className="relative" ref={printerDropdownRef}>
                     <button
@@ -1122,7 +1491,7 @@ export default function App() {
                     </button>
 
                     {isPrinterDropdownOpen && (
-                      <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border border-brand-green/60 bg-[#111713]/95 shadow-2xl shadow-black/50 backdrop-blur-xl ring-1 ring-white/10">
+                      <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-xl border border-brand-green/60 bg-dark-bg/95 shadow-2xl shadow-black/50 backdrop-blur-xl ring-1 ring-white/10">
                         <div role="listbox" className="max-h-64 overflow-y-auto p-1">
                           {printerOptions.map(option => {
                             const isSelected = option.value === selectedPrinter;
@@ -1212,13 +1581,14 @@ export default function App() {
                 </div>
 
                 <div className="pt-4">
-                  <button
+                  <ArcoButton
+                    type="primary"
+                    long
                     onClick={savePrinter}
-                    className="w-full bg-brand-green hover:bg-brand-green/80 text-dark-bg font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-brand-green/20 active:scale-[0.98]"
+                    icon={<Save className="w-5 h-5" />}
                   >
-                    <Save className="w-5 h-5" />
                     保存打印机设置
-                  </button>
+                  </ArcoButton>
                 </div>
                   </>
                 ) : (
@@ -1240,40 +1610,23 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={audioEnabled}
-                          onClick={toggleAudioEnabled}
-                          className={cn(
-                            "relative h-8 w-14 rounded-full transition-colors",
-                            audioEnabled ? "bg-brand-green" : "bg-white/15"
-                          )}
-                        >
-                          <span className={cn(
-                            "absolute top-1 h-6 w-6 rounded-full bg-dark-bg shadow-lg transition-transform",
-                            audioEnabled ? "translate-x-7" : "translate-x-1"
-                          )} />
-                        </button>
+                        <Switch checked={audioEnabled} onChange={toggleAudioEnabled} />
                       </div>
 
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <label htmlFor="audio-volume" className="text-sm font-semibold text-text-primary">
+                          <span className="text-sm font-semibold text-text-primary">
                             音量调节
-                          </label>
+                          </span>
                           <span className="text-xs font-semibold text-brand-green">
                             {audioVolume === 100 ? '跟随系统媒体音量' : `${audioVolume}%`}
                           </span>
                         </div>
-                        <input
-                          id="audio-volume"
-                          type="range"
-                          min="0"
-                          max="100"
+                        <Slider
+                          min={0}
+                          max={100}
                           value={audioVolume}
-                          onChange={(event) => changeAudioVolume(Number(event.target.value))}
-                          className="w-full accent-brand-green cursor-pointer"
+                          onChange={(value) => changeAudioVolume(Array.isArray(value) ? value[0] : value)}
                         />
                         <div className="flex justify-between text-[11px] text-text-secondary/50">
                           <span>静音</span>
@@ -1282,8 +1635,9 @@ export default function App() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
+                      <ArcoButton
+                        long
+                        icon={<PlayCircle className="w-5 h-5" />}
                         onPointerDown={startAudioPreviewPress}
                         onPointerUp={finishAudioPreviewPress}
                         onPointerLeave={cancelAudioPreviewPress}
@@ -1294,12 +1648,10 @@ export default function App() {
                             void playScanFeedback('success', { force: true });
                           }
                         }}
-                        className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-brand-green/50 text-text-primary font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
                       >
-                        <PlayCircle className="w-5 h-5 text-brand-green" />
                         试听音效
-                        <span className="text-xs font-medium text-text-secondary/60">点击成功 / 长按失败</span>
-                      </button>
+                        <Typography.Text type="secondary">点击成功 / 长按失败</Typography.Text>
+                      </ArcoButton>
                     </div>
 
                     <div className="grid grid-cols-3 gap-3 text-xs">
@@ -1323,229 +1675,233 @@ export default function App() {
                   </>
                 )}
               </div>
-            </div>
-          </div>
+          </ArcoModal>
         )}
 
-        <div className="grid md:grid-cols-3 gap-6">
-          {/* Left: Controls */}
-          <div className="md:col-span-1 space-y-6">
-            {/* Excel Import */}
-            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-text-primary">
-                  <FileSpreadsheet className="w-5 h-5 text-brand-green" />
-                  <h2>数据导入 (Excel)</h2>
+        <Drawer
+          visible={isDataImportOpen}
+          className="cmhub-utility-drawer"
+          width={680}
+          title={<ArcoSpace><FileSpreadsheet size={20} /><span>数据导入与面单库</span></ArcoSpace>}
+          footer={null}
+          onCancel={() => setIsDataImportOpen(false)}
+        >
+          <section id="data-import" className="cmhub-data-import-drawer" aria-label="数据导入与面单库">
+            <div className="cmhub-data-import-summary cmhub-data-import-drawer-summary" aria-live="polite">
+              <span>{excelFile ? `${stats.excelCount.toLocaleString()} 条 Excel 映射` : '未导入 Excel'}</span>
+              <span>{pdfFolder ? `${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹'}</span>
+            </div>
+            <div className="cmhub-data-import-body">
+                <div className="cmhub-data-import-grid">
+                <div className="cmhub-import-source">
+                  <div className="cmhub-import-source-heading">
+                    <span><FileSpreadsheet size={18} aria-hidden="true" /> Excel 映射</span>
+                    {excelFile && (
+                      <ArcoButton type="text" size="mini" onClick={() => document.getElementById('excel-input')?.click()}>
+                        重新上传
+                      </ArcoButton>
+                    )}
+                  </div>
+                  <label className="cmhub-import-drop-target">
+                    {!excelFile ? (
+                      <>
+                        <Upload size={24} aria-hidden="true" />
+                        <span>点击或拖拽上传 Excel</span>
+                      </>
+                    ) : (
+                      <>
+                        {excelFile.status === 'loading' ? <RefreshCw size={24} className="animate-spin" aria-hidden="true" /> : excelFile.status === 'success' ? <CheckCircle2 size={24} aria-hidden="true" /> : <AlertCircle size={24} aria-hidden="true" />}
+                        <strong>{excelFile.name}</strong>
+                        <small>{excelFile.message}</small>
+                      </>
+                    )}
+                    <input id="excel-input" type="file" className="hidden" accept=".xlsx, .xls" onChange={(event) => void handleExcelUpload(event)} />
+                  </label>
                 </div>
-                {excelFile && (
-                  <button 
-                    onClick={() => document.getElementById('excel-input')?.click()}
-                    className="text-xs font-semibold text-brand-green hover:underline"
-                  >重新上传</button>
-                )}
-              </div>
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer hover:bg-white/5 transition-colors">
-                {!excelFile ? (
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-8 h-8 text-text-secondary mb-2" />
-                    <p className="text-sm text-text-secondary">点击或拖拽上传 Excel</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-center p-2">
-                    {excelFile.status === 'success' ? 
-                      <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" /> : 
-                      <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
-                    }
-                    <p className="text-sm font-semibold text-text-primary break-all">{excelFile.name}</p>
-                    <p className={cn(
-                      "text-xs mt-1",
-                      excelFile.status === 'success' ? 'text-text-secondary' : 'text-red-500'
-                    )}>{excelFile.message}</p>
-                  </div>
-                )}
-                <input id="excel-input" type="file" className="hidden" accept=".xlsx, .xls" onChange={handleExcelUpload} />
-              </label>
-            </div>
 
-            {/* PDF Import */}
-            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-text-primary">
-                  <FileText className="w-5 h-5 text-brand-green" />
-                  <h2>面单库 (PDF 文件夹)</h2>
+                <div className="cmhub-import-source">
+                  <div className="cmhub-import-source-heading">
+                    <span><FileText size={18} aria-hidden="true" /> 面单库（PDF 文件夹）</span>
+                    {pdfFolder && (
+                      <ArcoButton type="text" size="mini" onClick={() => document.getElementById('pdf-input')?.click()}>
+                        重新选择
+                      </ArcoButton>
+                    )}
+                  </div>
+                  <label className="cmhub-import-drop-target">
+                    {!pdfFolder ? (
+                      <>
+                        <Upload size={24} aria-hidden="true" />
+                        <span>选择包含 PDF 的文件夹</span>
+                      </>
+                    ) : (
+                      <>
+                        {pdfFolder.status === 'success' ? <CheckCircle2 size={24} aria-hidden="true" /> : <AlertCircle size={24} aria-hidden="true" />}
+                        <strong>{pdfFolder.name}</strong>
+                        <small>{pdfFolder.message}</small>
+                      </>
+                    )}
+                    {/* @ts-ignore */}
+                    <input id="pdf-input" type="file" className="hidden" webkitdirectory="" directory="" multiple onChange={handlePdfUpload} />
+                  </label>
                 </div>
-                {pdfFolder && (
-                   <button 
-                    onClick={() => document.getElementById('pdf-input')?.click()}
-                    className="text-xs font-semibold text-brand-green hover:underline"
-                  >重新选择</button>
-                )}
-              </div>
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer hover:bg-white/5 transition-colors">
-                {!pdfFolder ? (
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-8 h-8 text-text-secondary mb-2" />
-                    <p className="text-sm text-text-secondary text-center px-2">选择包含 PDF 的文件夹</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center text-center p-2">
-                    {pdfFolder.status === 'success' ? 
-                      <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" /> : 
-                      <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
-                    }
-                    <p className="text-sm font-semibold text-text-primary break-all">{pdfFolder.name}</p>
-                    <p className={cn(
-                      "text-xs mt-1",
-                      pdfFolder.status === 'success' ? 'text-text-secondary' : 'text-red-500'
-                    )}>{pdfFolder.message}</p>
-                  </div>
-                )}
-                {/* @ts-ignore */}
-                <input id="pdf-input" type="file" className="hidden" webkitdirectory="" directory="" multiple onChange={handlePdfUpload} />
-              </label>
+                </div>
+                <p className="cmhub-data-import-note">
+                  <AlertCircle size={15} aria-hidden="true" /> 文件名需包含 Excel 中的转单号；扫码枪请设置为回车结束模式。
+                </p>
             </div>
+          </section>
+        </Drawer>
 
-            {/* Status Info */}
-            <div className="bg-white/5 backdrop-blur-xl p-6 rounded-4xl border border-white/10">
-              <h3 className="text-text-primary font-semibold mb-2 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-brand-green" />
-                使用说明
-              </h3>
-              <ul className="text-sm text-text-secondary space-y-2 list-disc list-inside">
-                <li>文件名需包含 Excel 中的<b className="text-text-primary">转单号</b> (支持模糊匹配)</li>
-                <li>外置扫码枪请设置为<b className="text-text-primary">回车结束</b>模式</li>
-                <li>建议使用 Chrome 浏览器以获得最佳打印体验</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Right: Scanner & Logs */}
-          <div className="md:col-span-2 space-y-6">
+        <div className="space-y-5">
             {/* Scanner Input */}
-            <div
-              onClick={() => inputRef.current?.focus({ preventScroll: true })}
-              className="bg-white/5 backdrop-blur-xl p-8 rounded-4xl border-2 border-brand-green/50 space-y-4"
-            >
+            <ArcoCard className="cmhub-operating-card cmhub-scanner-card" data-state={scanFeedback} bordered>
+              <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 font-semibold text-text-primary">
                   <Scan className="w-6 h-6 text-brand-green" />
                   <h2 className="text-xl">扫码区域</h2>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-medium text-brand-green bg-brand-green/10 px-3 py-1 rounded-full animate-pulse">
-                  <div className="w-2 h-2 bg-brand-green rounded-full"></div>
-                  已连接扫码枪
+                <div className="cmhub-scan-status" role="status" aria-live="polite">
+                  <span className="cmhub-scan-status-dot" aria-hidden="true" />
+                  {scanFeedbackCopy}
                 </div>
               </div>
               
-                <input
-                  ref={inputRef}
-                  type="text"
+                <ArcoInput
                   value={scanInput}
-                  onChange={(e) => setScanInput(e.target.value)}
+                  onChange={handleScanInputChange}
+                  onPressEnter={() => {
+                    const scannedValue = scanInput;
+                    setScanInput('');
+                    processScan(scannedValue, false);
+                  }}
                   placeholder="等待扫码..."
-                  className="w-full text-3xl font-mono text-center py-6 bg-transparent border-2 border-white/20 rounded-xl focus:border-brand-green focus:ring-4 focus:ring-brand-green/20 outline-none transition-all placeholder:text-text-secondary/50"
-                  autoFocus
+                  size="large"
+                  className="cmhub-scan-input"
+                  aria-label="扫码输入框，输入完成后按回车开始处理"
                 />
-            </div>
+              </div>
+            </ArcoCard>
 
             {/* Logs */}
-            <div className="bg-white/5 backdrop-blur-xl rounded-4xl border border-white/10 overflow-hidden">
+            <section id="operation-log" ref={logSectionRef} tabIndex={-1} aria-label="操作日志">
+              <ArcoCard className="cmhub-operating-card cmhub-log-card" bordered bodyStyle={{ padding: 0 }}>
               <div className="p-4 border-b border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2 font-semibold text-text-primary mr-2">
                     <History className="w-5 h-5 text-text-secondary" />
                     <h2>操作日志</h2>
                   </div>
-                  <div className="flex bg-white/5 p-1 rounded-lg gap-1">
-                    {[
-                      { id: 'print', label: '打印记录', icon: Printer },
-                      { id: 'import', label: '导入记录', icon: FileSpreadsheet },
-                      { id: 'system', label: '系统状态', icon: Settings },
-                    ].map((tab) => (
+                  <div ref={logTabListRef} className="t-tabs cmhub-log-tabs" role="tablist" aria-label="操作日志分类">
+                    <span ref={logTabPillRef} className="t-tabs-pill" aria-hidden="true" />
+                    {PRINT_LOG_TABS.map(tab => (
                       <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id as any)}
-                        className={cn(
-                          "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all",
-                          activeTab === tab.id 
-                            ? "bg-brand-green/20 text-brand-green shadow-sm" 
-                            : "text-text-secondary hover:text-text-primary"
-                        )}
+                        key={tab.key}
+                        type="button"
+                        className="t-tab"
+                        data-log-tab={tab.key}
+                        role="tab"
+                        aria-selected={activeTab === tab.key}
+                        aria-controls="cmhub-log-table"
+                        tabIndex={activeTab === tab.key ? 0 : -1}
+                        onClick={() => {
+                          setActiveTab(tab.key);
+                          setLogPage(1);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+                          event.preventDefault();
+                          const currentIndex = PRINT_LOG_TABS.findIndex(item => item.key === activeTab);
+                          const nextIndex = event.key === 'ArrowRight'
+                            ? (currentIndex + 1) % PRINT_LOG_TABS.length
+                            : (currentIndex - 1 + PRINT_LOG_TABS.length) % PRINT_LOG_TABS.length;
+                          const nextTab = PRINT_LOG_TABS[nextIndex];
+                          setActiveTab(nextTab.key);
+                          setLogPage(1);
+                          window.requestAnimationFrame(() => {
+                            logTabListRef.current
+                              ?.querySelector<HTMLButtonElement>(`[data-log-tab="${nextTab.key}"]`)
+                              ?.focus();
+                          });
+                        }}
                       >
-                        <tab.icon className="w-3.5 h-3.5" />
-                        {tab.label}
+                        {tab.title}
                       </button>
                     ))}
                   </div>
                 </div>
-                <button 
-                  onClick={() => setLogs(logs.filter(l => l.type !== activeTab))}
-                  className="text-xs text-text-secondary hover:text-red-500 flex items-center gap-1 transition-colors"
+                <ArcoButton
+                  type="text"
+                  size="mini"
+                  status="danger"
+                  className="cmhub-log-clear-button"
+                  onClick={() => {
+                    clearLogsByType(activeTab);
+                    setLogPage(1);
+                  }}
                 >
-                  <X className="w-3 h-3" /> 清空当前页
-                </button>
+                  <X className="w-3 h-3" /> 清空当前记录
+                </ArcoButton>
               </div>
-              <div ref={logContainerRef} className="max-h-[400px] overflow-y-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="sticky top-0 bg-dark-bg/80 backdrop-blur-xl border-b border-white/10 text-text-secondary font-medium">
-                    <tr>
-                      <th className="px-4 py-3 w-12">序号</th>
-                      <th className="px-6 py-3">时间</th>
-                      <th className="px-6 py-3">相关单号/对象</th>
-                      <th className="px-6 py-3">状态/详情</th>
-                      <th className="px-6 py-3 text-right">结果</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {(() => {
-                      const filteredLogs = logs.filter(l => l.type === activeTab);
-                      if (filteredLogs.length === 0) {
-                        return (
-                          <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center text-text-secondary/50 italic">
-                              当前分类暂无记录...
-                            </td>
-                          </tr>
-                        );
+              <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between gap-3 text-xs text-text-secondary">
+                <span>当前分类已保存 <b className="text-text-primary">{filteredLogs.length.toLocaleString()}</b> / {MAX_PRINT_LOG_ENTRIES.toLocaleString()} 条</span>
+                <span className="whitespace-nowrap">每页 {LOGS_PER_PAGE} 条 · 最新优先</span>
+              </div>
+              <div id="cmhub-log-table" key={activeTab} className="cmhub-log-content" role="tabpanel">
+                <PrintLogTable logs={visibleLogs} latestLogId={lastLogId} />
+              </div>
+              {filteredLogs.length > 0 && (
+                <div className="px-4 py-3 border-t border-white/10 flex items-center justify-between gap-3 text-xs text-text-secondary">
+                  <span>第 {currentLogPage.toLocaleString()} / {totalLogPages.toLocaleString()} 页</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setLogPage(page => Math.max(1, page - 1))}
+                      disabled={currentLogPage === 1}
+                      aria-label="上一页"
+                      className="rounded-md border border-white/10 px-2.5 py-1.5 text-text-primary transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      &lt;
+                    </button>
+                    {paginationItems.map(page => {
+                      if (typeof page !== 'number') {
+                        return <span key={page} className="px-1 text-text-secondary/70" aria-hidden="true">…</span>;
                       }
-                      return filteredLogs.map((log, i) => {
-                        const isLastPrinted = i === 0 && log.type === 'print' && log.firstLeg === lastPrintedCode;
-                        return (
-                          <tr key={i} className={cn(
-                            "hover:bg-white/5 transition-colors duration-300",
-                            isLastPrinted && "bg-white/[0.075] shadow-[inset_3px_0_0_rgba(128,255,0,0.28)]"
-                          )}>
-                            <td className="px-4 py-4 text-center text-text-secondary font-medium">{filteredLogs.length - i}</td>
-                            <td className="px-6 py-4 text-text-secondary font-mono whitespace-nowrap">{log.time}</td>
-                            <td className="px-6 py-4 font-medium">
-                              {log.type === 'print' ? (
-                                <div className="flex flex-col">
-                                  <span className="text-text-primary">{log.firstLeg}</span>
-                                  <span className="text-xs text-text-secondary/80 font-normal">快递单号: {log.exchange}</span>
-                                </div>
-                              ) : log.firstLeg}
-                            </td>
-                            <td className="px-6 py-4 text-text-secondary">
-                              {log.message}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <span className={cn(
-                                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
-                                log.status === 'success' ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
-                              )}>
-                                {log.status === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                                {log.status === 'success' ? '成功' : '失败'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+
+                      return (
+                        <button
+                          key={page}
+                          type="button"
+                          onClick={() => setLogPage(page)}
+                          aria-label={`第 ${page} 页`}
+                          aria-current={currentLogPage === page ? 'page' : undefined}
+                          className={cn(
+                            "min-w-8 rounded-md border px-2 py-1.5 transition-colors",
+                            currentLogPage === page
+                              ? "border-brand-green/60 bg-brand-green/15 text-brand-green"
+                              : "border-white/10 text-text-primary hover:bg-white/10"
+                          )}
+                        >
+                          {page}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setLogPage(page => Math.min(totalLogPages, page + 1))}
+                      disabled={currentLogPage === totalLogPages}
+                      aria-label="下一页"
+                      className="rounded-md border border-white/10 px-2.5 py-1.5 text-text-primary transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      &gt;
+                    </button>
+                  </div>
+                </div>
+              )}
+              </ArcoCard>
+            </section>
         </div>
       </div>
     </div>
