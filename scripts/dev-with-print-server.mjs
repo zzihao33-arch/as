@@ -13,7 +13,7 @@ const commandFor = args => process.platform === 'win32'
     }
   : { command: npmCommand, args };
 
-const children = [
+const services = [
   {
     name: 'print-server',
     args: ['run', 'server']
@@ -25,45 +25,63 @@ const children = [
 ];
 
 let shuttingDown = false;
+const running = new Map();
+const restartTimers = new Map();
+const RESTART_DELAY_MS = 1_500;
 
-const running = children.map(({ name, args }) => {
-  const childCommand = commandFor(args);
+const scheduleRestart = service => {
+  if (shuttingDown || restartTimers.has(service.name)) return;
+
+  console.error(`[${service.name}] exited unexpectedly; retrying in ${RESTART_DELAY_MS / 1_000}s without stopping the local web page.`);
+  const restartTimer = setTimeout(() => {
+    restartTimers.delete(service.name);
+    if (!shuttingDown) startService(service);
+  }, RESTART_DELAY_MS);
+
+  restartTimers.set(service.name, restartTimer);
+};
+
+const startService = service => {
+  const childCommand = commandFor(service.args);
   const child = spawn(childCommand.command, childCommand.args, {
     stdio: 'inherit',
     shell: false,
     cwd: process.cwd()
   });
 
-  child.on('exit', code => {
-    if (shuttingDown) return;
+  running.set(service.name, child);
 
-    if (code !== 0) {
-      shuttingDown = true;
-      running.forEach(processRef => {
-        if (processRef !== child && !processRef.killed) {
-          processRef.kill();
-        }
-      });
-      process.exit(code ?? 1);
-    }
-  });
+  let restartRequested = false;
+  const requestRestart = () => {
+    if (restartRequested || shuttingDown) return;
+    restartRequested = true;
+    if (running.get(service.name) === child) running.delete(service.name);
+    scheduleRestart(service);
+  };
+
+  child.on('exit', requestRestart);
 
   child.on('error', error => {
-    console.error(`[${name}] failed to start:`, error);
-    process.exit(1);
+    console.error(`[${service.name}] failed to start:`, error);
+    requestRestart();
   });
 
   return child;
-});
+};
+
+services.forEach(startService);
 
 const stopAll = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  restartTimers.forEach(timer => clearTimeout(timer));
+  restartTimers.clear();
   running.forEach(child => {
     if (!child.killed) {
       child.kill();
     }
   });
+  running.clear();
 };
 
 process.on('SIGINT', () => {

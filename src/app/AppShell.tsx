@@ -1,4 +1,4 @@
-import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Select, Tooltip } from '@arco-design/web-react';
+import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Select, Spin, Tooltip } from '@arco-design/web-react';
 import {
   BarChart3,
   LayoutDashboard,
@@ -11,7 +11,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { type ThemeMode, useTheme } from './theme/ThemeProvider';
 
@@ -58,7 +58,10 @@ export function AppShell() {
 
   const openRoute = (path: string) => {
     setMobileNavigationOpen(false);
-    navigate(path);
+    // Route changes must replace the current work surface immediately. Keeping
+    // the previous route in a transition leaves stale content visible while
+    // the scanner workspace chunk is being prepared.
+    void navigate(path);
   };
 
   return (
@@ -143,7 +146,17 @@ export function AppShell() {
             FORM: Arco enterprise application shell; implementation phase 1, design-context unavailable until a Figma layer is selected.
             FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
           */}
-          <Outlet />
+          <Suspense
+            fallback={(
+              <div className="cmhub-route-loader" role="status" aria-live="polite" aria-label="正在切换页面">
+                <Spin size={28} />
+              </div>
+            )}
+          >
+            <div className="cmhub-route-stage" key={location.pathname}>
+              <Outlet />
+            </div>
+          </Suspense>
         </Layout.Content>
       </Layout>
 

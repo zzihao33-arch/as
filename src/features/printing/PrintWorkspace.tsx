@@ -1821,7 +1821,7 @@ export default function App() {
                   size="large"
                   aria-label="打开拦截名单管理"
                   icon={<ShieldAlert size={20} />}
-                  onClick={() => navigate('/operations/intercepts')}
+                  onClick={() => void navigate('/operations/intercepts')}
                 />
               </Tooltip>
               <Tooltip content="导入 Excel 映射与 PDF 面单">

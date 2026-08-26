@@ -6,6 +6,9 @@ const { Row, Col } = Grid;
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const openRoute = (path: string) => {
+    void navigate(path);
+  };
 
   return (
     <section className="cmhub-page cmhub-dashboard-page" aria-labelledby="dashboard-title">
@@ -23,7 +26,7 @@ export default function DashboardPage() {
             <div className="cmhub-action-card-icon"><PackageSearch size={22} /></div>
             <h2>扫码打单</h2>
             <p>导入映射、连接本机打印机并处理连续扫描。</p>
-            <Button type="primary" long icon={<ArrowRight size={16} />} onClick={() => navigate('/operations/scan-print')}>进入工作台</Button>
+            <Button type="primary" long icon={<ArrowRight size={16} />} onClick={() => openRoute('/operations/scan-print')}>进入工作台</Button>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={8}>
@@ -31,7 +34,7 @@ export default function DashboardPage() {
             <div className="cmhub-action-card-icon"><FilePlus2 size={22} /></div>
             <h2>生成 BOL</h2>
             <p>按渠道录入数量，实时预览并输出提货单。</p>
-            <Button long icon={<ArrowRight size={16} />} onClick={() => navigate('/bol/records')}>管理 BOL</Button>
+            <Button long icon={<ArrowRight size={16} />} onClick={() => openRoute('/bol/records')}>管理 BOL</Button>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={8}>
@@ -39,7 +42,7 @@ export default function DashboardPage() {
             <div className="cmhub-action-card-icon"><Printer size={22} /></div>
             <h2>设备与状态</h2>
             <p>检查当前电脑的 QZ Tray 连接和打印机选择。</p>
-            <Button long icon={<ArrowRight size={16} />} onClick={() => navigate('/settings/printer')}>查看设置</Button>
+            <Button long icon={<ArrowRight size={16} />} onClick={() => openRoute('/settings/printer')}>查看设置</Button>
           </Card>
         </Col>
       </Row>

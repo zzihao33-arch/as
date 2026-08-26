@@ -26,7 +26,7 @@ export default function FeaturePage({ title, description, actionLabel, actionPat
               type="primary"
               className="cmhub-feature-action"
               icon={<ArrowRight size={16} />}
-              onClick={() => navigate(actionPath)}
+              onClick={() => void navigate(actionPath)}
             >
               <span>{actionLabel}</span>
             </Button>

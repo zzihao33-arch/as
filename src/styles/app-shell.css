@@ -187,8 +187,39 @@
 .cmhub-payroll-launcher .arco-result-subtitle { max-width: 520px; margin: 0 auto; color: var(--color-text-2); line-height: 1.7; }
 .cmhub-payroll-launcher .arco-result-icon { color: var(--primary-6); }
 
-.app-route-loader { display: grid; min-height: 100vh; place-items: center; background: var(--color-bg-2); }
-.app-route-loader .arco-spin-icon { color: var(--primary-6); }
+.cmhub-route-stage {
+  min-width: 0;
+  min-height: calc(100vh - 140px);
+  background: var(--color-bg-2);
+}
+
+.cmhub-route-loader {
+  display: grid;
+  min-height: calc(100vh - 140px);
+  place-items: center;
+  background: var(--color-bg-2);
+}
+
+.cmhub-route-loader .arco-spin-icon { color: var(--primary-6); }
+
+.cmhub-app-recovery {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background: var(--color-bg-2);
+}
+
+.cmhub-app-recovery .arco-result {
+  width: min(560px, 100%);
+  padding: 40px 24px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  background: var(--color-bg-1);
+}
+
+.cmhub-app-recovery .arco-result-title { color: var(--color-text-1); }
+.cmhub-app-recovery .arco-result-subtitle { color: var(--color-text-2); line-height: 1.7; }
 
 .cmhub-mobile-navigation { position: fixed; inset: 0; z-index: 1200; }
 .cmhub-mobile-navigation-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: color-mix(in srgb, var(--color-text-1) 48%, transparent); }
