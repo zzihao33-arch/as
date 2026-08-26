@@ -94,6 +94,7 @@ export function AppShell() {
         <div className="cmhub-sider-footer">
           <Badge status="success" text="本机工作台" />
           <span>QZ 打印通过当前电脑执行</span>
+          <small>数据仅保存在当前浏览器；清理缓存会影响历史与草稿。</small>
         </div>
       </Layout.Sider>
 

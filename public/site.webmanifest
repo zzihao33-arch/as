@@ -1,5 +1,5 @@
 {
-  "name": "CM-HUB 官方换单系统",
+  "name": "CM-HUB | 海外仓工具站",
   "short_name": "CM-HUB",
   "description": "CM-HUB 面单与 BOL管理系统",
   "start_url": "/",
@@ -8,9 +8,9 @@
   "theme_color": "#0d1210",
   "icons": [
     {
-      "src": "/favicon.png?v=2",
-      "sizes": "64x64",
-      "type": "image/png",
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
       "purpose": "any"
     }
   ]

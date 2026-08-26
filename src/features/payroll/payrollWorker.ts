@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { PayrollEmployeeBase, PayrollIssue, PayrollParseResult, PayrollWorkerResponse } from './payrollTypes';
+import type { PayrollAttendanceDetail, PayrollEmployeeBase, PayrollIssue, PayrollParseResult, PayrollWeekRange, PayrollWorkerResponse } from './payrollTypes';
 
 type SheetRow = unknown[];
 
@@ -11,6 +11,7 @@ interface MonthlyTimeSheetTemplate {
 }
 
 const RATE_PATTERN = /\$?\s*(\d+(?:\.\d+)?)\s*(?:\/\s*h(?:our)?|per\s*hour|时薪)/i;
+const RATE_HEADER_PATTERN = /(?:基础\s*)?时薪|hourly\s*rate|\brate\b/i;
 const TIME_PATTERN = /(?:^|\s)(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?(?:\s|$)/i;
 
 function cellText(value: unknown) {
@@ -62,6 +63,12 @@ function toTimeMinutes(value: unknown): number | null {
   return hours * 60 + minutes;
 }
 
+function formatTime(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
 function formatDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -76,6 +83,12 @@ function mondayOf(date: Date) {
   const day = copy.getDay() || 7;
   copy.setDate(copy.getDate() - day + 1);
   return copy;
+}
+
+function collectWeekRanges(columns: Array<{ date: Date }>): PayrollWeekRange[] {
+  return Array.from(new Set(columns.map(({ date }) => formatDate(mondayOf(date)))))
+    .sort((first, second) => first.localeCompare(second))
+    .map((week) => ({ week }));
 }
 
 function findDateColumns(rows: SheetRow[]) {
@@ -154,6 +167,14 @@ function findSummaryColumn(row: SheetRow, matcher: RegExp) {
   return columnIndex >= 0 ? columnIndex : null;
 }
 
+function findHeaderColumn(rows: SheetRow[], matcher: RegExp) {
+  for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
+    const columnIndex = findSummaryColumn(rows[rowIndex] || [], matcher);
+    if (columnIndex !== null) return columnIndex;
+  }
+  return null;
+}
+
 function isOilAllowanceCell(sheet: XLSX.WorkSheet, rowIndex: number, columnIndex: number) {
   const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
   const cell = sheet[cellAddress] as { s?: { fgColor?: { rgb?: string }; bgColor?: { rgb?: string } } } | undefined;
@@ -176,12 +197,15 @@ function parseMonthlyTimeSheet(rows: SheetRow[], template: MonthlyTimeSheetTempl
   const summaryHeader = rows[template.dayHeaderRowIndex + 1] || [];
   const bonusColumnIndex = findSummaryColumn(summaryHeader, /奖金/);
   const fuelDaysColumnIndex = findSummaryColumn(summaryHeader, /油补/);
+  const rateColumnIndex = findSummaryColumn(summaryHeader, RATE_HEADER_PATTERN);
+  const weeks = collectWeekRanges(template.columns);
 
   for (let rowIndex = firstEmployeeRowIndex, employeeIndex = 1; rowIndex < rows.length; rowIndex += 2, employeeIndex += 1) {
     const clockInRow = rows[rowIndex] || [];
     const clockOutRow = rows[rowIndex + 1] || [];
     const name = extractName([clockInRow], dateColumnStart, employeeIndex);
-    const rate = extractRate(clockInRow, clockOutRow);
+    const rate = extractRate(clockInRow, clockOutRow)
+      ?? (rateColumnIndex === null ? null : toNonNegativeNumber(clockInRow[rateColumnIndex]));
     const hasPunch = template.columns.some(({ columnIndex }) => (
       toTimeMinutes(clockInRow[columnIndex]) !== null || toTimeMinutes(clockOutRow[columnIndex]) !== null
     ));
@@ -193,6 +217,7 @@ function parseMonthlyTimeSheet(rows: SheetRow[], template: MonthlyTimeSheetTempl
 
     const issues: PayrollIssue[] = [];
     const weeklyHourMap = new Map<string, number>();
+    const attendanceDetails: PayrollAttendanceDetail[] = [];
     const highlightedOilDays = new Set<number>();
     let attendanceDays = 0;
 
@@ -221,6 +246,12 @@ function parseMonthlyTimeSheet(rows: SheetRow[], template: MonthlyTimeSheetTempl
       }
 
       attendanceDays += 1;
+      attendanceDetails.push({
+        date: formatDate(date),
+        hours: Math.round(netHours * 100) / 100,
+        start: formatTime(start),
+        end: formatTime(end),
+      });
       const week = formatDate(mondayOf(date));
       weeklyHourMap.set(week, (weeklyHourMap.get(week) || 0) + netHours);
     }
@@ -247,6 +278,7 @@ function parseMonthlyTimeSheet(rows: SheetRow[], template: MonthlyTimeSheetTempl
       overtimeHours: Math.round(overtimeHours * 100) / 100,
       attendanceDays,
       weeklyHours,
+      attendanceDetails,
       issues
     });
   }
@@ -257,6 +289,7 @@ function parseMonthlyTimeSheet(rows: SheetRow[], template: MonthlyTimeSheetTempl
 
   return {
     employees,
+    weeks,
     periodLabel: `${formatDate(new Date(template.year, template.month - 1, 1))} 至 ${formatDate(new Date(template.year, template.month, 0))}`,
     parsedRows: rows.length
   };
@@ -286,6 +319,8 @@ export function parseWorkbook(buffer: ArrayBuffer): PayrollParseResult {
   }
 
   const dateColumnStart = Math.min(...dateHeader.columns.map(entry => entry.columnIndex));
+  const rateColumnIndex = findHeaderColumn(rows.slice(0, dateHeader.rowIndex + 1), RATE_HEADER_PATTERN);
+  const weeks = collectWeekRanges(dateHeader.columns);
   const employees: PayrollEmployeeBase[] = [];
 
   for (let rowIndex = dateHeader.rowIndex + 1, employeeIndex = 1; rowIndex < rows.length; rowIndex += 2, employeeIndex += 1) {
@@ -294,13 +329,15 @@ export function parseWorkbook(buffer: ArrayBuffer): PayrollParseResult {
     const hasPunch = dateHeader.columns.some(({ columnIndex }) => (
       toTimeMinutes(clockInRow[columnIndex]) !== null || toTimeMinutes(clockOutRow[columnIndex]) !== null
     ));
-    const rate = extractRate(clockInRow, clockOutRow);
+    const rate = extractRate(clockInRow, clockOutRow)
+      ?? (rateColumnIndex === null ? null : toNonNegativeNumber(clockInRow[rateColumnIndex]));
     const name = extractName([clockInRow, clockOutRow], dateColumnStart, employeeIndex);
 
     if (!hasPunch && rate === null && name.startsWith('员工 ')) continue;
 
     const issues: PayrollIssue[] = [];
     const weeklyHourMap = new Map<string, number>();
+    const attendanceDetails: PayrollAttendanceDetail[] = [];
     let attendanceDays = 0;
 
     for (const { columnIndex, date } of dateHeader.columns) {
@@ -321,6 +358,12 @@ export function parseWorkbook(buffer: ArrayBuffer): PayrollParseResult {
       }
 
       attendanceDays += 1;
+      attendanceDetails.push({
+        date: formatDate(date),
+        hours: Math.round(netHours * 100) / 100,
+        start: formatTime(start),
+        end: formatTime(end),
+      });
       const week = formatDate(mondayOf(date));
       weeklyHourMap.set(week, (weeklyHourMap.get(week) || 0) + netHours);
     }
@@ -343,6 +386,7 @@ export function parseWorkbook(buffer: ArrayBuffer): PayrollParseResult {
       overtimeHours: Math.round(overtimeHours * 100) / 100,
       attendanceDays,
       weeklyHours,
+      attendanceDetails,
       issues
     });
   }
@@ -354,6 +398,7 @@ export function parseWorkbook(buffer: ArrayBuffer): PayrollParseResult {
   const sortedDates = dateHeader.columns.map(entry => entry.date).sort((a, b) => a.getTime() - b.getTime());
   return {
     employees,
+    weeks,
     periodLabel: `${formatDate(sortedDates[0])} 至 ${formatDate(sortedDates[sortedDates.length - 1])}`,
     parsedRows: rows.length
   };

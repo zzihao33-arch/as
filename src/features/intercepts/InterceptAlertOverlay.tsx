@@ -31,7 +31,7 @@ export default function InterceptAlertOverlay({ rule, scannedValue, onConfirm }:
           ref={closeButtonRef}
           className="cmhub-intercept-alert-close"
           type="text"
-          aria-label="确认已处理并关闭拦截提示"
+          aria-label="确认已处理并返回扫码"
           icon={<X size={24} />}
           onClick={onConfirm}
         />
@@ -44,7 +44,7 @@ export default function InterceptAlertOverlay({ rule, scannedValue, onConfirm }:
           <div><dt>拦截原因</dt><dd>命中拦截名单</dd></div>
           <div><dt>添加来源</dt><dd>{rule.source === 'scan' ? '扫码录入' : '手动录入'}</dd></div>
         </dl>
-        <Button type="primary" status="danger" size="large" onClick={onConfirm}>
+        <Button className="cmhub-intercept-alert-confirm" type="primary" status="danger" size="large" onClick={onConfirm}>
           已移入拦截区，恢复扫码
         </Button>
       </div>

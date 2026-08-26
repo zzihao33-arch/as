@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Empty, Input, Message, Table, Tag, Typography } from '@arco-design/web-react';
-import type { RefInputType } from '@arco-design/web-react/es/Input';
+import type { RefInputType, RefTextAreaType } from '@arco-design/web-react/es/Input';
 import { Barcode, ClipboardPlus, ShieldAlert, Trash2 } from 'lucide-react';
 import { type InterceptRule, useInterceptRules } from './useInterceptRules';
 
@@ -9,13 +9,16 @@ const formatAddedAt = (timestamp: number) => new Intl.DateTimeFormat('zh-CN', {
 }).format(timestamp);
 
 export default function InterceptListPage() {
-  const { rules, storageStatus, addRule, removeRule } = useInterceptRules();
+  const { rules, storageStatus, addRules, removeRule } = useInterceptRules();
   const [waybillInput, setWaybillInput] = useState('');
   const [scanMode, setScanMode] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
   const inputRef = useRef<RefInputType>(null);
+  const batchInputRef = useRef<RefTextAreaType>(null);
 
   useEffect(() => {
     if (!scanMode) return undefined;
+    setBatchMode(false);
     inputRef.current?.focus();
     const timeout = window.setTimeout(() => {
       setScanMode(false);
@@ -24,8 +27,8 @@ export default function InterceptListPage() {
     return () => window.clearTimeout(timeout);
   }, [scanMode]);
 
-  const commitRule = () => {
-    const result = addRule(waybillInput, scanMode ? 'scan' : 'manual');
+  const commitRule = async () => {
+    const result = await addRules(waybillInput, scanMode ? 'scan' : 'manual');
     if (!result.ok) {
       Message.warning(result.message);
       return;
@@ -33,7 +36,7 @@ export default function InterceptListPage() {
 
     setWaybillInput('');
     setScanMode(false);
-    Message.success(scanMode ? '已通过扫码加入拦截名单。' : '已加入拦截名单。');
+    Message.success(scanMode ? '已通过扫码加入拦截名单。' : result.message);
   };
 
   const columns = [
@@ -59,7 +62,7 @@ export default function InterceptListPage() {
       dataIndex: 'id',
       width: 96,
       render: (id: string, record: InterceptRule) => (
-        <Button className="cmhub-intercept-delete-button" type="text" status="danger" size="small" onClick={() => removeRule(id)} aria-label={`删除拦截单号 ${record.waybillNo}`}>
+        <Button className="cmhub-intercept-delete-button" type="text" status="danger" size="small" onClick={() => void removeRule(id)} aria-label={`删除拦截单号 ${record.waybillNo}`}>
           <Trash2 size={15} aria-hidden="true" />
           <span>删除</span>
         </Button>
@@ -77,12 +80,12 @@ export default function InterceptListPage() {
         <Tag color="red" bordered={false}>本地硬拦截</Tag>
       </div>
 
-      {storageStatus !== 'ready' && (
+      {storageStatus !== 'ready' && storageStatus !== 'loading' && (
         <Alert
           className="cmhub-intercept-storage-alert"
           type="warning"
           showIcon
-          content={storageStatus === 'corrupted' ? '拦截库读取异常，当前已跳过拦截判断；请重新添加需要拦截的单号。' : '本机无法保存拦截名单，本次会话中的名单将在页面关闭后失效。'}
+          content={storageStatus === 'corrupted' ? '拦截库读取异常，当前已跳过拦截判断；请重新添加需要拦截的单号。' : '本机无法写入 IndexedDB，当前名单可能无法在刷新后恢复。'}
         />
       )}
 
@@ -94,16 +97,33 @@ export default function InterceptListPage() {
           </div>
         </div>
         <div className="cmhub-intercept-entry-controls">
-          <Input
-            ref={inputRef}
-            value={waybillInput}
-            maxLength={25}
-            allowClear
-            placeholder={scanMode ? '请扫描条码（10 秒内）' : '输入或粘贴单号'}
-            onChange={setWaybillInput}
-            onPressEnter={commitRule}
-            aria-label="拦截单号"
-          />
+          {batchMode ? (
+            <Input.TextArea
+              ref={batchInputRef}
+              value={waybillInput}
+              autoSize={{ minRows: 2, maxRows: 5 }}
+              placeholder="每行、逗号或分号分隔一个单号"
+              onChange={setWaybillInput}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                  event.preventDefault();
+                  void commitRule();
+                }
+              }}
+              aria-label="批量拦截单号"
+            />
+          ) : (
+            <Input
+              ref={inputRef}
+              value={waybillInput}
+              maxLength={25}
+              allowClear
+              placeholder={scanMode ? '请扫描条码（10 秒内）' : '输入或粘贴单号'}
+              onChange={setWaybillInput}
+              onPressEnter={() => void commitRule()}
+              aria-label="拦截单号"
+            />
+          )}
           <div className="cmhub-intercept-entry-actions" role="group" aria-label="拦截单号操作">
             <Button className="cmhub-intercept-scan-button" loading={scanMode} onClick={() => {
               setWaybillInput('');
@@ -112,9 +132,20 @@ export default function InterceptListPage() {
               <Barcode size={16} aria-hidden="true" />
               <span>扫描添加</span>
             </Button>
-            <Button className="cmhub-intercept-add-button" type="primary" onClick={commitRule}>
+            <Button onClick={() => {
+              setScanMode(false);
+              setBatchMode(current => !current);
+              window.setTimeout(() => {
+                if (batchMode) inputRef.current?.focus();
+                else batchInputRef.current?.focus();
+              }, 0);
+            }}>
               <ClipboardPlus size={16} aria-hidden="true" />
-              <span>添加</span>
+              <span>{batchMode ? '单条录入' : '批量粘贴'}</span>
+            </Button>
+            <Button className="cmhub-intercept-add-button" type="primary" onClick={() => void commitRule()}>
+              <ClipboardPlus size={16} aria-hidden="true" />
+              <span>{batchMode ? '批量添加' : '添加'}</span>
             </Button>
           </div>
         </div>

@@ -209,6 +209,29 @@
   margin-bottom: var(--cmhub-space-4);
 }
 
+.cmhub-import-precheck {
+  display: grid;
+  gap: var(--cmhub-space-2);
+  margin: 0 0 var(--cmhub-space-4);
+}
+
+.cmhub-import-precheck .arco-alert {
+  align-items: flex-start;
+}
+
+.cmhub-import-precheck-list {
+  max-height: 180px;
+  margin: 0;
+  padding: var(--cmhub-space-3) var(--cmhub-space-4) var(--cmhub-space-3) 32px;
+  overflow: auto;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  color: var(--color-text-2);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
 .cmhub-data-import-body {
   padding: 0 var(--cmhub-space-4) var(--cmhub-space-4);
 }
@@ -221,8 +244,9 @@
 
 .cmhub-import-source {
   padding: var(--cmhub-space-4);
+  border: 1px solid var(--color-border-2);
   border-radius: var(--cmhub-radius-md);
-  background: var(--color-fill-1);
+  background: var(--color-bg-1);
 }
 
 .cmhub-import-source-heading {
@@ -242,6 +266,13 @@
   gap: var(--cmhub-space-2);
 }
 
+.cmhub-import-capacity {
+  flex-shrink: 0;
+  color: var(--color-text-3);
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .cmhub-import-source-heading svg,
 .cmhub-import-drop-target > svg,
 .cmhub-data-import-note > svg {
@@ -255,8 +286,9 @@
   justify-items: center;
   gap: var(--cmhub-space-2);
   padding: var(--cmhub-space-3);
-  border: 1px dashed var(--color-border-3);
+  border: 1px dashed var(--color-border-2);
   border-radius: var(--cmhub-radius-md);
+  background: var(--color-fill-1);
   color: var(--color-text-2);
   cursor: pointer;
   text-align: center;
@@ -272,8 +304,21 @@
   color: var(--color-text-1);
 }
 
+.cmhub-import-drop-target[data-drop-active='true'] {
+  border-color: var(--primary-6);
+  border-style: solid;
+  background: color-mix(in srgb, var(--color-primary-light-1) 78%, var(--color-bg-1));
+  color: var(--color-text-1);
+}
+
+.cmhub-import-drop-target:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primary-6) 28%, transparent);
+  outline-offset: 3px;
+}
+
 .cmhub-import-drop-target strong,
-.cmhub-import-drop-target small {
+.cmhub-import-drop-target small,
+.cmhub-import-drop-target em {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -288,6 +333,43 @@
 .cmhub-import-drop-target small {
   color: var(--color-text-2);
   font-size: 12px;
+}
+
+.cmhub-import-drop-target em {
+  color: var(--color-warning-6);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.cmhub-import-pdf-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: var(--cmhub-space-2);
+}
+
+.cmhub-import-pdf-drop-target {
+  min-width: 0;
+}
+
+.cmhub-import-pdf-actions {
+  display: grid;
+  align-content: center;
+  gap: var(--cmhub-space-2);
+  padding: var(--cmhub-space-3);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-fill-1);
+}
+
+.cmhub-import-pdf-actions > span {
+  color: var(--color-text-2);
+  font-size: 12px;
+  text-align: center;
+}
+
+.cmhub-import-pdf-actions .arco-btn {
+  width: 100%;
+  min-height: 32px;
 }
 
 .cmhub-data-import-note {
@@ -316,6 +398,17 @@
 
 .cmhub-payroll-empty .arco-card-body {
   padding: 0;
+}
+
+.cmhub-payroll-empty[data-drop-active='true'] {
+  border-color: var(--primary-6);
+  background: color-mix(in srgb, var(--color-primary-light-1) 36%, var(--color-bg-1));
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--primary-6) 14%, transparent);
+}
+
+.cmhub-payroll-empty[data-drop-active='true'] .cmhub-payroll-upload-icon {
+  color: var(--color-bg-1);
+  background: var(--primary-6);
 }
 
 .cmhub-payroll-loading .arco-typography {
@@ -387,8 +480,81 @@
   padding-top: 4px;
 }
 
-.cmhub-operating-workspace {
+.cmhub-payroll-rate-editor {
+  min-width: 154px;
+}
+
+.cmhub-payroll-rate-editor .arco-input-wrapper {
+  width: 100%;
+  min-width: 154px;
+}
+
+.cmhub-payroll-rate-input .arco-input {
+  min-width: 0;
   color: var(--color-text-1);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cmhub-payroll-rate-input .arco-input-addbefore,
+.cmhub-payroll-rate-input .arco-input-addafter {
+  color: var(--color-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cmhub-payroll-week-heading {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.cmhub-payroll-week-heading strong {
+  color: var(--color-text-1);
+  font-size: 12px;
+}
+
+.cmhub-payroll-week-heading small {
+  color: var(--color-text-3);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.cmhub-payroll-week-cell {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  min-width: 112px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.cmhub-payroll-week-cell strong {
+  color: var(--color-text-1);
+  font-size: 13px;
+}
+
+.cmhub-payroll-week-cell span {
+  color: var(--color-text-3);
+  font-size: 11px;
+}
+
+.cmhub-payroll-table .arco-table-th {
+  vertical-align: middle;
+}
+
+.cmhub-operating-workspace {
+  width: 100%;
+  padding: var(--cmhub-space-6) var(--cmhub-space-8) var(--cmhub-space-8);
+  color: var(--color-text-1);
+}
+
+.cmhub-operating-stack {
+  display: grid;
+  gap: var(--cmhub-space-5);
 }
 
 .cmhub-intercept-page {
@@ -460,10 +626,16 @@
   align-items: center;
 }
 
-.cmhub-intercept-entry-controls .arco-input-wrapper {
+.cmhub-intercept-entry-controls .arco-input-wrapper,
+.cmhub-intercept-entry-controls .arco-textarea-wrapper {
   width: 100%;
   min-height: 42px;
   min-width: 0;
+}
+
+.cmhub-intercept-entry-controls .arco-textarea-wrapper textarea {
+  min-height: 52px;
+  line-height: 1.5;
 }
 
 .cmhub-intercept-entry-actions {
@@ -540,6 +712,7 @@
 }
 
 .cmhub-intercept-alert-panel {
+  position: relative;
   width: min(680px, 100%);
   padding: clamp(28px, 6vw, 56px);
   border: 1px solid color-mix(in srgb, var(--color-white) 38%, transparent);
@@ -551,9 +724,37 @@
 
 .cmhub-intercept-alert-close {
   position: absolute;
-  top: var(--cmhub-space-5);
-  right: var(--cmhub-space-5);
+  top: var(--cmhub-space-3);
+  right: var(--cmhub-space-3);
+  display: inline-flex !important;
+  width: 36px;
+  min-width: 36px !important;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  border: 1px solid color-mix(in srgb, var(--color-white) 46%, transparent) !important;
+  border-radius: 999px !important;
   color: var(--color-white) !important;
+  background: color-mix(in srgb, var(--color-black) 10%, transparent) !important;
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-micro) var(--ease-smooth-out);
+}
+
+.cmhub-intercept-alert-close:hover,
+.cmhub-intercept-alert-close:focus-visible {
+  border-color: var(--color-white) !important;
+  color: #87262b !important;
+  background: var(--color-white) !important;
+  transform: scale(1.04);
+}
+
+.cmhub-intercept-alert-close:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-white) 55%, transparent);
+  outline-offset: 3px;
 }
 
 .cmhub-intercept-alert-icon {
@@ -622,7 +823,7 @@
   font-weight: 600;
 }
 
-.cmhub-intercept-alert-panel > .arco-btn {
+.cmhub-intercept-alert-confirm.arco-btn {
   min-width: min(100%, 320px);
 }
 
@@ -641,33 +842,96 @@
 
 .cmhub-operating-header {
   justify-content: space-between;
+  min-height: 104px;
   gap: var(--cmhub-space-6);
+  padding: var(--cmhub-space-6) var(--cmhub-space-8);
 }
 
 .cmhub-operating-title {
   display: flex;
-  min-height: 44px;
+  min-width: 0;
   align-items: center;
+  gap: var(--cmhub-space-4);
+}
+
+.cmhub-operating-title-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--color-primary-light-1);
+  color: var(--primary-6);
 }
 
 .cmhub-operating-title h3.arco-typography {
   margin: 0;
   color: var(--color-text-1);
-  line-height: 1.25;
+  font-size: 24px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.cmhub-operating-title p {
+  margin: var(--cmhub-space-1) 0 0;
+  color: var(--color-text-2);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .cmhub-operating-header-actions {
+  flex: 0 0 auto;
   gap: var(--cmhub-space-5);
 }
 
 .cmhub-header-metrics {
-  gap: var(--cmhub-space-6);
-  padding-right: var(--cmhub-space-5);
-  border-right: 1px solid var(--color-border-2);
+  gap: 0;
+  padding: var(--cmhub-space-2);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-fill-1);
+}
+
+.cmhub-header-metrics > div {
+  min-width: 86px;
+  padding: var(--cmhub-space-1) var(--cmhub-space-3);
+}
+
+.cmhub-header-metrics > div + div {
+  border-left: 1px solid var(--color-border-2);
+}
+
+.cmhub-header-metrics > div[class*='border-x'] {
+  border-right: 0;
+  border-left: 1px solid var(--color-border-2);
+  padding-right: var(--cmhub-space-3);
+  padding-left: var(--cmhub-space-3);
+}
+
+.cmhub-header-metrics .text-2xl {
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.cmhub-header-metrics .text-xs {
+  margin-top: 3px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
 }
 
 .cmhub-header-utilities {
-  gap: var(--cmhub-space-1);
+  gap: 2px;
+  padding-left: var(--cmhub-space-4);
+  border-left: 1px solid var(--color-border-2);
+}
+
+.cmhub-header-utilities-label {
+  margin-right: var(--cmhub-space-2);
+  color: var(--color-text-3);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .cmhub-header-utilities .arco-btn {
@@ -683,6 +947,10 @@
 .cmhub-header-utilities .arco-btn:hover {
   color: var(--primary-6);
   background: var(--color-primary-light-1);
+}
+
+.cmhub-operating-overview > .arco-card-body {
+  padding: 0;
 }
 
 .cmhub-operating-workspace .arco-card {
@@ -715,6 +983,11 @@
   align-items: center;
   justify-content: center;
   gap: var(--cmhub-space-2);
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    box-shadow var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .cmhub-operating-workspace .arco-btn.arco-btn-long {
@@ -728,6 +1001,109 @@
 .cmhub-log-clear-button {
   min-width: max-content;
   white-space: nowrap;
+}
+
+.cmhub-log-card {
+  overflow: hidden;
+}
+
+.cmhub-log-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cmhub-space-4);
+  padding: var(--cmhub-space-4) var(--cmhub-space-6);
+  border-bottom: 1px solid var(--color-border-2);
+  background: var(--color-fill-1);
+}
+
+.cmhub-log-card-heading,
+.cmhub-log-title,
+.cmhub-log-card-actions,
+.cmhub-log-card-meta,
+.cmhub-log-card-footer {
+  display: flex;
+  align-items: center;
+}
+
+.cmhub-log-card-heading {
+  min-width: 0;
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-log-title {
+  flex: 0 0 auto;
+  gap: var(--cmhub-space-2);
+}
+
+.cmhub-log-title h2 {
+  margin: 0;
+  color: var(--color-text-1);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.cmhub-log-title-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--color-bg-1);
+  color: var(--color-text-2);
+}
+
+.cmhub-log-card-actions {
+  flex: 0 0 auto;
+}
+
+.cmhub-log-card-meta,
+.cmhub-log-card-footer {
+  justify-content: space-between;
+  gap: var(--cmhub-space-3);
+  padding: 10px var(--cmhub-space-6);
+  color: var(--color-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cmhub-log-card-meta {
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.cmhub-log-card-footer {
+  padding-top: var(--cmhub-space-3);
+  padding-bottom: var(--cmhub-space-3);
+  border-top: 1px solid var(--color-border-2);
+}
+
+.cmhub-log-table .arco-table-container,
+.cmhub-log-table .arco-table-th,
+.cmhub-log-table .arco-table-td {
+  border-color: var(--color-border-2);
+}
+
+.cmhub-log-table .arco-table-th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  background: var(--color-fill-1);
+  color: var(--color-text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cmhub-log-table .arco-table-td {
+  padding-top: 14px;
+  padding-bottom: 14px;
+  color: var(--color-text-1);
+}
+
+.cmhub-log-table .arco-table-empty {
+  min-height: 300px;
+}
+
+.cmhub-log-table .arco-empty-description {
+  color: var(--color-text-3);
 }
 
 .cmhub-operating-workspace .arco-btn:active,
@@ -788,6 +1164,25 @@
 .cmhub-payroll-modal .arco-btn:not([disabled]):hover,
 .cmhub-settings-modal .arco-btn:not([disabled]):hover {
   transform: translateY(-1px);
+}
+
+.cmhub-operating-workspace .arco-btn:not([disabled]):hover,
+.cmhub-operating-workspace .arco-btn:active {
+  transform: none;
+}
+
+.cmhub-operating-workspace .cmhub-operating-card {
+  transition: none;
+}
+
+.cmhub-operating-workspace .cmhub-operating-card:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+.cmhub-operating-workspace .cmhub-import-drop-target:hover {
+  box-shadow: none;
+  transform: none;
 }
 
 .cmhub-bol-toolbar {
@@ -966,9 +1361,83 @@
   background: var(--color-fill-1);
 }
 
-.cmhub-scanner-card {
-  --cmhub-scan-accent: var(--success-6);
-  --cmhub-scan-surface: var(--color-success-light-1);
+.cmhub-operating-workspace .cmhub-scanner-card {
+  --cmhub-scan-accent: var(--primary-6);
+  --cmhub-scan-surface: var(--color-primary-light-1);
+
+  border: 1px solid var(--color-border-2) !important;
+  background: var(--color-bg-1) !important;
+  box-shadow: none;
+  color: var(--color-text-1);
+  transition: none;
+}
+
+.cmhub-scanner-card > .arco-card-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: var(--cmhub-space-6);
+  padding: var(--cmhub-space-5);
+}
+
+.cmhub-operating-workspace .cmhub-scanner-card:hover {
+  border-color: var(--color-border-2) !important;
+  box-shadow: none;
+  transform: none;
+}
+
+.cmhub-operating-workspace .cmhub-scanner-card:focus-within {
+  border-color: var(--color-border-2) !important;
+}
+
+.cmhub-scan-stage {
+  display: grid;
+  min-width: 0;
+  gap: var(--cmhub-space-3);
+}
+
+.cmhub-scan-entry-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--cmhub-space-3);
+}
+
+.cmhub-scan-entry-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-primary-light-1);
+  color: var(--primary-6);
+}
+
+.cmhub-scan-entry-copy {
+  min-width: 0;
+}
+
+.cmhub-scan-entry-copy h2 {
+  margin: 0;
+  color: var(--color-text-1);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.cmhub-scan-entry-copy p {
+  max-width: 34ch;
+  margin: var(--cmhub-space-1) 0 0;
+  color: var(--color-text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cmhub-scan-entry-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  min-width: 0;
+  gap: var(--cmhub-space-3);
+  align-items: end;
 }
 
 .cmhub-scanner-card[data-state='processing'] {
@@ -983,24 +1452,25 @@
 
 .cmhub-scan-status {
   display: inline-flex;
-  min-height: 28px;
+  min-height: 32px;
   align-items: center;
   gap: var(--cmhub-space-2);
-  padding: var(--cmhub-space-1) var(--cmhub-space-3);
+  padding: 0 var(--cmhub-space-3);
+  border: 1px solid color-mix(in srgb, var(--cmhub-scan-accent) 36%, transparent);
   border-radius: 999px;
   color: var(--cmhub-scan-accent);
-  background: var(--cmhub-scan-surface);
+  background: var(--color-bg-1);
   font-size: 12px;
   font-weight: 600;
   transition:
     background-color var(--duration-quick) var(--ease-smooth-out),
-    color var(--duration-quick) var(--ease-smooth-out),
-    transform var(--duration-micro) var(--ease-smooth-out);
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
 }
 
 .cmhub-scan-status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: currentColor;
@@ -1015,6 +1485,121 @@
   animation: cmhub-scan-feedback var(--duration-fast) var(--ease-smooth-out) both;
 }
 
+.cmhub-scan-field {
+  display: grid;
+  gap: 10px;
+}
+
+.cmhub-scan-field-label,
+.cmhub-scan-field-meta {
+  display: flex;
+  align-items: center;
+}
+
+.cmhub-scan-field-label {
+  justify-content: space-between;
+  gap: var(--cmhub-space-4);
+  color: var(--color-text-1);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cmhub-scan-input.is-error .arco-input-inner-wrapper {
+  animation: cmhub-scan-error-shake 320ms var(--ease-in-out) both;
+}
+
+.cmhub-scan-input .arco-input-inner-wrapper {
+  min-height: 52px;
+  padding: 0 var(--cmhub-space-4);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-bg-1);
+  box-shadow: none;
+}
+
+.cmhub-scan-input:hover .arco-input-inner-wrapper {
+  border-color: var(--cmhub-scan-accent);
+}
+
+.cmhub-scan-input.arco-input-focus .arco-input-inner-wrapper,
+.cmhub-scan-input:focus-within .arco-input-inner-wrapper {
+  border-color: var(--cmhub-scan-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--cmhub-scan-accent) 24%, transparent);
+}
+
+.cmhub-scan-input .arco-input {
+  min-width: 0;
+  color: var(--color-text-1);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.cmhub-scan-input .arco-input::placeholder {
+  color: var(--color-text-3);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.cmhub-scan-input .arco-input-prefix {
+  display: inline-flex;
+  margin-right: var(--cmhub-space-3);
+  color: var(--cmhub-scan-accent);
+}
+
+.cmhub-scan-input .arco-input-suffix {
+  display: inline-flex;
+  margin-left: var(--cmhub-space-3);
+}
+
+.cmhub-scan-enter-key {
+  display: inline-flex;
+  min-width: 50px;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--cmhub-space-2);
+  border: 1px solid var(--color-border-2);
+  border-radius: 7px;
+  background: var(--color-fill-2);
+  color: var(--color-text-2);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cmhub-scan-entry-actions {
+  display: flex;
+  min-height: 52px;
+  flex: 0 0 auto;
+  align-items: stretch;
+}
+
+.cmhub-scan-entry-actions .arco-btn {
+  display: inline-flex;
+  min-width: 112px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cmhub-space-2);
+  padding-inline: var(--cmhub-space-4);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cmhub-scan-entry-actions .arco-btn > svg,
+.cmhub-scan-entry-actions .arco-btn > span {
+  display: block;
+  line-height: 1;
+}
+
+.cmhub-scan-field-meta {
+  flex-wrap: wrap;
+  gap: 6px var(--cmhub-space-4);
+  color: var(--color-text-3);
+  font-size: 11px;
+}
+
 @keyframes cmhub-scan-status-pulse {
   from { transform: scale(var(--scale-small)); }
   to { transform: scale(1); }
@@ -1022,8 +1607,15 @@
 
 @keyframes cmhub-scan-feedback {
   0% { box-shadow: 0 0 0 color-mix(in srgb, var(--cmhub-scan-accent) 0%, transparent); }
-  55% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--cmhub-scan-accent) 14%, transparent); }
+  55% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--cmhub-scan-accent) 18%, transparent); }
   100% { box-shadow: 0 0 0 color-mix(in srgb, var(--cmhub-scan-accent) 0%, transparent); }
+}
+
+@keyframes cmhub-scan-error-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  55% { transform: translateX(5px); }
+  78% { transform: translateX(-3px); }
 }
 
 .t-tabs {
@@ -1141,6 +1733,10 @@
 }
 
 @media (max-width: 768px) {
+  .cmhub-operating-workspace {
+    padding: var(--cmhub-space-5) var(--cmhub-space-4) var(--cmhub-space-6);
+  }
+
   .cmhub-qz-guide-steps {
     gap: var(--cmhub-space-3);
   }
@@ -1165,6 +1761,10 @@
     width: 100%;
   }
 
+  .cmhub-intercept-entry-controls .arco-textarea-wrapper {
+    width: 100%;
+  }
+
   .cmhub-intercept-entry-actions,
   .cmhub-intercept-entry-actions .arco-btn {
     width: 100%;
@@ -1172,7 +1772,7 @@
 
   .cmhub-intercept-entry-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--cmhub-space-2);
   }
 
@@ -1191,6 +1791,8 @@
   .cmhub-operating-header {
     align-items: flex-start;
     flex-direction: column;
+    min-height: 0;
+    padding: var(--cmhub-space-5);
   }
 
   .cmhub-operating-header-actions {
@@ -1201,6 +1803,27 @@
   .cmhub-header-metrics {
     flex: 1;
     justify-content: space-between;
+  }
+
+  .cmhub-scanner-card > .arco-card-body {
+    grid-template-columns: 1fr;
+    gap: var(--cmhub-space-4);
+    padding: var(--cmhub-space-5);
+  }
+
+  .cmhub-log-card-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cmhub-log-card-heading {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: var(--cmhub-space-3);
+  }
+
+  .cmhub-log-card-actions {
+    align-self: flex-end;
   }
 
   .cmhub-data-import-grid {
@@ -1246,19 +1869,119 @@
 
 @media (max-width: 520px) {
   .cmhub-operating-header-actions {
-    align-items: flex-end;
-    gap: var(--cmhub-space-3);
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--cmhub-space-4);
   }
 
   .cmhub-header-metrics {
-    gap: var(--cmhub-space-3);
-    padding-right: 0;
-    border-right: 0;
+    width: 100%;
+    flex: none;
+    gap: 0;
+    padding-right: var(--cmhub-space-2);
+    border-right: 1px solid var(--color-border-2);
   }
 
-  .cmhub-header-metrics > div[class*='border-x'] {
-    padding-right: var(--cmhub-space-3);
-    padding-left: var(--cmhub-space-3);
+  .cmhub-header-metrics > div {
+    min-width: 0;
+    flex: 1;
+    padding-right: var(--cmhub-space-2);
+    padding-left: var(--cmhub-space-2);
+  }
+
+  .cmhub-header-utilities {
+    width: 100%;
+    justify-content: space-between;
+    padding-top: var(--cmhub-space-3);
+    padding-left: 0;
+    border-top: 1px solid var(--color-border-2);
+    border-left: 0;
+  }
+
+  .cmhub-header-utilities-label {
+    display: none;
+  }
+
+  .cmhub-operating-title h3.arco-typography {
+    font-size: 21px;
+  }
+
+  .cmhub-operating-title p {
+    font-size: 12px;
+  }
+
+  .cmhub-scanner-card > .arco-card-body {
+    padding: var(--cmhub-space-4);
+  }
+
+  .cmhub-scan-entry-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-scan-field-label {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--cmhub-space-2);
+  }
+
+  .cmhub-scan-input .arco-input-inner-wrapper {
+    min-height: 52px;
+    padding: 0 var(--cmhub-space-4);
+  }
+
+  .cmhub-scan-input .arco-input {
+    font-size: 16px;
+  }
+
+  .cmhub-scan-input .arco-input::placeholder {
+    font-size: 14px;
+  }
+
+  .cmhub-scan-enter-key {
+    min-width: 42px;
+    font-size: 10px;
+  }
+
+  .cmhub-scan-entry-actions,
+  .cmhub-scan-entry-actions .arco-btn {
+    width: 100%;
+  }
+
+  .cmhub-log-card-header,
+  .cmhub-log-card-meta,
+  .cmhub-log-card-footer {
+    padding-right: var(--cmhub-space-4);
+    padding-left: var(--cmhub-space-4);
+  }
+
+  .cmhub-log-card-meta,
+  .cmhub-log-card-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cmhub-log-card-footer > div {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .cmhub-log-card-heading {
+    gap: var(--cmhub-space-3);
+  }
+
+  .cmhub-log-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .cmhub-log-table .arco-table-th,
+  .cmhub-log-table .arco-table-td {
+    padding-top: var(--cmhub-space-3);
+    padding-bottom: var(--cmhub-space-3);
+  }
+
+  .cmhub-log-table .arco-table-empty {
+    min-height: 240px;
   }
 
   .cmhub-qz-guide-content,
@@ -1315,6 +2038,7 @@
   .cmhub-scanner-card[data-state='processing'] .cmhub-scan-status-dot,
   .cmhub-scanner-card[data-state='success'],
   .cmhub-scanner-card[data-state='error'],
+  .cmhub-scan-input.is-error .arco-input-inner-wrapper,
   .cmhub-log-content,
   .cmhub-settings-modal .arco-modal-content,
   .cmhub-confirm-modal .arco-modal-content {

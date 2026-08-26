@@ -96,6 +96,11 @@
   line-height: 1.55;
 }
 .cmhub-sider-footer .arco-badge-status-text { color: var(--success-6); }
+.cmhub-sider-footer small {
+  color: var(--color-text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
 
 .cmhub-main-layout { min-width: 0; background: var(--color-bg-2) !important; }
 .cmhub-topbar {

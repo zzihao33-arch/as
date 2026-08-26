@@ -3,6 +3,17 @@ export interface PayrollIssue {
   severity: 'warning' | 'blocking';
 }
 
+export interface PayrollWeekRange {
+  week: string;
+}
+
+export interface PayrollAttendanceDetail {
+  date: string;
+  hours: number;
+  start: string;
+  end: string;
+}
+
 export interface PayrollEmployeeBase {
   id: string;
   name: string;
@@ -13,11 +24,13 @@ export interface PayrollEmployeeBase {
   overtimeHours: number;
   attendanceDays: number;
   weeklyHours: Array<{ week: string; hours: number }>;
+  attendanceDetails?: PayrollAttendanceDetail[];
   issues: PayrollIssue[];
 }
 
 export interface PayrollParseResult {
   employees: PayrollEmployeeBase[];
+  weeks: PayrollWeekRange[];
   periodLabel: string;
   parsedRows: number;
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef, type DragEvent } from 'react';
 import printJS from 'print-js';
 import qz from 'qz-tray';
 import {
@@ -19,22 +19,26 @@ import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCi
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { unzip } from 'fflate';
 import QzSetupGuide from '../settings/QzSetupGuide';
 import InterceptAlertOverlay from '../intercepts/InterceptAlertOverlay';
-import { findStoredInterceptRule, type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
+import { type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
 import PrintLogTable from './PrintLogTable';
 import { usePrintLogs, MAX_PRINT_LOG_ENTRIES } from './hooks/usePrintLogs';
 import { useScanFeedback } from './hooks/useScanFeedback';
-import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome } from './printingTypes';
+import { useSessionUploadCache, type RestoredUploadSession } from './hooks/useSessionUploadCache';
+import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLog, type PrintLogTab, type PrintLogType, type PrintOutcome } from './printingTypes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const AUDIO_SETTINGS_VERSION = 'audio-feedback-v2';
+const AUDIO_SETTINGS_VERSION = 'audio-feedback-v3';
 const LOGS_PER_PAGE = 20;
 const QZ_PRINT_TIMEOUT_MS = 3_000;
 const AUDIO_PREVIEW_LONG_PRESS_MS = 450;
+const MAX_PDF_FILES = 20_000;
+const IMPORT_PRECHECK_MAX_COMPARISONS = 1_000_000;
 const LOCAL_PRINT_SERVER_ENDPOINTS = ['http://127.0.0.1:3001', 'http://localhost:3001'];
 const LOCAL_WEB_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 const VIRTUAL_PRINTER_KEYWORDS = [
@@ -74,8 +78,94 @@ interface FileInfo {
   message?: string;
 }
 
+type ImportDropTarget = 'excel' | 'pdf';
+
+interface DroppedFileSystemEntry {
+  isFile: boolean;
+  isDirectory: boolean;
+  file?: (resolve: (file: File) => void, reject?: (error: DOMException) => void) => void;
+  createReader?: () => DroppedDirectoryReader;
+}
+
+interface DroppedDirectoryReader {
+  readEntries: (resolve: (entries: DroppedFileSystemEntry[]) => void, reject?: (error: DOMException) => void) => void;
+}
+
+type DroppedDataTransferItem = DataTransferItem & {
+  webkitGetAsEntry?: () => DroppedFileSystemEntry | null;
+};
+
+interface ImportPrecheck {
+  matchedCount: number;
+  missingWaybills: string[];
+  isDeferred?: boolean;
+}
+
+interface LogQueryResult {
+  total: number;
+  logs: Array<PrintLog & { rowNumber: number }>;
+}
+
 const sanitizeBarcode = (value: string) => value.trim().replace(/[\x00-\x1F\x7F-\x9F]/g, '');
 const normalizeBarcode = (value: string) => sanitizeBarcode(value).toLowerCase();
+const isPdfFile = (file: File) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+const isZipFile = (file: File) => file.type === 'application/zip' || /\.(zip)$/i.test(file.name);
+const getFileKey = (file: File) => file.name.replace(/\.[^/.]+$/, '');
+const createPdfSearchIndex = (files: Record<string, File>) => Object.keys(files).map(key => ({
+  key,
+  normalizedKey: normalizeBarcode(key)
+}));
+
+const extractPdfFilesFromArchive = async (archive: File) => {
+  const archiveBytes = new Uint8Array(await archive.arrayBuffer());
+  const entries = await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
+    unzip(archiveBytes, (error, data) => {
+      if (error) reject(error);
+      else resolve(data);
+    });
+  });
+
+  return Object.entries(entries)
+    .filter(([path]) => /\.pdf$/i.test(path))
+    .map(([path, content]) => {
+      const fileBytes = new Uint8Array(content.byteLength);
+      fileBytes.set(content);
+      return new File(
+        [fileBytes.buffer],
+        path.split('/').filter(Boolean).pop() || '面单.pdf',
+        { type: 'application/pdf' }
+      );
+    });
+};
+
+const readDirectoryEntries = async (reader: DroppedDirectoryReader) => {
+  const entries: DroppedFileSystemEntry[] = [];
+  while (true) {
+    const batch = await new Promise<DroppedFileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (batch.length === 0) return entries;
+    entries.push(...batch);
+  }
+};
+
+const collectDroppedFiles = async (entry: DroppedFileSystemEntry): Promise<File[]> => {
+  if (entry.isFile && entry.file) {
+    return new Promise<File[]>((resolve, reject) => entry.file?.(file => resolve([file]), reject));
+  }
+  if (!entry.isDirectory || !entry.createReader) return [];
+  const entries = await readDirectoryEntries(entry.createReader());
+  return (await Promise.all(entries.map(collectDroppedFiles))).flat();
+};
+
+const getDroppedFiles = async (dataTransfer: DataTransfer) => {
+  const entries = Array.from(dataTransfer.items).reduce<DroppedFileSystemEntry[]>((collected, item) => {
+    const entry = (item as DroppedDataTransferItem).webkitGetAsEntry?.() as DroppedFileSystemEntry | null | undefined;
+    if (entry) collected.push(entry);
+    return collected;
+  }, []);
+  if (entries.length === 0) return Array.from(dataTransfer.files);
+  const entryFiles = (await Promise.all(entries.map(collectDroppedFiles))).flat();
+  return entryFiles.length > 0 ? entryFiles : Array.from(dataTransfer.files);
+};
 
 type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
 
@@ -94,6 +184,21 @@ const createPaginationItems = (currentPage: number, totalPages: number): Paginat
   pages.push(totalPages);
 
   return pages;
+};
+
+const filterLogsOnMainThread = (logs: PrintLog[], tab: PrintLogTab, page: number): LogQueryResult => {
+  const filteredLogs = logs.filter(log => log.type === tab);
+  const total = filteredLogs.length;
+  const totalPages = Math.max(1, Math.ceil(total / LOGS_PER_PAGE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIndex = (safePage - 1) * LOGS_PER_PAGE;
+  return {
+    total,
+    logs: filteredLogs.slice(startIndex, startIndex + LOGS_PER_PAGE).map((log, index) => ({
+      ...log,
+      rowNumber: total - (startIndex + index)
+    }))
+  };
 };
 
 const normalizePrinterName = (name: unknown) => String(name || '').trim();
@@ -132,14 +237,27 @@ export default function App() {
   const [scanInput, setScanInput] = useState('');
   const { logs, lastLogId, addLog: appendLog, clearLogsByType } = usePrintLogs();
   const { scanFeedback, announceScanFeedback } = useScanFeedback();
+  const {
+    hasDirectoryPicker,
+    status: uploadCacheStatus,
+    message: uploadCacheMessage,
+    restore: restoreUploadSession,
+    collectPdfFilesFromDirectory,
+    saveExcelMapping,
+    savePdfFiles
+  } = useSessionUploadCache();
   const { findRule: findInterceptRule, storageStatus: interceptStorageStatus } = useInterceptRules();
   const [activeTab, setActiveTab] = useState<PrintLogTab>('print');
   const [logPage, setLogPage] = useState(1);
+  const [logQuery, setLogQuery] = useState<LogQueryResult>({ total: 0, logs: [] });
   const [stats, setStats] = useState({ excelCount: 0, pdfCount: 0, printedCount: 0 });
   const [isDataImportOpen, setIsDataImportOpen] = useState(false);
   const [isQzGuideOpen, setIsQzGuideOpen] = useState(false);
   const [excelFile, setExcelFile] = useState<FileInfo | null>(null);
   const [pdfFolder, setPdfFolder] = useState<FileInfo | null>(null);
+  const [excelSourceCount, setExcelSourceCount] = useState(0);
+  const [pdfSourceCount, setPdfSourceCount] = useState(0);
+  const [activeImportDropTarget, setActiveImportDropTarget] = useState<ImportDropTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('printer');
   const [printers, setPrinters] = useState<string[]>([]);
@@ -157,6 +275,7 @@ export default function App() {
   });
   const [qzConnectionHealth, setQzConnectionHealth] = useState<QzConnectionHealth>('idle');
   const [audioEnabled, setAudioEnabled] = useState(() => localStorage.getItem('audioFeedbackEnabled') !== 'false');
+  const [audioBoostEnabled, setAudioBoostEnabled] = useState(() => localStorage.getItem('audioFeedbackBoostEnabled') === 'true');
   const [audioVolume, setAudioVolume] = useState(() => {
     if (localStorage.getItem('audioFeedbackSettingsVersion') !== AUDIO_SETTINGS_VERSION) {
       return 100;
@@ -173,6 +292,7 @@ export default function App() {
   const [recentlyPrinted, setRecentlyPrinted] = useState<RecentlyPrinted[]>([]);
   const [duplicateInfo, setDuplicateInfo] = useState<{ code: string; show: boolean } | null>(null);
   const [interceptedScan, setInterceptedScan] = useState<{ code: string; rule: InterceptRule } | null>(null);
+  const [isPrecheckListOpen, setIsPrecheckListOpen] = useState(false);
   const interceptScanLockRef = useRef<string | null>(null);
   const printerDropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -180,11 +300,19 @@ export default function App() {
   const qzConnectPromiseRef = useRef<Promise<void> | null>(null);
   const qzSecurityPromiseRef = useRef<Promise<QzSecurityStatus> | null>(null);
   const audioFailureLoggedRef = useRef(false);
-  const recentAudioRequestsRef = useRef<number[]>([]);
   const previewLongPressTimerRef = useRef<number | null>(null);
   const previewLongPressPlayedRef = useRef(false);
   const mappingWorkerRef = useRef<Worker | null>(null);
+  const logWorkerRef = useRef<Worker | null>(null);
   const pendingExcelFileNameRef = useRef('');
+  const pendingExcelSourceCountRef = useRef(0);
+  const mappingRef = useRef<Record<string, string>>({});
+  const pdfFilesRef = useRef<Record<string, File>>({});
+  const pdfSearchIndexRef = useRef<Array<{ key: string; normalizedKey: string }>>([]);
+  const excelSourceCountRef = useRef(0);
+  const pdfSourceCountRef = useRef(0);
+  const uploadSessionRestorePromiseRef = useRef<Promise<RestoredUploadSession | null> | null>(null);
+  const uploadSessionReadyRef = useRef(false);
   const logTabListRef = useRef<HTMLDivElement>(null);
   const logTabPillRef = useRef<HTMLSpanElement>(null);
   const logSectionRef = useRef<HTMLElement>(null);
@@ -195,25 +323,61 @@ export default function App() {
     ...printers.map(printer => ({ value: printer, label: printer, hint: printerBridge === 'qz' ? 'QZ Tray 已检测到的本机设备' : '本机已检测到的打印设备' }))
   ];
   const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
-  const filteredLogs = useMemo(
-    () => logs.filter(log => log.type === activeTab),
-    [logs, activeTab]
-  );
-  const totalLogPages = Math.max(1, Math.ceil(filteredLogs.length / LOGS_PER_PAGE));
+  const totalLogPages = Math.max(1, Math.ceil(logQuery.total / LOGS_PER_PAGE));
   const currentLogPage = Math.min(logPage, totalLogPages);
-  const visibleLogs = useMemo(() => {
-    const startIndex = (currentLogPage - 1) * LOGS_PER_PAGE;
-    return filteredLogs
-      .slice(startIndex, startIndex + LOGS_PER_PAGE)
-      .map((log, index) => ({
-        ...log,
-        rowNumber: filteredLogs.length - (startIndex + index)
-      }));
-  }, [currentLogPage, filteredLogs]);
   const paginationItems = useMemo(
     () => createPaginationItems(currentLogPage, totalLogPages),
     [currentLogPage, totalLogPages]
   );
+  const importPrecheck = useMemo<ImportPrecheck | null>(() => {
+    const mappingEntries = Object.entries(mapping);
+    const pdfKeys = Object.keys(pdfFiles).map(normalizeBarcode);
+    if (mappingEntries.length === 0 || pdfKeys.length === 0) return null;
+
+    if (mappingEntries.length * pdfKeys.length > IMPORT_PRECHECK_MAX_COMPARISONS) {
+      return { matchedCount: 0, missingWaybills: [], isDeferred: true };
+    }
+
+    const hasPdfMatch = (value: string) => {
+      const normalizedValue = normalizeBarcode(value);
+      return normalizedValue.length > 0 && pdfKeys.some(pdfKey => (
+        pdfKey.startsWith(normalizedValue) || pdfKey.includes(normalizedValue)
+      ));
+    };
+
+    const missingWaybills = mappingEntries
+      .filter(([firstLeg, exchange]) => !hasPdfMatch(firstLeg) && !hasPdfMatch(exchange))
+      .map(([firstLeg]) => firstLeg);
+
+    return {
+      matchedCount: mappingEntries.length - missingWaybills.length,
+      missingWaybills
+    };
+  }, [mapping, pdfFiles]);
+
+  const commitExcelImport = (
+    importedMapping: Record<string, string>,
+    importedSourceCount: number,
+    skippedFileNames: string[] = []
+  ) => {
+    const nextMapping = { ...mappingRef.current, ...importedMapping };
+    const nextSourceCount = excelSourceCountRef.current + importedSourceCount;
+    const fileName = `已累计 ${nextSourceCount} 个 Excel`;
+    const skippedMessage = skippedFileNames.length ? `；已跳过 ${skippedFileNames.length} 个无法解析的文件` : '';
+
+    mappingRef.current = nextMapping;
+    excelSourceCountRef.current = nextSourceCount;
+    setMapping(nextMapping);
+    setExcelSourceCount(nextSourceCount);
+    setStats(prev => ({ ...prev, excelCount: Object.keys(nextMapping).length }));
+    addLog('System', pendingExcelFileNameRef.current || fileName, `Excel 导入成功，当前共 ${Object.keys(nextMapping).length} 条映射${skippedMessage}`, 'success', 'import');
+    setExcelFile({ name: fileName, status: 'success', message: `${Object.keys(nextMapping).length} 条映射${skippedMessage}` });
+    void saveExcelMapping(nextMapping, {
+      name: fileName,
+      count: Object.keys(nextMapping).length,
+      sourceCount: nextSourceCount
+    });
+  };
 
   const ensureMappingWorker = () => {
     if (mappingWorkerRef.current) return mappingWorkerRef.current;
@@ -223,71 +387,76 @@ export default function App() {
       type: 'success' | 'error';
       mapping?: Record<string, string>;
       count?: number;
+      sourceCount?: number;
+      skippedFileNames?: string[];
       message?: string;
     }>) => {
       const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
       if (event.data.type === 'success' && event.data.mapping && event.data.count) {
-        setMapping(event.data.mapping);
-        setStats(prev => ({ ...prev, excelCount: event.data.count ?? 0 }));
-        addLog('System', fileName, `Excel 导入成功，共 ${event.data.count} 条记录`, 'success', 'import');
-        setExcelFile({ name: fileName, status: 'success', message: `成功导入 ${event.data.count} 条` });
+        commitExcelImport(
+          event.data.mapping,
+          event.data.sourceCount ?? pendingExcelSourceCountRef.current,
+          event.data.skippedFileNames
+        );
         return;
       }
 
       const message = event.data.message || 'Excel 解析失败。';
-      setMapping({});
-      setStats(prev => ({ ...prev, excelCount: 0 }));
       addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
     };
     worker.onerror = () => {
       const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
       const message = 'Excel 解析线程异常，请重新上传。';
-      setMapping({});
-      setStats(prev => ({ ...prev, excelCount: 0 }));
       addLog('System', fileName, message, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
     };
     mappingWorkerRef.current = worker;
     return worker;
   };
 
-  const parseExcelOnMainThread = async (file: File) => {
+  const parseExcelOnMainThread = async (files: File[]) => {
     try {
-      const [XLSX, buffer] = await Promise.all([import('xlsx'), file.arrayBuffer()]);
-      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      if (!worksheet) throw new Error('文件中没有找到工作表。');
+      const XLSX = await import('xlsx');
+      const importedMapping: Record<string, string> = {};
+      const skippedFileNames: string[] = [];
+      let sourceCount = 0;
 
-      const mapping: Record<string, string> = {};
-      let count = 0;
-      for (const row of XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]) {
-        const firstLeg = String(row['头程单号'] || '').trim();
-        const exchange = String(row['快递单号'] || '').trim();
-        if (!firstLeg || !exchange) continue;
-        mapping[firstLeg] = exchange;
-        count += 1;
+      for (const file of files) {
+        try {
+          const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          if (!worksheet) throw new Error('文件中没有找到工作表。');
+
+          const fileMapping: Record<string, string> = {};
+          for (const row of XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]) {
+            const firstLeg = String(row['头程单号'] || '').trim();
+            const exchange = String(row['快递单号'] || '').trim();
+            if (!firstLeg || !exchange) continue;
+            fileMapping[firstLeg] = exchange;
+          }
+
+          if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。');
+          Object.assign(importedMapping, fileMapping);
+          sourceCount += 1;
+        } catch {
+          skippedFileNames.push(file.name);
+        }
       }
-      if (count === 0) throw new Error('无法从文件中解析出有效的单号映射关系。');
 
-      setMapping(mapping);
-      setStats(prev => ({ ...prev, excelCount: count }));
-      addLog('System', file.name, `Excel 导入成功，共 ${count} 条记录`, 'success', 'import');
-      setExcelFile({ name: file.name, status: 'success', message: `成功导入 ${count} 条` });
+      if (Object.keys(importedMapping).length === 0) throw new Error('无法从文件中解析出有效的单号映射关系。');
+      commitExcelImport(importedMapping, sourceCount, skippedFileNames);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Excel 解析失败。';
-      setMapping({});
-      setStats(prev => ({ ...prev, excelCount: 0 }));
-      addLog('System', file.name, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: file.name, status: 'error', message });
+      const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
+      addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
     }
   };
 
   const canUseSameOriginPrintProxy = () => (
-    import.meta.env.DEV &&
-    LOCAL_WEB_HOSTS.includes(window.location.hostname) &&
-    ['5173', '5174', '5175'].includes(window.location.port)
+    import.meta.env.DEV && LOCAL_WEB_HOSTS.includes(window.location.hostname)
   );
 
   const formatPrintServerEndpoint = (endpoint: string) => (
@@ -543,6 +712,83 @@ export default function App() {
   useEffect(() => () => mappingWorkerRef.current?.terminate(), []);
 
   useEffect(() => {
+    if (typeof Worker === 'undefined') return undefined;
+    const worker = new Worker(new URL('./logFilterWorker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (event: MessageEvent<LogQueryResult>) => setLogQuery(event.data);
+    worker.onerror = () => {
+      logWorkerRef.current = null;
+      setLogQuery(filterLogsOnMainThread(logs, activeTab, logPage));
+    };
+    logWorkerRef.current = worker;
+    return () => {
+      worker.terminate();
+      if (logWorkerRef.current === worker) logWorkerRef.current = null;
+    };
+  // The worker is initialized exactly once; query inputs are posted below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const worker = logWorkerRef.current;
+    if (!worker) {
+      setLogQuery(filterLogsOnMainThread(logs, activeTab, logPage));
+      return;
+    }
+    worker.postMessage({ logs, tab: activeTab, page: logPage, pageSize: LOGS_PER_PAGE });
+  }, [activeTab, logPage, logs]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    const restorePromise = uploadSessionRestorePromiseRef.current ?? restoreUploadSession();
+    uploadSessionRestorePromiseRef.current = restorePromise;
+
+    void restorePromise.then(restoredSession => {
+      if (!isCurrent) return;
+
+      if (restoredSession) {
+        const excelCount = restoredSession.excel?.count ?? Object.keys(restoredSession.mapping).length;
+        const pdfCount = restoredSession.restoredPdfFileCount;
+        const restoredExcelSourceCount = restoredSession.excel?.sourceCount ?? (restoredSession.excel ? 1 : 0);
+        const restoredPdfSourceCount = restoredSession.pdfFolder?.sourceCount ?? (restoredSession.pdfFolder ? 1 : 0);
+        mappingRef.current = restoredSession.mapping;
+        pdfFilesRef.current = restoredSession.pdfFiles;
+        pdfSearchIndexRef.current = createPdfSearchIndex(restoredSession.pdfFiles);
+        excelSourceCountRef.current = restoredExcelSourceCount;
+        pdfSourceCountRef.current = restoredPdfSourceCount;
+        setMapping(restoredSession.mapping);
+        setPdfFiles(restoredSession.pdfFiles);
+        setExcelSourceCount(restoredExcelSourceCount);
+        setPdfSourceCount(restoredPdfSourceCount);
+        setStats(previous => ({ ...previous, excelCount, pdfCount }));
+
+        if (restoredSession.excel) {
+          setExcelFile({
+            name: restoredSession.excel.name,
+            status: 'success',
+            message: `本次会话已恢复 ${excelCount} 条映射`
+          });
+        }
+
+        if (restoredSession.pdfFolder) {
+          setPdfFolder({
+            name: restoredSession.pdfFolder.name,
+            status: restoredSession.message ? 'error' : 'success',
+            message: restoredSession.message || `本次会话已恢复 ${pdfCount} 个 PDF 文件`
+          });
+        }
+      }
+
+      uploadSessionReadyRef.current = true;
+    }).catch(() => {
+      uploadSessionReadyRef.current = true;
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [restoreUploadSession]);
+
+  useEffect(() => {
     setLogPage(currentPage => Math.min(currentPage, totalLogPages));
   }, [totalLogPages]);
 
@@ -733,7 +979,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(frameId);
   }, [location.hash]);
 
-  const getAudioContext = async () => {
+  const getAudioContext = useCallback(async () => {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) {
       throw new Error('当前浏览器不支持音效播放');
@@ -748,7 +994,19 @@ export default function App() {
     }
 
     return audioContextRef.current;
-  };
+  }, []);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      void getAudioContext().catch(() => undefined);
+    };
+
+    // Create the lightweight Web Audio graph early, then resume it on the
+    // first deliberate gesture so Chrome does not lose the first scan tone.
+    void getAudioContext().catch(() => undefined);
+    window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+    return () => window.removeEventListener('pointerdown', unlockAudio);
+  }, [getAudioContext]);
 
   const stopActiveAudio = () => {
     if (!activeAudioRef.current) return false;
@@ -772,11 +1030,6 @@ export default function App() {
     if (!audioEnabled && !options.force) return;
 
     const requestTime = performance.now();
-    recentAudioRequestsRef.current = [...recentAudioRequestsRef.current, requestTime].filter(time => requestTime - time <= 1000);
-
-    if (!options.force && scanResult === 'success' && recentAudioRequestsRef.current.length > 10) {
-      return;
-    }
 
     try {
       const didInterrupt = stopActiveAudio();
@@ -786,32 +1039,49 @@ export default function App() {
 
       const context = await getAudioContext();
       const startTime = context.currentTime;
-      const duration = scanResult === 'success' ? 0.15 : 0.75;
+      const duration = scanResult === 'success' ? 0.38 : 0.76;
       const volume = Math.max(0, Math.min(1, audioVolume / 100));
+      const boost = audioBoostEnabled ? Math.pow(10, 3 / 20) : 1;
       const masterGain = context.createGain();
       const primaryOscillator = context.createOscillator();
+      const secondaryOscillator = scanResult === 'success' ? context.createOscillator() : null;
 
       masterGain.connect(context.destination);
       masterGain.gain.setValueAtTime(0.0001, startTime);
-      masterGain.gain.linearRampToValueAtTime((scanResult === 'success' ? 0.22 : 0.28) * volume, startTime + 0.015);
+      masterGain.gain.linearRampToValueAtTime(Math.min(0.95, (scanResult === 'success' ? 0.25 : 0.32) * volume * boost), startTime + 0.015);
+      if (scanResult === 'failure') {
+        masterGain.gain.setValueAtTime(0.0001, startTime + 0.24);
+        masterGain.gain.linearRampToValueAtTime(Math.min(0.95, 0.32 * volume * boost), startTime + 0.34);
+      }
       masterGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
 
       primaryOscillator.connect(masterGain);
-      primaryOscillator.type = scanResult === 'success' ? 'triangle' : 'sine';
+      primaryOscillator.type = scanResult === 'success' ? 'triangle' : 'square';
 
       if (scanResult === 'success') {
-        primaryOscillator.frequency.setValueAtTime(1000, startTime);
-        primaryOscillator.frequency.setValueAtTime(1200, startTime + 0.075);
+        primaryOscillator.frequency.setValueAtTime(1_050, startTime);
+        primaryOscillator.frequency.exponentialRampToValueAtTime(1_420, startTime + 0.17);
+        primaryOscillator.frequency.exponentialRampToValueAtTime(1_780, startTime + 0.34);
+        secondaryOscillator?.connect(masterGain);
+        if (secondaryOscillator) {
+          secondaryOscillator.type = 'sine';
+          secondaryOscillator.frequency.setValueAtTime(1_570, startTime + 0.07);
+          secondaryOscillator.frequency.exponentialRampToValueAtTime(2_100, startTime + 0.34);
+        }
       } else {
-        primaryOscillator.frequency.setValueAtTime(200, startTime);
+        primaryOscillator.frequency.setValueAtTime(320, startTime);
+        primaryOscillator.frequency.setValueAtTime(260, startTime + 0.38);
       }
 
       primaryOscillator.start(startTime);
       primaryOscillator.stop(startTime + duration + 0.02);
+      secondaryOscillator?.start(startTime);
+      secondaryOscillator?.stop(startTime + duration + 0.02);
 
       const cleanup = () => {
         try {
           primaryOscillator.disconnect();
+          secondaryOscillator?.disconnect();
           masterGain.disconnect();
         } catch (error) {
           // Audio nodes may already be disconnected after rapid interruption.
@@ -824,6 +1094,7 @@ export default function App() {
           masterGain.gain.cancelScheduledValues(stopTime);
           masterGain.gain.setTargetAtTime(0.0001, stopTime, 0.006);
           primaryOscillator.stop(stopTime + 0.02);
+          secondaryOscillator?.stop(stopTime + 0.02);
         } catch (error) {
           // Oscillators can only be stopped once; rapid scans intentionally race here.
         }
@@ -933,6 +1204,13 @@ export default function App() {
     addLog('System', '音效设置', nextEnabled ? '音效反馈已开启' : '音效反馈已关闭', 'success', 'system');
   };
 
+  const toggleAudioBoost = () => {
+    const nextEnabled = !audioBoostEnabled;
+    setAudioBoostEnabled(nextEnabled);
+    localStorage.setItem('audioFeedbackBoostEnabled', String(nextEnabled));
+    addLog('System', '音效设置', nextEnabled ? '现场强力模式已开启（+3dB）' : '现场强力模式已关闭', 'success', 'system');
+  };
+
   const changeAudioVolume = (nextVolume: number) => {
     const normalizedVolume = Math.min(100, Math.max(0, nextVolume));
     setAudioVolume(normalizedVolume);
@@ -981,79 +1259,233 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (interceptStorageStatus === 'ready' || interceptStorageNoticeLoggedRef.current) return;
+    if (interceptStorageStatus === 'ready' || interceptStorageStatus === 'loading' || interceptStorageNoticeLoggedRef.current) return;
     interceptStorageNoticeLoggedRef.current = true;
     appendLog({
       firstLeg: 'System',
       exchange: '拦截名单',
       message: interceptStorageStatus === 'corrupted'
-        ? '拦截库读取异常，当前扫码将跳过拦截判断。'
-        : '拦截库无法写入本机缓存，当前名单在关闭页面后将失效。',
+        ? '拦截库读取异常，当前扫码已改为阻断打印。'
+        : '拦截库无法写入本机缓存，当前扫码已改为阻断打印。',
       status: 'error',
       type: 'system'
     });
   }, [appendLog, interceptStorageStatus]);
 
-  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const importExcelFiles = async (files: File[]) => {
+    const excelFiles = files.filter(file => /\.(xlsx|xls)$/i.test(file.name));
+    if (excelFiles.length === 0) {
+      setExcelFile({ name: '选择的文件', status: 'error', message: '请导入一个或多个 .xlsx / .xls 格式的 Excel 文件。' });
+      return;
+    }
 
-    setExcelFile({ name: file.name, status: 'loading', message: '正在读取并解析 Excel…' });
-    pendingExcelFileNameRef.current = file.name;
+    const fileName = excelFiles.length === 1 ? excelFiles[0].name : `${excelFiles.length} 个 Excel 文件`;
+    pendingExcelFileNameRef.current = fileName;
+    pendingExcelSourceCountRef.current = excelFiles.length;
+    setExcelFile({ name: fileName, status: 'loading', message: `正在读取并合并 ${excelFiles.length} 个 Excel…` });
 
     if (typeof Worker === 'undefined') {
-      await parseExcelOnMainThread(file);
+      await parseExcelOnMainThread(excelFiles);
       return;
     }
 
     try {
-      const buffer = await file.arrayBuffer();
-      ensureMappingWorker().postMessage({ type: 'parse', buffer }, [buffer]);
+      const parsedFiles = await Promise.all(excelFiles.map(async file => ({ name: file.name, buffer: await file.arrayBuffer() })));
+      ensureMappingWorker().postMessage({ type: 'parse', files: parsedFiles }, parsedFiles.map(file => file.buffer));
     } catch (error) {
-      const message = error instanceof Error ? error.message : '读取文件失败';
-      addLog('System', file.name, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: file.name, status: 'error', message });
+      const message = error instanceof Error ? error.message : '读取文件失败。';
+      addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
     }
   };
 
-  const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const handleExcelUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files?.length) void importExcelFiles(Array.from(files));
+    event.target.value = '';
+  };
 
-    const newPdfFiles: Record<string, File> = {};
-    let pdfCount = 0;
-    Array.from(files).forEach(file => {
-      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-        const name = file.name.replace(/\.[^/.]+$/, "");
-        newPdfFiles[name] = file;
-        pdfCount++;
-      }
-    });
+  const applyPdfUpload = (
+    files: Iterable<File>,
+    options: { sourceLabel: string; sourceCount: number; warningMessage?: string }
+  ) => {
+    const importedPdfFiles = Object.fromEntries(
+      Array.from(files)
+        .filter(isPdfFile)
+        .map(file => [getFileKey(file), file])
+    );
 
-    if (pdfCount === 0) {
-      const message = '选择的文件夹中未找到有效的 PDF 文件。';
-      addLog('System', '-', message, 'error', 'import');
-      setPdfFolder({ name: `共 ${files.length} 个文件`, status: 'error', message });
+    if (Object.keys(importedPdfFiles).length === 0) {
+      const message = '未找到有效的 PDF 文件。';
+      addLog('System', options.sourceLabel, message, 'error', 'import');
+      setPdfFolder({ name: options.sourceLabel, status: 'error', message });
       return;
     }
 
-    setPdfFiles(prev => {
-      const updated = { ...prev, ...newPdfFiles };
-      setStats(s => ({ ...s, pdfCount: Object.keys(updated).length }));
-      return updated;
+    const currentPdfFiles = pdfFilesRef.current;
+    const addedFileCount = Object.keys(importedPdfFiles)
+      .filter(key => !Object.hasOwn(currentPdfFiles, key))
+      .length;
+    const nextPdfFileCount = Object.keys(currentPdfFiles).length + addedFileCount;
+    if (nextPdfFileCount > MAX_PDF_FILES) {
+      const message = `面单库最多可保留 ${MAX_PDF_FILES.toLocaleString()} 个 PDF；当前已有 ${Object.keys(currentPdfFiles).length.toLocaleString()} 个，请减少本次导入数量。`;
+      addLog('System', options.sourceLabel, message, 'error', 'import');
+      setPdfFolder({ name: options.sourceLabel, status: 'error', message });
+      return;
+    }
+
+    const nextPdfFiles = { ...currentPdfFiles, ...importedPdfFiles };
+    const nextSourceCount = pdfSourceCountRef.current + options.sourceCount;
+    const sourceName = `已累计 ${nextSourceCount} 个来源`;
+    const warningMessage = options.warningMessage ? `；${options.warningMessage}` : '';
+    const message = `当前共 ${Object.keys(nextPdfFiles).length.toLocaleString()} / ${MAX_PDF_FILES.toLocaleString()} 个 PDF 文件${warningMessage}`;
+
+    pdfFilesRef.current = nextPdfFiles;
+    pdfSearchIndexRef.current = createPdfSearchIndex(nextPdfFiles);
+    pdfSourceCountRef.current = nextSourceCount;
+    setPdfFiles(nextPdfFiles);
+    setPdfSourceCount(nextSourceCount);
+    setStats(s => ({ ...s, pdfCount: Object.keys(nextPdfFiles).length }));
+    addLog('System', options.sourceLabel, `PDF 导入成功，${message}`, 'success', 'import');
+    setPdfFolder({ name: sourceName, status: 'success', message });
+    void savePdfFiles(nextPdfFiles, {
+      name: sourceName,
+      count: Object.keys(nextPdfFiles).length,
+      sourceCount: nextSourceCount
     });
-    const message = `成功导入 ${pdfCount} 个 PDF 文件`;
-    addLog('System', 'PDF 文件夹', message, 'success', 'import');
-    setPdfFolder({ name: `已选择 ${pdfCount} 个 PDF`, status: 'success', message });
+  };
+
+  const importPdfSources = async (files: File[], sourceLabel: string) => {
+    setPdfFolder({
+      name: sourceLabel,
+      status: 'loading',
+      message: files.length >= 1_000 ? `正在读取 ${files.length.toLocaleString()} 个候选文件，请稍候…` : '正在读取 PDF 文件…'
+    });
+    await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+    const directPdfFiles = files.filter(isPdfFile);
+    const archives = files.filter(isZipFile);
+    const extractedPdfFiles: File[] = [];
+    const skippedArchiveNames: string[] = [];
+
+    for (const archive of archives) {
+      try {
+        const archivePdfFiles = await extractPdfFilesFromArchive(archive);
+        if (archivePdfFiles.length === 0) throw new Error('压缩包中未找到 PDF 文件。');
+        extractedPdfFiles.push(...archivePdfFiles);
+      } catch {
+        skippedArchiveNames.push(archive.name);
+      }
+    }
+
+    const sourceCount = (directPdfFiles.length > 0 ? 1 : 0) + (archives.length - skippedArchiveNames.length);
+    applyPdfUpload([...directPdfFiles, ...extractedPdfFiles], {
+      sourceLabel,
+      sourceCount: Math.max(1, sourceCount),
+      warningMessage: skippedArchiveNames.length ? `已跳过 ${skippedArchiveNames.length} 个无效 ZIP 压缩包` : undefined
+    });
+  };
+
+  const handlePdfUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files?.length) void importPdfSources(Array.from(files), 'PDF 文件夹');
+    event.target.value = '';
+  };
+
+  const handlePdfArchiveUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files?.length) void importPdfSources(Array.from(files), 'ZIP 压缩包');
+    event.target.value = '';
+  };
+
+  const handleImportDragEnter = (target: ImportDropTarget, event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    if (Array.from(event.dataTransfer.types).includes('Files')) setActiveImportDropTarget(target);
+  };
+
+  const handleImportDragLeave = (target: ImportDropTarget, event: DragEvent<HTMLElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node) && activeImportDropTarget === target) {
+      setActiveImportDropTarget(null);
+    }
+  };
+
+  const handleExcelDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setActiveImportDropTarget(null);
+    const files = Array.from(event.dataTransfer.files).filter(candidate => /\.(xlsx|xls)$/i.test(candidate.name));
+    if (files.length === 0) {
+      setExcelFile({ name: '拖入的文件', status: 'error', message: '请拖入一个或多个 .xlsx / .xls 格式的 Excel 文件。' });
+      return;
+    }
+    void importExcelFiles(files);
+  };
+
+  const handlePdfDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setActiveImportDropTarget(null);
+    setPdfFolder({ name: '拖入的文件', status: 'loading', message: '正在读取拖入的文件夹与压缩包…' });
+    const dataTransfer = event.dataTransfer;
+    void getDroppedFiles(dataTransfer)
+      .then(files => {
+        if (files.length === 0) {
+          setPdfFolder({ name: '拖入的文件夹', status: 'error', message: '未识别到 PDF 或 ZIP 文件，请拖入包含 PDF 的文件夹、多个 PDF 或 ZIP 压缩包。' });
+          return;
+        }
+        void importPdfSources(files, '拖入的文件');
+      })
+      .catch(error => {
+        const message = error instanceof Error ? error.message : '读取拖入的 PDF 文件失败。';
+        setPdfFolder({ name: '拖入的文件夹', status: 'error', message });
+      });
+  };
+
+  const handlePdfFolderSelection = async () => {
+    const directoryPicker = hasDirectoryPicker()
+      ? (window as Window & { showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker
+      : undefined;
+
+    if (!directoryPicker) {
+      document.getElementById('pdf-input')?.click();
+      return;
+    }
+
+    try {
+      const directoryHandle = await directoryPicker({ mode: 'read' });
+      setPdfFolder({ name: directoryHandle.name || 'PDF 文件夹', status: 'loading', message: '正在读取文件夹中的 PDF 文件…' });
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      const fileMap = await collectPdfFilesFromDirectory(directoryHandle);
+      await importPdfSources(Object.values(fileMap), directoryHandle.name || 'PDF 文件夹');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      const message = error instanceof Error ? error.message : '读取 PDF 文件夹失败，请重新选择。';
+      addLog('System', 'PDF 文件夹', message, 'error', 'import');
+      setPdfFolder({ name: 'PDF 文件夹', status: 'error', message });
+    }
   };
 
   const processScan = (rawScannedValue: string, bypassDuplicateCheck = false, isDuplicateOverride = false) => {
     const scannedValue = sanitizeBarcode(rawScannedValue);
     if (!scannedValue) return;
 
-    // Always check persisted rules as well as the in-memory index. This prevents
-    // a scan from slipping through if the list was just changed in another view.
-    const interceptedRule = findInterceptRule(scannedValue) ?? findStoredInterceptRule(scannedValue);
+    if (!uploadSessionReadyRef.current) {
+      announceScanFeedback('processing');
+      addLog(scannedValue, '-', '本次会话文件正在恢复，请在状态恢复完成后重试扫码。', 'error', 'system');
+      return;
+    }
+
+    if (interceptStorageStatus === 'loading') {
+      announceScanFeedback('processing');
+      addLog(scannedValue, '-', '拦截名单正在恢复，请稍候重试扫码。', 'error', 'system');
+      return;
+    }
+
+    if (interceptStorageStatus !== 'ready') {
+      announceScanFeedback('error');
+      void playScanFeedback('failure');
+      addLog(scannedValue, '-', '拦截名单不可用，为避免风险已阻断打印。请先恢复本机名单。', 'error', 'system');
+      return;
+    }
+
+    const interceptedRule = findInterceptRule(scannedValue);
     if (interceptedRule) {
       const normalizedInterceptedValue = normalizeBarcode(scannedValue);
       if (interceptScanLockRef.current === normalizedInterceptedValue) return;
@@ -1093,9 +1525,10 @@ export default function App() {
 
     // According to user: "文件名为头程单号" (Filename is First Leg Number)
     // Priority: 1. Scanned value is start of filename (prefix match) 2. Scanned value is anywhere in filename (fuzzy match)
-    const allPdfKeys = Object.keys(pdfFiles);
-    const prefixMatch = allPdfKeys.find(k => k.toLowerCase().startsWith(cleanedScannedValue));
-    const fuzzyMatch = allPdfKeys.find(k => k.toLowerCase().includes(cleanedScannedValue));
+    const prefixMatch = pdfSearchIndexRef.current
+      .find(({ normalizedKey }) => normalizedKey.startsWith(cleanedScannedValue))?.key;
+    const fuzzyMatch = pdfSearchIndexRef.current
+      .find(({ normalizedKey }) => normalizedKey.includes(cleanedScannedValue))?.key;
 
     const pdfKey = prefixMatch || fuzzyMatch; // Prioritize prefix match
     
@@ -1227,11 +1660,19 @@ export default function App() {
 
     // Barcode scanners normally submit Enter. For manual typing or scanners
     // without a suffix key, an exact intercept hit must still halt immediately.
-    const interceptedRule = findInterceptRule(nextValue) ?? findStoredInterceptRule(nextValue);
+    const interceptedRule = findInterceptRule(nextValue);
     if (!interceptedRule) return;
 
     setScanInput('');
     processScan(nextValue, false);
+  };
+
+  const submitScanInput = () => {
+    const scannedValue = scanInput;
+    if (!scannedValue.trim()) return;
+
+    setScanInput('');
+    processScan(scannedValue, false);
   };
 
   const addLog = (
@@ -1303,8 +1744,8 @@ export default function App() {
   const scanFeedbackCopy = SCAN_FEEDBACK_COPY[scanFeedback];
 
   return (
-    <div className="cmhub-operating-workspace min-h-full p-4 md:p-6 xl:p-8">
-      <div className="w-full space-y-5">
+    <div className="cmhub-operating-workspace">
+      <div className="cmhub-operating-stack">
         {interceptedScan && (
           <InterceptAlertOverlay
             rule={interceptedScan.rule}
@@ -1336,10 +1777,13 @@ export default function App() {
         )}
 
         {/* Header */}
-        <ArcoCard className="cmhub-operating-card" bordered>
+        <ArcoCard className="cmhub-operating-card cmhub-operating-overview" bordered>
         <header className="cmhub-operating-header">
           <div className="cmhub-operating-title">
-            <Typography.Title heading={3} className="!mb-0">扫码与本机打印工作台</Typography.Title>
+            <div>
+              <Typography.Title heading={3}>扫码与本机打印</Typography.Title>
+              <p>连续扫描后自动匹配面单，并发送至当前电脑的打印机。</p>
+            </div>
           </div>
           
           <div className="cmhub-operating-header-actions">
@@ -1359,6 +1803,7 @@ export default function App() {
             </div>
             
             <div className="cmhub-header-utilities" role="toolbar" aria-label="扫码打单快捷操作">
+              <span className="cmhub-header-utilities-label">快捷操作</span>
               <Tooltip content="QZ Tray 教程与新电脑配置">
                 <ArcoButton
                   type="text"
@@ -1420,6 +1865,14 @@ export default function App() {
               ? '拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。'
               : '拦截名单无法保存到本机缓存，本次会话关闭后将失效。'}
           />
+        )}
+
+        {uploadCacheStatus === 'restoring' && (
+          <ArcoAlert type="info" showIcon content="正在恢复本次会话的 Excel 映射和 PDF 面单库，请稍候再扫码。" />
+        )}
+
+        {uploadCacheStatus === 'unavailable' && uploadCacheMessage && (
+          <ArcoAlert type="warning" showIcon content={`会话文件缓存不可用：${uploadCacheMessage}`} />
         )}
 
         <Drawer
@@ -1635,6 +2088,14 @@ export default function App() {
                         </div>
                       </div>
 
+                      <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                        <div>
+                          <div className="font-semibold text-text-primary">现场强力模式</div>
+                          <div className="mt-1 text-xs text-text-secondary/60">将浏览器输出增益提高约 +3dB，适用于嘈杂作业区。</div>
+                        </div>
+                        <Switch checked={audioBoostEnabled} onChange={toggleAudioBoost} aria-label="现场强力模式" />
+                      </div>
+
                       <ArcoButton
                         long
                         icon={<PlayCircle className="w-5 h-5" />}
@@ -1650,7 +2111,7 @@ export default function App() {
                         }}
                       >
                         试听音效
-                        <Typography.Text type="secondary">点击成功 / 长按失败</Typography.Text>
+                        <Typography.Text type="secondary">点击成功（约 380ms）/ 长按失败（约 760ms）</Typography.Text>
                       </ArcoButton>
                     </div>
 
@@ -1688,9 +2149,32 @@ export default function App() {
         >
           <section id="data-import" className="cmhub-data-import-drawer" aria-label="数据导入与面单库">
             <div className="cmhub-data-import-summary cmhub-data-import-drawer-summary" aria-live="polite">
-              <span>{excelFile ? `${stats.excelCount.toLocaleString()} 条 Excel 映射` : '未导入 Excel'}</span>
-              <span>{pdfFolder ? `${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹'}</span>
+              <span>{excelFile ? `${excelSourceCount} 个 Excel · ${stats.excelCount.toLocaleString()} 条映射` : '未导入 Excel'}</span>
+              <span>{pdfFolder ? `${pdfSourceCount} 个来源 · ${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹或 ZIP'}</span>
             </div>
+            {importPrecheck && (
+              <div className="cmhub-import-precheck" aria-live="polite">
+                <ArcoAlert
+                  type={importPrecheck.isDeferred ? 'info' : importPrecheck.missingWaybills.length === 0 ? 'success' : 'warning'}
+                  showIcon
+                  content={importPrecheck.isDeferred
+                    ? `已导入 ${stats.pdfCount.toLocaleString()} 个 PDF。为保证高容量面单库导入流畅，已跳过全量预检；扫码仍会按文件名匹配规则处理。`
+                    : `导入匹配预检：已导入 ${stats.excelCount.toLocaleString()} 条 Excel 映射，匹配成功 ${importPrecheck.matchedCount.toLocaleString()} 个 PDF 面单${importPrecheck.missingWaybills.length ? `，${importPrecheck.missingWaybills.length.toLocaleString()} 个面单缺失。` : '。'}`}
+                />
+                {importPrecheck.missingWaybills.length > 0 && (
+                  <>
+                    <ArcoButton type="text" size="mini" onClick={() => setIsPrecheckListOpen(current => !current)}>
+                      {isPrecheckListOpen ? '收起缺失单号' : '查看缺失单号'}
+                    </ArcoButton>
+                    {isPrecheckListOpen && (
+                      <ul className="cmhub-import-precheck-list" aria-label="未匹配 PDF 的头程单号">
+                        {importPrecheck.missingWaybills.map(waybill => <li key={waybill}>{waybill}</li>)}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             <div className="cmhub-data-import-body">
                 <div className="cmhub-data-import-grid">
                 <div className="cmhub-import-source">
@@ -1698,15 +2182,22 @@ export default function App() {
                     <span><FileSpreadsheet size={18} aria-hidden="true" /> Excel 映射</span>
                     {excelFile && (
                       <ArcoButton type="text" size="mini" onClick={() => document.getElementById('excel-input')?.click()}>
-                        重新上传
+                        继续添加
                       </ArcoButton>
                     )}
                   </div>
-                  <label className="cmhub-import-drop-target">
+                  <label
+                    className="cmhub-import-drop-target"
+                    data-drop-active={activeImportDropTarget === 'excel'}
+                    onDragEnter={(event) => handleImportDragEnter('excel', event)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragLeave={(event) => handleImportDragLeave('excel', event)}
+                    onDrop={handleExcelDrop}
+                  >
                     {!excelFile ? (
                       <>
                         <Upload size={24} aria-hidden="true" />
-                        <span>点击或拖拽上传 Excel</span>
+                        <span>点击或拖拽上传多个 Excel</span>
                       </>
                     ) : (
                       <>
@@ -1715,82 +2206,121 @@ export default function App() {
                         <small>{excelFile.message}</small>
                       </>
                     )}
-                    <input id="excel-input" type="file" className="hidden" accept=".xlsx, .xls" onChange={(event) => void handleExcelUpload(event)} />
+                    <input id="excel-input" type="file" className="hidden" accept=".xlsx, .xls" multiple onChange={handleExcelUpload} />
                   </label>
                 </div>
 
                 <div className="cmhub-import-source">
                   <div className="cmhub-import-source-heading">
-                    <span><FileText size={18} aria-hidden="true" /> 面单库（PDF 文件夹）</span>
-                    {pdfFolder && (
-                      <ArcoButton type="text" size="mini" onClick={() => document.getElementById('pdf-input')?.click()}>
-                        重新选择
-                      </ArcoButton>
-                    )}
+                    <span><FileText size={18} aria-hidden="true" /> 面单库</span>
+                    <span className="cmhub-import-capacity">最多 {MAX_PDF_FILES.toLocaleString()} 个</span>
                   </div>
-                  <label className="cmhub-import-drop-target">
-                    {!pdfFolder ? (
-                      <>
-                        <Upload size={24} aria-hidden="true" />
-                        <span>选择包含 PDF 的文件夹</span>
-                      </>
-                    ) : (
-                      <>
-                        {pdfFolder.status === 'success' ? <CheckCircle2 size={24} aria-hidden="true" /> : <AlertCircle size={24} aria-hidden="true" />}
-                        <strong>{pdfFolder.name}</strong>
-                        <small>{pdfFolder.message}</small>
-                      </>
-                    )}
-                    {/* @ts-ignore */}
-                    <input id="pdf-input" type="file" className="hidden" webkitdirectory="" directory="" multiple onChange={handlePdfUpload} />
-                  </label>
+                  <div className="cmhub-import-pdf-workspace">
+                    <button
+                      type="button"
+                      className="cmhub-import-drop-target cmhub-import-pdf-drop-target"
+                      data-drop-active={activeImportDropTarget === 'pdf'}
+                      onClick={() => void handlePdfFolderSelection()}
+                      onDragEnter={(event) => handleImportDragEnter('pdf', event)}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDragLeave={(event) => handleImportDragLeave('pdf', event)}
+                      onDrop={handlePdfDrop}
+                      disabled={pdfFolder?.status === 'loading'}
+                      aria-label="选择或拖入 PDF 文件夹"
+                    >
+                      {!pdfFolder ? (
+                        <>
+                          <Upload size={24} aria-hidden="true" />
+                          <span>点击或拖入 PDF 文件夹</span>
+                        </>
+                      ) : (
+                        <>
+                          {pdfFolder.status === 'loading' ? <RefreshCw size={24} className="animate-spin" aria-hidden="true" /> : pdfFolder.status === 'success' ? <CheckCircle2 size={24} aria-hidden="true" /> : <AlertCircle size={24} aria-hidden="true" />}
+                          <strong>{pdfFolder.name}</strong>
+                          <small>{pdfFolder.message}</small>
+                          {pdfFolder.status === 'error' && <em>请在右侧操作区重新选择。</em>}
+                        </>
+                      )}
+                    </button>
+                    <div className="cmhub-import-pdf-actions" aria-label="面单库导入操作">
+                      <span>继续添加</span>
+                      <ArcoButton type="secondary" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => void handlePdfFolderSelection()}>
+                        文件夹
+                      </ArcoButton>
+                      <ArcoButton type="outline" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => document.getElementById('pdf-archive-input')?.click()}>
+                        ZIP 包
+                      </ArcoButton>
+                    </div>
+                  </div>
+                  {/* @ts-ignore Chromium directory picker fallback */}
+                  <input id="pdf-input" type="file" className="hidden" webkitdirectory="" directory="" multiple onChange={handlePdfUpload} />
+                  <input id="pdf-archive-input" type="file" className="hidden" accept=".zip,application/zip,application/x-zip-compressed" multiple onChange={handlePdfArchiveUpload} />
                 </div>
                 </div>
                 <p className="cmhub-data-import-note">
-                  <AlertCircle size={15} aria-hidden="true" /> 文件名需包含 Excel 中的转单号；扫码枪请设置为回车结束模式。
+                  <AlertCircle size={15} aria-hidden="true" /> 单次/累计最多 {MAX_PDF_FILES.toLocaleString()} 个 PDF；文件名需包含 Excel 中的转单号，可连续添加多个文件夹或 ZIP，同名单以后导入为准。
                 </p>
             </div>
           </section>
         </Drawer>
 
-        <div className="space-y-5">
+        <div className="cmhub-operating-stack">
             {/* Scanner Input */}
             <ArcoCard className="cmhub-operating-card cmhub-scanner-card" data-state={scanFeedback} bordered>
-              <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold text-text-primary">
-                  <Scan className="w-6 h-6 text-brand-green" />
-                  <h2 className="text-xl">扫码区域</h2>
-                </div>
-                <div className="cmhub-scan-status" role="status" aria-live="polite">
-                  <span className="cmhub-scan-status-dot" aria-hidden="true" />
-                  {scanFeedbackCopy}
+              <div className="cmhub-scan-entry-summary">
+                <div className="cmhub-scan-entry-icon"><Printer size={22} aria-hidden="true" /></div>
+                <div className="cmhub-scan-entry-copy">
+                  <h2>扫码并打印</h2>
+                  <p>扫描或输入单号后，系统会匹配面单并发送至已选打印机。</p>
                 </div>
               </div>
-              
-                <ArcoInput
-                  value={scanInput}
-                  onChange={handleScanInputChange}
-                  onPressEnter={() => {
-                    const scannedValue = scanInput;
-                    setScanInput('');
-                    processScan(scannedValue, false);
-                  }}
-                  placeholder="等待扫码..."
-                  size="large"
-                  className="cmhub-scan-input"
-                  aria-label="扫码输入框，输入完成后按回车开始处理"
-                />
+              <div className="cmhub-scan-stage">
+                <div className="cmhub-scan-entry-controls">
+                  <div className="cmhub-scan-field">
+                    <div className="cmhub-scan-field-label">
+                      <label id="cmhub-scan-input-label" htmlFor="cmhub-scan-input">扫描单号</label>
+                      <div className="cmhub-scan-status" role="status" aria-live="polite">
+                        <span className="cmhub-scan-status-dot" aria-hidden="true" />
+                        {scanFeedbackCopy}
+                      </div>
+                    </div>
+                    <ArcoInput
+                      value={scanInput}
+                      onChange={handleScanInputChange}
+                      onFocus={() => { void getAudioContext().catch(() => undefined); }}
+                      onPressEnter={submitScanInput}
+                      id="cmhub-scan-input"
+                      placeholder="等待扫码或输入单号…"
+                      size="large"
+                      className={cn('cmhub-scan-input', scanFeedback === 'error' && 'is-error')}
+                      aria-labelledby="cmhub-scan-input-label"
+                      prefix={<Scan size={20} aria-hidden="true" />}
+                      suffix={<kbd className="cmhub-scan-enter-key">Enter</kbd>}
+                    />
+                  </div>
+                  <div className="cmhub-scan-entry-actions" role="group" aria-label="扫码打印操作">
+                    <ArcoButton type="primary" disabled={!scanInput.trim()} onClick={submitScanInput}>
+                      <Printer size={16} aria-hidden="true" />
+                      <span>打印</span>
+                    </ArcoButton>
+                  </div>
+                </div>
+                <div className="cmhub-scan-field-meta">
+                  <span>扫码枪将自动提交；手动输入后按 Enter</span>
+                  <span>面单自动匹配</span>
+                  <span>本机打印机直打</span>
+                  <span>拦截名单即时校验</span>
+                </div>
               </div>
             </ArcoCard>
 
             {/* Logs */}
             <section id="operation-log" ref={logSectionRef} tabIndex={-1} aria-label="操作日志">
               <ArcoCard className="cmhub-operating-card cmhub-log-card" bordered bodyStyle={{ padding: 0 }}>
-              <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2 font-semibold text-text-primary mr-2">
-                    <History className="w-5 h-5 text-text-secondary" />
+              <div className="cmhub-log-card-header">
+                <div className="cmhub-log-card-heading">
+                  <div className="cmhub-log-title">
+                    <span className="cmhub-log-title-icon" aria-hidden="true"><History size={19} /></span>
                     <h2>操作日志</h2>
                   </div>
                   <div ref={logTabListRef} className="t-tabs cmhub-log-tabs" role="tablist" aria-label="操作日志分类">
@@ -1832,28 +2362,30 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <ArcoButton
-                  type="text"
-                  size="mini"
-                  status="danger"
-                  className="cmhub-log-clear-button"
-                  onClick={() => {
-                    clearLogsByType(activeTab);
-                    setLogPage(1);
-                  }}
-                >
-                  <X className="w-3 h-3" /> 清空当前记录
-                </ArcoButton>
+                <div className="cmhub-log-card-actions">
+                  <ArcoButton
+                    type="text"
+                    size="mini"
+                    status="danger"
+                    className="cmhub-log-clear-button"
+                    onClick={() => {
+                      clearLogsByType(activeTab);
+                      setLogPage(1);
+                    }}
+                  >
+                    <X className="w-3 h-3" /> 清空当前记录
+                  </ArcoButton>
+                </div>
               </div>
-              <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between gap-3 text-xs text-text-secondary">
-                <span>当前分类已保存 <b className="text-text-primary">{filteredLogs.length.toLocaleString()}</b> / {MAX_PRINT_LOG_ENTRIES.toLocaleString()} 条</span>
+              <div className="cmhub-log-card-meta">
+                <span>当前分类已保存 <b className="text-text-primary">{logQuery.total.toLocaleString()}</b> / {MAX_PRINT_LOG_ENTRIES.toLocaleString()} 条</span>
                 <span className="whitespace-nowrap">每页 {LOGS_PER_PAGE} 条 · 最新优先</span>
               </div>
               <div id="cmhub-log-table" key={activeTab} className="cmhub-log-content" role="tabpanel">
-                <PrintLogTable logs={visibleLogs} latestLogId={lastLogId} />
+                <PrintLogTable logs={logQuery.logs} latestLogId={lastLogId} />
               </div>
-              {filteredLogs.length > 0 && (
-                <div className="px-4 py-3 border-t border-white/10 flex items-center justify-between gap-3 text-xs text-text-secondary">
+              {logQuery.total > 0 && (
+                <div className="cmhub-log-card-footer">
                   <span>第 {currentLogPage.toLocaleString()} / {totalLogPages.toLocaleString()} 页</span>
                   <div className="flex items-center gap-1.5">
                     <button

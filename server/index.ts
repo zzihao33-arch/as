@@ -22,12 +22,12 @@ const { print, getPrinters, getDefaultPrinter } = ptp as any;
 const app = express();
 const port = 3001;
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174'
-];
+const isAllowedOrigin = (origin: string) => (
+  /^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin)
+  || origin.endsWith('.vercel.app')
+  || origin === 'https://cmhubtool.com'
+  || origin === 'https://www.cmhubtool.com'
+);
 
 const virtualPrinterKeywords = [
   'pdf24',
@@ -218,7 +218,7 @@ const corsOptions: cors.CorsOptions = {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     } else {
       return callback(new Error('Not allowed by CORS'));

@@ -29,9 +29,11 @@ import {
   Truck
 } from 'lucide-react';
 import bolTemplateUrl from './assets/bol-template-figma.svg';
+import { readLocalFirstValue, writeLocalFirstValue } from '../../shared/storage/localFirstDatabase';
 
-const BOL_STORAGE_KEY = 'cmhub-bol-records-v1';
-const MAX_BOL_RECORDS = 5;
+const LEGACY_BOL_STORAGE_KEY = 'cmhub-bol-records-v1';
+const BOL_RECORDS_DATABASE_KEY = 'records';
+const MAX_BOL_RECORDS = 500;
 
 type BolStage = 'list' | 'edit' | 'confirm' | 'output';
 type QuantityField = 'packages' | 'boxes' | 'pallets';
@@ -968,7 +970,8 @@ function BolDocument({
 }
 
 export default function BolManager() {
-  const [records, setRecords] = useState<BolRecord[]>(() => safeParseRecords(localStorage.getItem(BOL_STORAGE_KEY)));
+  const [records, setRecords] = useState<BolRecord[]>([]);
+  const [isRecordsLoading, setIsRecordsLoading] = useState(true);
   const [form, setForm] = useState<BolForm>(() => createEmptyForm());
   const [previewForm, setPreviewForm] = useState<BolForm>(form);
   const [stage, setStage] = useState<BolStage>('list');
@@ -991,8 +994,38 @@ export default function BolManager() {
     [form, activeChannelId]
   );
   useEffect(() => {
-    localStorage.setItem(BOL_STORAGE_KEY, JSON.stringify(records));
-  }, [records]);
+    let isCurrent = true;
+
+    void (async () => {
+      try {
+        const storedRecords = await readLocalFirstValue<unknown>('bolRecords', BOL_RECORDS_DATABASE_KEY);
+        const nextRecords = storedRecords === null
+          ? safeParseRecords(localStorage.getItem(LEGACY_BOL_STORAGE_KEY))
+          : safeParseRecords(JSON.stringify(storedRecords));
+
+        if (storedRecords === null && nextRecords.length > 0) {
+          await writeLocalFirstValue('bolRecords', BOL_RECORDS_DATABASE_KEY, nextRecords);
+        }
+
+        if (isCurrent) setRecords(nextRecords);
+      } catch {
+        if (isCurrent) setNotice('无法读取本机 BOL 历史，当前会话仍可继续创建和输出。');
+      } finally {
+        if (isCurrent) setIsRecordsLoading(false);
+      }
+    })();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isRecordsLoading) return;
+    void writeLocalFirstValue('bolRecords', BOL_RECORDS_DATABASE_KEY, records).catch(() => {
+      setNotice('BOL 已保留在当前页面，但无法写入 IndexedDB 历史记录。');
+    });
+  }, [isRecordsLoading, records]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1335,9 +1368,10 @@ export default function BolManager() {
             <ArcoButton
               type="primary"
               onClick={startNewBol}
+              disabled={isRecordsLoading}
               icon={<FileText className="w-4 h-4" />}
             >
-              新建 BOL
+              {isRecordsLoading ? '正在恢复历史…' : '新建 BOL'}
             </ArcoButton>
           )}
         </div>
@@ -1349,7 +1383,9 @@ export default function BolManager() {
 
       {stage === 'list' && (
         <div className="no-print cmhub-bol-list">
-          {records.length === 0 ? (
+          {isRecordsLoading ? (
+            <Empty description="正在从本机 IndexedDB 恢复 BOL 历史…" />
+          ) : records.length === 0 ? (
             <Empty description="还没有生成过 BOL。点击“新建 BOL”，扫码或输入 BOL 单号后即可生成预览。" />
           ) : (
             <ArcoTable

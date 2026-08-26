@@ -3,6 +3,16 @@ import { spawn } from 'node:child_process';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const viteArgs = process.argv.slice(2);
 
+// Node 24 no longer starts a `.cmd` executable directly with `shell: false`.
+// Running it through cmd.exe keeps `npm run dev` reliable on Windows while the
+// non-Windows path remains a direct child process.
+const commandFor = args => process.platform === 'win32'
+  ? {
+      command: process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', npmCommand, ...args]
+    }
+  : { command: npmCommand, args };
+
 const children = [
   {
     name: 'print-server',
@@ -17,9 +27,11 @@ const children = [
 let shuttingDown = false;
 
 const running = children.map(({ name, args }) => {
-  const child = spawn(npmCommand, args, {
+  const childCommand = commandFor(args);
+  const child = spawn(childCommand.command, childCommand.args, {
     stdio: 'inherit',
-    shell: false
+    shell: false,
+    cwd: process.cwd()
   });
 
   child.on('exit', code => {
