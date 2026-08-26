@@ -181,6 +181,8 @@
 .cmhub-module-frame > .arco-card-body { padding: 0; }
 .cmhub-module-loading { display: flex; align-items: center; justify-content: center; min-height: 280px; gap: 10px; color: var(--color-text-2); }
 .cmhub-module-loading .arco-spin-icon { color: var(--primary-6); }
+.cmhub-workspace-loading { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-2); font-size: 13px; white-space: nowrap; }
+.cmhub-workspace-loading .arco-spin-icon { color: var(--primary-6); }
 .cmhub-payroll-launcher { min-height: 360px; }
 .cmhub-payroll-launcher .arco-result { padding: 56px 24px; }
 .cmhub-payroll-launcher .arco-result-title { color: var(--color-text-1); }
