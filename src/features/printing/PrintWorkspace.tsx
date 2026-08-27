@@ -111,10 +111,34 @@ const normalizeBarcode = (value: string) => sanitizeBarcode(value).toLowerCase()
 const isPdfFile = (file: File) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 const isZipFile = (file: File) => file.type === 'application/zip' || /\.(zip)$/i.test(file.name);
 const getFileKey = (file: File) => file.name.replace(/\.[^/.]+$/, '');
-const createPdfSearchIndex = (files: Record<string, File>) => Object.keys(files).map(key => ({
-  key,
-  normalizedKey: normalizeBarcode(key)
-}));
+
+interface PdfSearchIndex {
+  exactKeys: Map<string, string>;
+  entries: Array<{ key: string; normalizedKey: string }>;
+}
+
+const createPdfSearchIndex = (files: Record<string, File>): PdfSearchIndex => {
+  const entries = Object.keys(files).map(key => ({ key, normalizedKey: normalizeBarcode(key) }));
+  return {
+    entries,
+    exactKeys: new Map(entries.map(entry => [entry.normalizedKey, entry.key]))
+  };
+};
+
+const createMappingIndex = (mapping: Record<string, string>) => new Map(
+  Object.entries(mapping).map(([firstLeg, exchange]) => [normalizeBarcode(firstLeg), exchange])
+);
+
+const getBlobBackedPdfFiles = (files: Record<string, File>, directoryPdfKeys: ReadonlySet<string>) => Object.fromEntries(
+  Object.entries(files).filter(([key]) => !directoryPdfKeys.has(key))
+);
+
+const readPdfAsBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(reader.error ?? new Error('读取 PDF 文件失败'));
+  reader.readAsDataURL(file);
+});
 
 const extractPdfFilesFromArchive = async (archive: File) => {
   const archiveBytes = new Uint8Array(await archive.arrayBuffer());
@@ -307,8 +331,11 @@ export default function App() {
   const pendingExcelFileNameRef = useRef('');
   const pendingExcelSourceCountRef = useRef(0);
   const mappingRef = useRef<Record<string, string>>({});
+  const mappingIndexRef = useRef<Map<string, string>>(new Map());
   const pdfFilesRef = useRef<Record<string, File>>({});
-  const pdfSearchIndexRef = useRef<Array<{ key: string; normalizedKey: string }>>([]);
+  const pdfSearchIndexRef = useRef<PdfSearchIndex>({ exactKeys: new Map(), entries: [] });
+  const directoryHandlesRef = useRef<FileSystemDirectoryHandle[]>([]);
+  const directoryPdfKeysRef = useRef<Set<string>>(new Set());
   const excelSourceCountRef = useRef(0);
   const pdfSourceCountRef = useRef(0);
   const uploadSessionRestorePromiseRef = useRef<Promise<RestoredUploadSession | null> | null>(null);
@@ -366,6 +393,7 @@ export default function App() {
     const skippedMessage = skippedFileNames.length ? `；已跳过 ${skippedFileNames.length} 个无法解析的文件` : '';
 
     mappingRef.current = nextMapping;
+    mappingIndexRef.current = createMappingIndex(nextMapping);
     excelSourceCountRef.current = nextSourceCount;
     setMapping(nextMapping);
     setExcelSourceCount(nextSourceCount);
@@ -417,27 +445,16 @@ export default function App() {
 
   const parseExcelOnMainThread = async (files: File[]) => {
     try {
-      const XLSX = await import('xlsx');
+      const { parseMappingWorkbook } = await import('./mappingParser');
       const importedMapping: Record<string, string> = {};
       const skippedFileNames: string[] = [];
       let sourceCount = 0;
 
       for (const file of files) {
         try {
-          const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          if (!worksheet) throw new Error('文件中没有找到工作表。');
+          const fileMapping = parseMappingWorkbook(await file.arrayBuffer());
 
-          const fileMapping: Record<string, string> = {};
-          for (const row of XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]) {
-            const firstLeg = String(row['头程单号'] || '').trim();
-            const exchange = String(row['快递单号'] || '').trim();
-            if (!firstLeg || !exchange) continue;
-            fileMapping[firstLeg] = exchange;
-          }
-
-          if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。');
+          if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。支持“头程单号→快递单号”或“运单号→参考单号”。');
           Object.assign(importedMapping, fileMapping);
           sourceCount += 1;
         } catch {
@@ -751,8 +768,11 @@ export default function App() {
         const restoredExcelSourceCount = restoredSession.excel?.sourceCount ?? (restoredSession.excel ? 1 : 0);
         const restoredPdfSourceCount = restoredSession.pdfFolder?.sourceCount ?? (restoredSession.pdfFolder ? 1 : 0);
         mappingRef.current = restoredSession.mapping;
+        mappingIndexRef.current = createMappingIndex(restoredSession.mapping);
         pdfFilesRef.current = restoredSession.pdfFiles;
         pdfSearchIndexRef.current = createPdfSearchIndex(restoredSession.pdfFiles);
+        directoryHandlesRef.current = restoredSession.directoryHandles;
+        directoryPdfKeysRef.current = new Set(restoredSession.directoryPdfKeys);
         excelSourceCountRef.current = restoredExcelSourceCount;
         pdfSourceCountRef.current = restoredPdfSourceCount;
         setMapping(restoredSession.mapping);
@@ -1305,9 +1325,9 @@ export default function App() {
     event.target.value = '';
   };
 
-  const applyPdfUpload = (
+  const applyPdfUpload = async (
     files: Iterable<File>,
-    options: { sourceLabel: string; sourceCount: number; warningMessage?: string }
+    options: { sourceLabel: string; sourceCount: number; warningMessage?: string; directoryHandle?: FileSystemDirectoryHandle }
   ) => {
     const importedPdfFiles = Object.fromEntries(
       Array.from(files)
@@ -1339,6 +1359,23 @@ export default function App() {
     const sourceName = `已累计 ${nextSourceCount} 个来源`;
     const warningMessage = options.warningMessage ? `；${options.warningMessage}` : '';
     const message = `当前共 ${Object.keys(nextPdfFiles).length.toLocaleString()} / ${MAX_PDF_FILES.toLocaleString()} 个 PDF 文件${warningMessage}`;
+    const nextDirectoryPdfKeys = new Set(directoryPdfKeysRef.current);
+    const importedPdfKeys = Object.keys(importedPdfFiles);
+
+    if (options.directoryHandle) {
+      importedPdfKeys.forEach(key => nextDirectoryPdfKeys.add(key));
+    } else {
+      // A later file / ZIP import with the same name must take precedence over the
+      // earlier folder source after a refresh, so keep that file as a Blob cache.
+      importedPdfKeys.forEach(key => nextDirectoryPdfKeys.delete(key));
+    }
+
+    const nextDirectoryHandles = options.directoryHandle
+      ? (directoryHandlesRef.current.includes(options.directoryHandle)
+        ? directoryHandlesRef.current
+        : [...directoryHandlesRef.current, options.directoryHandle])
+      : directoryHandlesRef.current;
+    const blobBackedPdfFiles = getBlobBackedPdfFiles(nextPdfFiles, nextDirectoryPdfKeys);
 
     pdfFilesRef.current = nextPdfFiles;
     pdfSearchIndexRef.current = createPdfSearchIndex(nextPdfFiles);
@@ -1346,16 +1383,38 @@ export default function App() {
     setPdfFiles(nextPdfFiles);
     setPdfSourceCount(nextSourceCount);
     setStats(s => ({ ...s, pdfCount: Object.keys(nextPdfFiles).length }));
-    addLog('System', options.sourceLabel, `PDF 导入成功，${message}`, 'success', 'import');
-    setPdfFolder({ name: sourceName, status: 'success', message });
-    void savePdfFiles(nextPdfFiles, {
+    setPdfFolder({
+      name: sourceName,
+      status: 'loading',
+      message: options.directoryHandle
+        ? `${message}；正在保存文件夹授权以便刷新后恢复…`
+        : `${message}；正在分批保存本机缓存…`
+    });
+
+    const persisted = await savePdfFiles(blobBackedPdfFiles, {
       name: sourceName,
       count: Object.keys(nextPdfFiles).length,
       sourceCount: nextSourceCount
-    });
+    }, nextDirectoryHandles);
+
+    if (persisted) {
+      directoryHandlesRef.current = nextDirectoryHandles;
+      directoryPdfKeysRef.current = nextDirectoryPdfKeys;
+      addLog('System', options.sourceLabel, `PDF 导入成功，${message}`, 'success', 'import');
+      setPdfFolder({ name: sourceName, status: 'success', message });
+      return;
+    }
+
+    const cacheMessage = 'PDF 已载入当前页面，但本机缓存未完整保存；请勿刷新，并重新选择文件夹或释放浏览器存储空间后再试。';
+    addLog('System', options.sourceLabel, cacheMessage, 'error', 'import');
+    setPdfFolder({ name: sourceName, status: 'error', message: cacheMessage });
   };
 
-  const importPdfSources = async (files: File[], sourceLabel: string) => {
+  const importPdfSources = async (
+    files: File[],
+    sourceLabel: string,
+    options: { directoryHandle?: FileSystemDirectoryHandle } = {}
+  ) => {
     setPdfFolder({
       name: sourceLabel,
       status: 'loading',
@@ -1378,10 +1437,11 @@ export default function App() {
     }
 
     const sourceCount = (directPdfFiles.length > 0 ? 1 : 0) + (archives.length - skippedArchiveNames.length);
-    applyPdfUpload([...directPdfFiles, ...extractedPdfFiles], {
+    await applyPdfUpload([...directPdfFiles, ...extractedPdfFiles], {
       sourceLabel,
       sourceCount: Math.max(1, sourceCount),
-      warningMessage: skippedArchiveNames.length ? `已跳过 ${skippedArchiveNames.length} 个无效 ZIP 压缩包` : undefined
+      warningMessage: skippedArchiveNames.length ? `已跳过 ${skippedArchiveNames.length} 个无效 ZIP 压缩包` : undefined,
+      directoryHandle: options.directoryHandle
     });
   };
 
@@ -1453,7 +1513,7 @@ export default function App() {
       setPdfFolder({ name: directoryHandle.name || 'PDF 文件夹', status: 'loading', message: '正在读取文件夹中的 PDF 文件…' });
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
       const fileMap = await collectPdfFilesFromDirectory(directoryHandle);
-      await importPdfSources(Object.values(fileMap), directoryHandle.name || 'PDF 文件夹');
+      await importPdfSources(Object.values(fileMap), directoryHandle.name || 'PDF 文件夹', { directoryHandle });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       const message = error instanceof Error ? error.message : '读取 PDF 文件夹失败，请重新选择。';
@@ -1518,30 +1578,27 @@ export default function App() {
         return;
       }
     }
-    // 1. Try to find exchange number from mapping
+    // The lookup indexes are updated on import/restore. Exact matches no longer
+    // scan thousands of mappings and file names on every scanner input.
     const cleanedScannedValue = normalizeBarcode(scannedValue);
-    const mappingKey = Object.keys(mapping).find(k => k.trim().toLowerCase() === cleanedScannedValue);
-    let finalExchangeNumber = mappingKey ? mapping[mappingKey] : null;
+    let finalExchangeNumber = mappingIndexRef.current.get(cleanedScannedValue) ?? null;
+    const pdfSearchIndex = pdfSearchIndexRef.current;
+    const exactPdfKey = pdfSearchIndex.exactKeys.get(cleanedScannedValue);
+    const prefixMatch = exactPdfKey
+      ? undefined
+      : pdfSearchIndex.entries.find(({ normalizedKey }) => normalizedKey.startsWith(cleanedScannedValue))?.key;
+    const fuzzyMatch = exactPdfKey || prefixMatch
+      ? undefined
+      : pdfSearchIndex.entries.find(({ normalizedKey }) => normalizedKey.includes(cleanedScannedValue))?.key;
+    const pdfKey = exactPdfKey || prefixMatch || fuzzyMatch;
 
-    // According to user: "文件名为头程单号" (Filename is First Leg Number)
-    // Priority: 1. Scanned value is start of filename (prefix match) 2. Scanned value is anywhere in filename (fuzzy match)
-    const prefixMatch = pdfSearchIndexRef.current
-      .find(({ normalizedKey }) => normalizedKey.startsWith(cleanedScannedValue))?.key;
-    const fuzzyMatch = pdfSearchIndexRef.current
-      .find(({ normalizedKey }) => normalizedKey.includes(cleanedScannedValue))?.key;
-
-    const pdfKey = prefixMatch || fuzzyMatch; // Prioritize prefix match
-    
-    // 2. If we found a PDF but still don't have an exchange number, try to find it via the PDF key
+    // Keep the filename-as-reference-number fallback for legacy libraries.
     if (pdfKey && !finalExchangeNumber) {
-        // This is a fallback: maybe the PDF is named with the exchange number?
-        const found = Object.entries(mapping).find(([_, exchangeVal]) => pdfKey.includes(exchangeVal));
-        if (found) {
-            finalExchangeNumber = found[1]; // The exchange number
-        }
+      const found = Object.entries(mappingRef.current).find(([_, exchangeValue]) => pdfKey.includes(exchangeValue));
+      if (found) finalExchangeNumber = found[1];
     }
 
-    const pdfFile = pdfKey ? pdfFiles[pdfKey] : null;
+    const pdfFile = pdfKey ? pdfFilesRef.current[pdfKey] : null;
 
     if (!pdfFile) {
       announceScanFeedback('error');
@@ -1555,72 +1612,70 @@ export default function App() {
     announceScanFeedback('processing');
     void playScanFeedback('success');
 
-    // Convert file to Base64 for backend printing
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = (reader.result as string).split(',')[1];
-      
+    const recordPrintSuccess = (result: { message?: string; printerName?: string }) => {
+      announceScanFeedback('success');
+      addLog(
+        scannedValue,
+        finalExchangeNumber,
+        result.message || '打印任务已提交到打印机',
+        'success',
+        'print',
+        isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS'
+      );
+      setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
+      const newTimestamp = Date.now();
+      setRecentlyPrinted(prev => [
+        ...prev,
+        { code: scannedValue, timestamp: newTimestamp }
+      ].filter(item => item.timestamp > newTimestamp - 5 * 60 * 1000));
+    };
+
+    void (async () => {
       try {
         if (printerBridge === 'qz') {
-          const result = await printPdfWithQz(base64);
+          const result = await printPdfWithQz(await readPdfAsBase64(pdfFile));
           setPrintServerStatus('connected');
           setPrinterBridge('qz');
           setPrintServerBaseUrl('QZ Tray 本机连接');
           setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
-          announceScanFeedback('success');
-          addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
-          setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
-          const newTimestamp = Date.now();
-          setRecentlyPrinted(prev => 
-            [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
-          );
-        } else {
-          try {
-            const { response, endpoint } = await requestLocalPrintServer('/api/print', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                pdfBase64: base64,
-                printerName: selectedPrinter,
-                fileName: pdfFile.name
-              })
-            });
-            setPrintServerStatus('connected');
-            setPrinterBridge('local');
-            setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
-            setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
+          recordPrintSuccess(result);
+          return;
+        }
 
-            const result = await response.json();
-            if (result.success) {
-              announceScanFeedback('success');
-              addLog(scannedValue, finalExchangeNumber, result.message || '打印任务已提交到打印机', 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
-              setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
-              const newTimestamp = Date.now();
-              setRecentlyPrinted(prev => 
-                [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
-              );
-            } else {
-              announceScanFeedback('error');
-              void playScanFeedback('failure');
-              addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
-            }
-          } catch (localPrintError) {
-            const result = await printPdfWithQz(base64).catch(qzPrintError => {
-              const localMessage = localPrintError instanceof Error ? localPrintError.message : String(localPrintError);
-              throw new Error(`本地打印服务失败：${localMessage}；${formatQzError(qzPrintError)}`);
-            });
-            setPrintServerStatus('connected');
-            setPrinterBridge('qz');
-            setPrintServerBaseUrl('QZ Tray 本机连接');
-            setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
-            announceScanFeedback('success');
-            addLog(scannedValue, finalExchangeNumber, result.message, 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
-            setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
-            const newTimestamp = Date.now();
-            setRecentlyPrinted(prev => 
-              [...prev, { code: scannedValue, timestamp: newTimestamp }].filter(p => p.timestamp > newTimestamp - 5 * 60 * 1000)
-            );
+        try {
+          // Send the File body directly. The old Base64 + JSON path allocated and
+          // serialised the whole PDF on the browser main thread before first print.
+          const printQuery = new URLSearchParams({ printerName: selectedPrinter, fileName: pdfFile.name });
+          const { response, endpoint } = await requestLocalPrintServer(`/api/print?${printQuery.toString()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': pdfFile.type || 'application/pdf' },
+            body: pdfFile
+          });
+          setPrintServerStatus('connected');
+          setPrinterBridge('local');
+          setPrintServerBaseUrl(formatPrintServerEndpoint(endpoint));
+          setPrintServerMessage(`已连接本机打印服务：${formatPrintServerEndpoint(endpoint)}`);
+
+          const result = await response.json();
+          if (result.success) {
+            recordPrintSuccess(result);
+          } else {
+            announceScanFeedback('error');
+            void playScanFeedback('failure');
+            addLog(scannedValue, finalExchangeNumber, `打印失败: ${result.message}`, 'error', 'print');
           }
+        } catch (localPrintError) {
+          // Only encode to Base64 when QZ Tray is the fallback, so the normal local
+          // print path keeps the first scan responsive.
+          const result = await printPdfWithQz(await readPdfAsBase64(pdfFile)).catch(qzPrintError => {
+            const localMessage = localPrintError instanceof Error ? localPrintError.message : String(localPrintError);
+            throw new Error(`本地打印服务失败：${localMessage}；${formatQzError(qzPrintError)}`);
+          });
+          setPrintServerStatus('connected');
+          setPrinterBridge('qz');
+          setPrintServerBaseUrl('QZ Tray 本机连接');
+          setPrintServerMessage(`QZ Tray 已连接：${result.printerName}`);
+          recordPrintSuccess(result);
         }
       } catch (error) {
         announceScanFeedback('error');
@@ -1633,13 +1688,7 @@ export default function App() {
         setPrintServerMessage(message);
         addLog(scannedValue, finalExchangeNumber, message, 'error', 'print', message.includes('超时') ? 'TIMEOUT' : 'FAILED');
       }
-    };
-    reader.onerror = () => {
-      announceScanFeedback('error');
-      void playScanFeedback('failure');
-      addLog(scannedValue, finalExchangeNumber, '读取 PDF 文件失败', 'error', 'print');
-    };
-    reader.readAsDataURL(pdfFile);
+    })();
   };
 
   const forcePrint = (codeToPrint: string) => {
@@ -1742,6 +1791,8 @@ export default function App() {
   }, [activeTab]);
 
   const scanFeedbackCopy = SCAN_FEEDBACK_COPY[scanFeedback];
+  const isWorkspacePreparing = uploadCacheStatus === 'restoring' || interceptStorageStatus === 'loading';
+  const scanStatusCopy = isWorkspacePreparing ? '正在准备本机数据' : scanFeedbackCopy;
 
   return (
     <div className="cmhub-operating-workspace">
@@ -1857,18 +1908,20 @@ export default function App() {
           />
         )}
 
-        {interceptStorageStatus !== 'ready' && (
+        {interceptStorageStatus === 'corrupted' && (
           <ArcoAlert
             type="warning"
             showIcon
-            content={interceptStorageStatus === 'corrupted'
-              ? '拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。'
-              : '拦截名单无法保存到本机缓存，本次会话关闭后将失效。'}
+            content="拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。"
           />
         )}
 
-        {uploadCacheStatus === 'restoring' && (
-          <ArcoAlert type="info" showIcon content="正在恢复本次会话的 Excel 映射和 PDF 面单库，请稍候再扫码。" />
+        {interceptStorageStatus === 'unavailable' && (
+          <ArcoAlert
+            type="warning"
+            showIcon
+            content="拦截名单无法保存到本机缓存，本次会话关闭后将失效。"
+          />
         )}
 
         {uploadCacheStatus === 'unavailable' && uploadCacheMessage && (
@@ -2258,7 +2311,7 @@ export default function App() {
                 </div>
                 </div>
                 <p className="cmhub-data-import-note">
-                  <AlertCircle size={15} aria-hidden="true" /> 单次/累计最多 {MAX_PDF_FILES.toLocaleString()} 个 PDF；文件名需包含 Excel 中的转单号，可连续添加多个文件夹或 ZIP，同名单以后导入为准。
+                  <AlertCircle size={15} aria-hidden="true" /> Excel 支持“头程单号→快递单号”及“运单号→参考单号”；单次/累计最多 {MAX_PDF_FILES.toLocaleString()} 个 PDF。使用“文件夹”导入会保存本机访问授权，刷新后可恢复大批量面单；也可连续添加多个文件夹或 ZIP，同名单以后导入为准。
                 </p>
             </div>
           </section>
@@ -2266,7 +2319,12 @@ export default function App() {
 
         <div className="cmhub-operating-stack">
             {/* Scanner Input */}
-            <ArcoCard className="cmhub-operating-card cmhub-scanner-card" data-state={scanFeedback} bordered>
+            <ArcoCard
+              className="cmhub-operating-card cmhub-scanner-card"
+              data-state={scanFeedback}
+              aria-busy={isWorkspacePreparing}
+              bordered
+            >
               <div className="cmhub-scan-entry-summary">
                 <div className="cmhub-scan-entry-icon"><Printer size={22} aria-hidden="true" /></div>
                 <div className="cmhub-scan-entry-copy">
@@ -2281,7 +2339,7 @@ export default function App() {
                       <label id="cmhub-scan-input-label" htmlFor="cmhub-scan-input">扫描单号</label>
                       <div className="cmhub-scan-status" role="status" aria-live="polite">
                         <span className="cmhub-scan-status-dot" aria-hidden="true" />
-                        {scanFeedbackCopy}
+                        {scanStatusCopy}
                       </div>
                     </div>
                     <ArcoInput
@@ -2290,8 +2348,9 @@ export default function App() {
                       onFocus={() => { void getAudioContext().catch(() => undefined); }}
                       onPressEnter={submitScanInput}
                       id="cmhub-scan-input"
-                      placeholder="等待扫码或输入单号…"
+                      placeholder={isWorkspacePreparing ? '正在准备本机数据…' : '等待扫码或输入单号…'}
                       size="large"
+                      disabled={isWorkspacePreparing}
                       className={cn('cmhub-scan-input', scanFeedback === 'error' && 'is-error')}
                       aria-labelledby="cmhub-scan-input-label"
                       prefix={<Scan size={20} aria-hidden="true" />}
@@ -2299,7 +2358,7 @@ export default function App() {
                     />
                   </div>
                   <div className="cmhub-scan-entry-actions" role="group" aria-label="扫码打印操作">
-                    <ArcoButton type="primary" disabled={!scanInput.trim()} onClick={submitScanInput}>
+                    <ArcoButton type="primary" disabled={isWorkspacePreparing || !scanInput.trim()} onClick={submitScanInput}>
                       <Printer size={16} aria-hidden="true" />
                       <span>打印</span>
                     </ArcoButton>

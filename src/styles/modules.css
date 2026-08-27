@@ -548,7 +548,9 @@
 
 .cmhub-operating-workspace {
   width: 100%;
-  padding: var(--cmhub-space-6) var(--cmhub-space-8) var(--cmhub-space-8);
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 0 var(--cmhub-space-8);
   color: var(--color-text-1);
 }
 
@@ -559,9 +561,11 @@
 
 .cmhub-intercept-page {
   display: grid;
-  gap: var(--cmhub-space-5);
-  max-width: 1120px;
-  margin: 0 auto;
+  gap: var(--cmhub-space-6);
+}
+
+.cmhub-intercept-page > .cmhub-page-heading {
+  margin-bottom: 0;
 }
 
 .cmhub-intercept-page-header {
@@ -868,7 +872,7 @@
 .cmhub-operating-title h3.arco-typography {
   margin: 0;
   color: var(--color-text-1);
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.2;
   letter-spacing: -0.025em;
 }
@@ -876,8 +880,8 @@
 .cmhub-operating-title p {
   margin: var(--cmhub-space-1) 0 0;
   color: var(--color-text-2);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .cmhub-operating-header-actions {
@@ -1683,22 +1687,6 @@
   will-change: transform, width;
 }
 
-.cmhub-log-content {
-  animation: cmhub-log-content-reveal var(--duration-quick) var(--ease-in-out) both;
-}
-
-@keyframes cmhub-log-content-reveal {
-  from {
-    opacity: 0;
-    filter: blur(var(--blur-small));
-  }
-
-  to {
-    opacity: 1;
-    filter: blur(0);
-  }
-}
-
 .cmhub-settings-modal .arco-modal-content,
 .cmhub-confirm-modal .arco-modal-content {
   animation: cmhub-modal-content-reveal var(--duration-fast) var(--ease-smooth-out) both;
@@ -1734,7 +1722,7 @@
 
 @media (max-width: 768px) {
   .cmhub-operating-workspace {
-    padding: var(--cmhub-space-5) var(--cmhub-space-4) var(--cmhub-space-6);
+    padding: 0 0 var(--cmhub-space-6);
   }
 
   .cmhub-qz-guide-steps {

@@ -14,7 +14,7 @@ export default function AppRoot() {
             Card: { bordered: false },
           }}
         >
-          <BrowserRouter>
+          <BrowserRouter useTransitions={false}>
             <AppRouter />
           </BrowserRouter>
         </ConfigProvider>

@@ -125,7 +125,11 @@
 .cmhub-mobile-menu-button { display: none !important; margin-right: 8px; color: var(--color-text-1) !important; }
 .cmhub-content { min-width: 0; padding: 28px 30px 40px; }
 
-.cmhub-page { max-width: 1360px; margin: 0 auto; }
+.cmhub-page {
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+}
 .cmhub-page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .cmhub-page-heading h1 { margin: 0 0 7px; color: var(--color-text-1); font-size: 26px; line-height: 1.25; letter-spacing: -0.025em; }
 .cmhub-page-heading p { max-width: 680px; margin: 0; color: var(--color-text-2); font-size: 14px; line-height: 1.7; }
@@ -181,8 +185,6 @@
 .cmhub-module-frame > .arco-card-body { padding: 0; }
 .cmhub-module-loading { display: flex; align-items: center; justify-content: center; min-height: 280px; gap: 10px; color: var(--color-text-2); }
 .cmhub-module-loading .arco-spin-icon { color: var(--primary-6); }
-.cmhub-workspace-loading { display: inline-flex; align-items: center; gap: 8px; color: var(--color-text-2); font-size: 13px; white-space: nowrap; }
-.cmhub-workspace-loading .arco-spin-icon { color: var(--primary-6); }
 .cmhub-payroll-launcher { min-height: 360px; }
 .cmhub-payroll-launcher .arco-result { padding: 56px 24px; }
 .cmhub-payroll-launcher .arco-result-title { color: var(--color-text-1); }

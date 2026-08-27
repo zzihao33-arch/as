@@ -11,9 +11,8 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { preloadPrintWorkspace } from '../pages/OperationsPage';
 import { type ThemeMode, useTheme } from './theme/ThemeProvider';
 
 interface NavigationItem {
@@ -50,14 +49,6 @@ export function AppShell() {
   );
   const { mode, setMode } = useTheme();
 
-  useEffect(() => {
-    const prefetchTimer = window.setTimeout(() => {
-      void preloadPrintWorkspace();
-    }, 0);
-
-    return () => window.clearTimeout(prefetchTimer);
-  }, []);
-
   const groupedNavigation = useMemo(() => {
     return navigationItems.reduce<Record<string, NavigationItem[]>>((groups, item) => {
       (groups[item.group] ??= []).push(item);
@@ -67,12 +58,8 @@ export function AppShell() {
 
   const openRoute = (path: string) => {
     setMobileNavigationOpen(false);
-    if (path === '/operations/scan-print') {
-      void preloadPrintWorkspace();
-    }
-    // Route changes must replace the current work surface immediately. Keeping
-    // the previous route in a transition leaves stale content visible while
-    // the scanner workspace chunk is being prepared.
+    // AppRoot opts out of BrowserRouter's concurrent transitions so the new
+    // work surface replaces the previous page in this same navigation event.
     void navigate(path);
   };
 
@@ -165,7 +152,7 @@ export function AppShell() {
               </div>
             )}
           >
-            <div className="cmhub-route-stage" key={location.pathname}>
+            <div className="cmhub-route-stage">
               <Outlet />
             </div>
           </Suspense>

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { parseMappingWorkbook } from './mappingParser';
 
 interface MappingWorkerRequest {
   type: 'parse';
@@ -31,20 +31,9 @@ self.onmessage = (event: MessageEvent<MappingWorkerRequest>) => {
 
     for (const file of event.data.files) {
       try {
-        const workbook = XLSX.read(new Uint8Array(file.buffer), { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
-        if (!worksheet) throw new Error('文件中没有找到工作表。');
+        const fileMapping = parseMappingWorkbook(file.buffer);
 
-        const fileMapping: Record<string, string> = {};
-        for (const row of XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[]) {
-          const firstLeg = String(row['头程单号'] || '').trim();
-          const exchange = String(row['快递单号'] || '').trim();
-          if (!firstLeg || !exchange) continue;
-          fileMapping[firstLeg] = exchange;
-        }
-
-        if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。');
+        if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。支持“头程单号→快递单号”或“运单号→参考单号”。');
         Object.assign(mapping, fileMapping);
         sourceCount += 1;
       } catch {

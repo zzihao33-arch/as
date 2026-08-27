@@ -11,6 +11,8 @@ export interface RestoredUploadSession {
   excel: UploadFileSummary | null;
   pdfFolder: UploadFileSummary | null;
   pdfFiles: Record<string, File>;
+  directoryHandles: FileSystemDirectoryHandle[];
+  directoryPdfKeys: string[];
   restoredPdfFileCount: number;
   message?: string;
 }
@@ -23,7 +25,9 @@ interface StoredUploadSession {
   mapping: Record<string, string>;
   excel: UploadFileSummary | null;
   pdfFolder: UploadFileSummary | null;
+  /** @deprecated Kept only so sessions created before v1.2 can still be restored. */
   directoryHandle?: FileSystemDirectoryHandle;
+  directoryHandles?: FileSystemDirectoryHandle[];
 }
 
 interface StoredPdfFile {
@@ -46,6 +50,7 @@ const PDF_STORE = 'pdf-files';
 const PDF_SESSION_INDEX = 'sessionId';
 const SESSION_ID_KEY = 'cmhub-upload-session-id-v1';
 const STALE_SESSION_MS = 24 * 60 * 60 * 1000;
+const PDF_WRITE_BATCH_SIZE = 100;
 
 let databasePromise: Promise<IDBDatabase> | null = null;
 
@@ -97,6 +102,15 @@ const getCurrentSessionId = () => {
   }
 };
 
+const getDirectoryHandles = (session: StoredUploadSession | null) => {
+  if (!session) return [];
+  const handles = session.directoryHandles?.filter(Boolean) ?? [];
+  if (session.directoryHandle && !handles.includes(session.directoryHandle)) {
+    handles.push(session.directoryHandle);
+  }
+  return handles;
+};
+
 const getSession = async (sessionId: string) => {
   const database = await openDatabase();
   const transaction = database.transaction(SESSION_STORE, 'readonly');
@@ -112,17 +126,6 @@ const getPdfFiles = async (sessionId: string) => {
   const files = await requestAsPromise(store.index(PDF_SESSION_INDEX).getAll(sessionId));
   await transactionAsPromise(transaction);
   return files as StoredPdfFile[];
-};
-
-const deletePdfFilesForSession = async (sessionId: string) => {
-  const records = await getPdfFiles(sessionId);
-  if (records.length === 0) return;
-
-  const database = await openDatabase();
-  const transaction = database.transaction(PDF_STORE, 'readwrite');
-  const store = transaction.objectStore(PDF_STORE);
-  records.forEach(record => store.delete(record.id));
-  await transactionAsPromise(transaction);
 };
 
 const pruneExpiredSessions = async (currentSessionId: string) => {
@@ -186,13 +189,14 @@ export function useSessionUploadCache() {
     if (!sessionId) throw new Error('当前浏览器不允许会话缓存。');
 
     const currentSession = await getSession(sessionId);
+    const directoryHandles = getDirectoryHandles(currentSession);
     const nextSession: StoredUploadSession = {
       id: sessionId,
       updatedAt: Date.now(),
       mapping: currentSession?.mapping ?? {},
       excel: currentSession?.excel ?? null,
       pdfFolder: currentSession?.pdfFolder ?? null,
-      ...(currentSession?.directoryHandle ? { directoryHandle: currentSession.directoryHandle } : {}),
+      ...(directoryHandles.length > 0 ? { directoryHandles } : {}),
       ...patch
     };
 
@@ -221,34 +225,50 @@ export function useSessionUploadCache() {
 
       let restoredPdfFiles: Record<string, File> = {};
       let restoreMessage = '';
-      if (session.directoryHandle) {
-        const readableDirectory = session.directoryHandle as FileSystemDirectoryHandle & {
+      const directoryHandles = getDirectoryHandles(session);
+      const directoryPdfKeys: string[] = [];
+
+      for (const directoryHandle of directoryHandles) {
+        const readableDirectory = directoryHandle as FileSystemDirectoryHandle & {
           queryPermission?: (descriptor: { mode: 'read' | 'readwrite' }) => Promise<PermissionState>;
         };
         const permission = readableDirectory.queryPermission
           ? await readableDirectory.queryPermission({ mode: 'read' })
           : 'granted';
         if (permission === 'granted') {
-          restoredPdfFiles = await collectPdfFilesFromDirectory(session.directoryHandle);
+          const directoryFiles = await collectPdfFilesFromDirectory(directoryHandle);
+          Object.assign(restoredPdfFiles, directoryFiles);
+          directoryPdfKeys.push(...Object.keys(directoryFiles));
         } else {
           restoreMessage = '为保护本机文件访问权限，请重新选择 PDF 文件夹。';
         }
-      } else {
-        const storedFiles = await getPdfFiles(sessionId);
-        restoredPdfFiles = Object.fromEntries(storedFiles.map(file => [
-          file.key,
-          new File([file.blob], file.name, { type: file.blob.type || 'application/pdf', lastModified: file.lastModified })
-        ]));
       }
 
+      // Directory-backed PDFs are restored from their source folders. Files imported
+      // directly or from ZIP packages remain in IndexedDB and intentionally override
+      // same-named files from folders, matching the latest-import-wins behaviour.
+      const storedFiles = await getPdfFiles(sessionId);
+      const storedFileKeys = new Set(storedFiles.map(file => file.key));
+      Object.assign(restoredPdfFiles, Object.fromEntries(storedFiles.map(file => [
+        file.key,
+        new File([file.blob], file.name, { type: file.blob.type || 'application/pdf', lastModified: file.lastModified })
+      ])));
+
       setStatus('ready');
+      const restoredPdfFileCount = Object.keys(restoredPdfFiles).length;
+      if (session.pdfFolder && restoredPdfFileCount < session.pdfFolder.count) {
+        const incompleteMessage = `本次会话仅恢复 ${restoredPdfFileCount.toLocaleString()} / ${session.pdfFolder.count.toLocaleString()} 个 PDF；请重新选择缺失的文件夹或重新导入。`;
+        restoreMessage = [restoreMessage, incompleteMessage].filter(Boolean).join(' ');
+      }
       setMessage(restoreMessage);
       return {
         mapping: session.mapping,
         excel: session.excel,
         pdfFolder: session.pdfFolder,
         pdfFiles: restoredPdfFiles,
-        restoredPdfFileCount: Object.keys(restoredPdfFiles).length,
+        directoryHandles,
+        directoryPdfKeys: directoryPdfKeys.filter(key => !storedFileKeys.has(key)),
+        restoredPdfFileCount,
         message: restoreMessage || undefined
       };
     } catch (error) {
@@ -270,66 +290,71 @@ export function useSessionUploadCache() {
     }
   }, [updateSession]);
 
-  const savePdfDirectory = useCallback(async (directoryHandle: FileSystemDirectoryHandle, pdfFolder: UploadFileSummary) => {
-    try {
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) throw new Error('当前浏览器不允许会话缓存。');
-      await deletePdfFilesForSession(sessionId);
-      await updateSession({ directoryHandle, pdfFolder });
-      setStatus('ready');
-      setMessage('');
-    } catch (error) {
-      setStatus('unavailable');
-      setMessage(error instanceof Error ? error.message : 'PDF 文件夹会话缓存失败。');
-    }
-  }, [updateSession]);
-
-  const savePdfFiles = useCallback((pdfFiles: Record<string, File>, pdfFolder: UploadFileSummary) => {
-    const persistPdfFiles = async () => {
+  const savePdfFiles = useCallback((
+    pdfFiles: Record<string, File>,
+    pdfFolder: UploadFileSummary,
+    directoryHandles: FileSystemDirectoryHandle[] = []
+  ) => {
+    const persistPdfFiles = async (): Promise<boolean> => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) {
         setStatus('unavailable');
         setMessage('当前浏览器不允许会话缓存；刷新后需要重新选择 PDF 文件夹。');
-        return;
+        return false;
       }
 
       try {
         const database = await openDatabase();
+        // Record the expected total before writing Blobs. If the browser is closed
+        // or quota is exhausted mid-write, the next restore reports an incomplete
+        // cache instead of pretending that an older 1,000-file snapshot is current.
+        await updateSession({ pdfFolder, directoryHandles });
         const existingFiles = await getPdfFiles(sessionId);
-        const currentSession = await getSession(sessionId);
-        const transaction = database.transaction([SESSION_STORE, PDF_STORE], 'readwrite');
-        const sessionStore = transaction.objectStore(SESSION_STORE);
-        const pdfStore = transaction.objectStore(PDF_STORE);
-        existingFiles.forEach(file => pdfStore.delete(file.id));
-        Object.entries(pdfFiles).forEach(([key, file]) => {
-          pdfStore.put({
-            id: `${sessionId}:${key}`,
-            sessionId,
-            key,
-            name: file.name,
-            lastModified: file.lastModified,
-            blob: file
-          } satisfies StoredPdfFile);
-        });
+        const entries = Object.entries(pdfFiles);
+        const retainedKeys = new Set(entries.map(([key]) => key));
+        const staleFiles = existingFiles.filter(file => !retainedKeys.has(file.key));
 
-        sessionStore.put({
-          id: sessionId,
-          updatedAt: Date.now(),
-          mapping: currentSession?.mapping ?? {},
-          excel: currentSession?.excel ?? null,
-          pdfFolder
-        } satisfies StoredUploadSession);
-        await transactionAsPromise(transaction);
+        // IndexedDB will frequently abort a huge atomic transaction when several
+        // thousand PDF Blobs are written at once. Commit small batches so a 3,600+
+        // file import is durable rather than silently falling back to an older cache.
+        for (let start = 0; start < staleFiles.length; start += PDF_WRITE_BATCH_SIZE) {
+          const transaction = database.transaction(PDF_STORE, 'readwrite');
+          const pdfStore = transaction.objectStore(PDF_STORE);
+          staleFiles.slice(start, start + PDF_WRITE_BATCH_SIZE).forEach(file => pdfStore.delete(file.id));
+          await transactionAsPromise(transaction);
+        }
+
+        for (let start = 0; start < entries.length; start += PDF_WRITE_BATCH_SIZE) {
+          const transaction = database.transaction(PDF_STORE, 'readwrite');
+          const pdfStore = transaction.objectStore(PDF_STORE);
+          entries.slice(start, start + PDF_WRITE_BATCH_SIZE).forEach(([key, file]) => {
+            pdfStore.put({
+              id: `${sessionId}:${key}`,
+              sessionId,
+              key,
+              name: file.name,
+              lastModified: file.lastModified,
+              blob: file
+            } satisfies StoredPdfFile);
+          });
+          await transactionAsPromise(transaction);
+          // Yield between batches so the import does not monopolise the UI thread.
+          await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+        }
+
+        await updateSession({ pdfFolder, directoryHandles });
         setStatus('ready');
         setMessage('');
+        return true;
       } catch (error) {
         setStatus('unavailable');
         setMessage(error instanceof Error ? error.message : 'PDF 会话缓存空间不足，请重新上传。');
+        return false;
       }
     };
 
     const queuedWrite = pdfSaveQueueRef.current.then(persistPdfFiles, persistPdfFiles);
-    pdfSaveQueueRef.current = queuedWrite.catch(() => undefined);
+    pdfSaveQueueRef.current = queuedWrite.then(() => undefined, () => undefined);
     return queuedWrite;
   }, []);
 
@@ -340,7 +365,6 @@ export function useSessionUploadCache() {
     restore,
     collectPdfFilesFromDirectory,
     saveExcelMapping,
-    savePdfDirectory,
     savePdfFiles
   };
 }

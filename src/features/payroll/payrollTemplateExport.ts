@@ -143,7 +143,7 @@ export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOpti
   const headers = [
     '序号', '姓名', '基础时薪', '出勤日期与班次明细 (已扣午休)',
     ...WEEK_COLUMN_KEYS.map((_, index) => formatWeekHeader(weeks[index], index)),
-    '常规工时 (小时)', 'OT工时 (>40h/周)', '常规工资', '加班工资', '奖金', '油补 (天)', '油补金额', '应发金额', '备注',
+    '常规工时 (小时)', 'OT工时 (>40h/周)', '常规工资', '加班工资', '奖金', '油补 (天)', '油补金额', '应发金额', '核对',
   ];
   const firstDataRow = 4;
   const totalRowNumber = firstDataRow + options.rows.length;

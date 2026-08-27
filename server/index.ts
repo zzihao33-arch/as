@@ -20,7 +20,7 @@ const __dirname = path.dirname(__filename);
 const { print, getPrinters, getDefaultPrinter } = ptp as any;
 
 const app = express();
-const port = 3001;
+const port = Number(process.env.CMHUB_PRINT_SERVER_PORT) || 3001;
 
 const isAllowedOrigin = (origin: string) => (
   /^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin)
@@ -231,6 +231,9 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cors(corsOptions));
+// Accept a PDF File body directly for scan printing. This avoids converting the
+// entire label into a Base64 JSON string on the browser's main thread.
+app.use(bodyParser.raw({ type: ['application/pdf', 'application/octet-stream'], limit: '50mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
 
 // 1. 获取系统打印机列表
@@ -262,9 +265,14 @@ app.get('/api/printers', async (req, res) => {
 
 // 2. 接收请求并调用打印功能
 app.post('/api/print', async (req, res) => {
-  const { pdfBase64, printerName, fileName } = req.body;
+  const jsonBody = Buffer.isBuffer(req.body) ? {} : (req.body ?? {});
+  const getQueryValue = (value: unknown) => typeof value === 'string' ? value : '';
+  const pdfBase64 = jsonBody.pdfBase64;
+  const printerName = getQueryValue(req.query.printerName) || jsonBody.printerName;
+  const fileName = getQueryValue(req.query.fileName) || jsonBody.fileName;
+  const pdfBuffer = Buffer.isBuffer(req.body) ? req.body : null;
 
-  if (!pdfBase64) {
+  if ((!pdfBuffer || pdfBuffer.length === 0) && !pdfBase64) {
     return res.status(400).json({ success: false, message: '缺少 PDF 数据' });
   }
 
@@ -273,10 +281,11 @@ app.post('/api/print', async (req, res) => {
     fs.mkdirSync(tempDir);
   }
 
-  const tempFilePath = path.join(tempDir, `${Date.now()}_${fileName || 'print.pdf'}`);
+  const safeFileName = path.basename(String(fileName || 'print.pdf')).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+  const tempFilePath = path.join(tempDir, `${Date.now()}_${safeFileName || 'print.pdf'}`);
   
   try {
-    const buffer = Buffer.from(pdfBase64, 'base64');
+    const buffer = pdfBuffer ?? Buffer.from(String(pdfBase64), 'base64');
     fs.writeFileSync(tempFilePath, buffer);
 
     const inventory = await getPrinterInventory();

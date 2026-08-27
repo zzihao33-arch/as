@@ -1,4 +1,3 @@
-import React from 'react'
 import ReactDOM from 'react-dom/client'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@arco-design/web-react/dist/css/arco.css'
@@ -10,7 +9,5 @@ import './styles/modules.css'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <AppRoot />
-  </React.StrictMode>,
+  <AppRoot />,
 )
