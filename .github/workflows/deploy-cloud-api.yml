@@ -69,6 +69,7 @@ jobs:
             -i "$HOME/.ssh/cmhub_deploy" \
             -p "$CMHUB_DEPLOY_PORT" \
             -o BatchMode=yes \
+            -o PubkeyAuthentication=unbound \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$CMHUB_DEPLOY_USER@$CMHUB_DEPLOY_HOST" \
