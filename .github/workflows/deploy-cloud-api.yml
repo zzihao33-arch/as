@@ -1,0 +1,74 @@
+name: Deploy cloud API
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "services/cloud-api/**"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Server command to run through the restricted deployment key"
+        required: true
+        default: probe
+        type: choice
+        options:
+          - probe
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy cloud API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Configure authenticated SSH
+        env:
+          CMHUB_DEPLOY_HOST: ${{ secrets.CMHUB_DEPLOY_HOST }}
+          CMHUB_DEPLOY_KNOWN_HOSTS: ${{ secrets.CMHUB_DEPLOY_KNOWN_HOSTS }}
+          CMHUB_DEPLOY_PORT: ${{ secrets.CMHUB_DEPLOY_PORT }}
+          CMHUB_DEPLOY_SSH_KEY: ${{ secrets.CMHUB_DEPLOY_SSH_KEY }}
+          CMHUB_DEPLOY_USER: ${{ secrets.CMHUB_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          : "${CMHUB_DEPLOY_HOST:?Missing CMHUB_DEPLOY_HOST secret}"
+          : "${CMHUB_DEPLOY_KNOWN_HOSTS:?Missing CMHUB_DEPLOY_KNOWN_HOSTS secret}"
+          : "${CMHUB_DEPLOY_PORT:?Missing CMHUB_DEPLOY_PORT secret}"
+          : "${CMHUB_DEPLOY_SSH_KEY:?Missing CMHUB_DEPLOY_SSH_KEY secret}"
+          : "${CMHUB_DEPLOY_USER:?Missing CMHUB_DEPLOY_USER secret}"
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$CMHUB_DEPLOY_SSH_KEY" > "$HOME/.ssh/cmhub_deploy"
+          printf '%s\n' "$CMHUB_DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/cmhub_deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Run restricted server deployment command
+        env:
+          CMHUB_DEPLOY_HOST: ${{ secrets.CMHUB_DEPLOY_HOST }}
+          CMHUB_DEPLOY_PORT: ${{ secrets.CMHUB_DEPLOY_PORT }}
+          CMHUB_DEPLOY_USER: ${{ secrets.CMHUB_DEPLOY_USER }}
+          REQUESTED_COMMAND: ${{ inputs.command }}
+        run: |
+          set -euo pipefail
+          command="${REQUESTED_COMMAND:-probe}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            command="deploy"
+          fi
+
+          ssh \
+            -i "$HOME/.ssh/cmhub_deploy" \
+            -p "$CMHUB_DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$CMHUB_DEPLOY_USER@$CMHUB_DEPLOY_HOST" \
+            "$command"
