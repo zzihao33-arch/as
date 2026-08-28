@@ -1,0 +1,460 @@
+openapi: 3.0.3
+info:
+  title: CM-HUB 上游客户对接 API
+  version: 1.4.0
+  description: |
+    当前已实现的上游服务器端合同：创建/更新物流单据、主动上传 PDF 面单，以及按头程单号查询。
+    除独立的 /healthz 探针外，请求必须携带有效 X-API-Key。
+    上游不能写入 CM-HUB 状态或打印事件；仓库取单与未来签名回调不属于本合同。
+servers:
+  - url: https://api.cmhubtool.com/api/v1
+    description: 规范生产入口（唯一公开基址）
+security:
+  - ApiKeyAuth: []
+tags:
+  - name: Shipments
+    description: 当前客户范围内的物流单据
+paths:
+  /shipments:
+    post:
+      tags: [Shipments]
+      summary: 创建或更新物流单据
+      description: |
+        firstLegTrackingNo 是当前客户范围内的唯一业务键。新记录由 CM-HUB 写为 RECEIVED；
+        请求不能设置或推进状态。完整请求体保存为内部 raw_data 快照，未知字段兼容保留。
+        labelUrl 只是兼容保留的上游来源元数据；CM-HUB 不会反向抓取它。
+      operationId: upsertShipment
+      x-required-scope: shipments:write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShipmentInput'
+            examples:
+              shipment:
+                summary: 创建物流单据
+                value:
+                  firstLegTrackingNo: HHWV06218005702YQ
+                  courierTrackingNo: LC095500137US
+                  carrier: USPS
+                  labelUrl: https://labels.example.com/LC095500137US.pdf
+                  labelSha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                  order_id: SO-20260828-0001
+                  recipient_name: Jane Doe
+                  phone: +1-212-555-0100
+                  address:
+                    line1: 123 Example Ave
+                    city: New York
+                    state: NY
+                    postalCode: '10001'
+                    country: US
+                  items:
+                    - sku: SKU-RED-01
+                      name: Red Widget
+                      quantity: 2
+                  upstream_extension:
+                    channel: shopify
+      responses:
+        '200':
+          description: 已创建或更新物流单据
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipmentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /shipments/by-first-leg/{firstLegTrackingNo}/label:
+    put:
+      tags: [Shipments]
+      summary: 主动上传 PDF 面单资产
+      description: |
+        必须先创建物流单据。CM-HUB 验证声明 SHA-256、PDF 头尾标识，并把内容保存到
+        美国服务器私有存储。内容哈希在同一物流单据内去重；本接口不创建公开下载 URL。
+      operationId: uploadShipmentLabel
+      x-required-scope: labels:write
+      parameters:
+        - name: firstLegTrackingNo
+          in: path
+          required: true
+          description: 头程单号
+          schema:
+            type: string
+            maxLength: 128
+        - $ref: '#/components/parameters/LabelSha256'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: PDF 已校验并保存，或命中同一内容资产
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelAssetResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /shipments/by-first-leg/{firstLegTrackingNo}:
+    get:
+      tags: [Shipments]
+      summary: 按头程单号查询当前客户的物流单据
+      operationId: getShipmentByFirstLegTrackingNo
+      x-required-scope: shipments:read
+      parameters:
+        - name: firstLegTrackingNo
+          in: path
+          required: true
+          description: 头程单号
+          schema:
+            type: string
+            maxLength: 128
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShipmentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: 客户专属服务器端 API Key；每把 Key 具有独立作用域和生命周期，不得下发到浏览器。
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 8–128 位字母、数字、下划线或连字符；重试必须复用原值，另一笔请求不得复用。
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[a-zA-Z0-9_-]{8,128}$'
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: 可选链路追踪 ID；无效或未提供时由 CM-HUB 生成。
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+        pattern: '^[a-zA-Z0-9_-]{8,64}$'
+    LabelSha256:
+      name: X-Label-SHA256
+      in: header
+      required: true
+      description: PDF 原始字节的 SHA-256；64 位十六进制。
+      schema:
+        type: string
+        pattern: '^[a-fA-F0-9]{64}$'
+  schemas:
+    ShipmentInput:
+      type: object
+      required: [firstLegTrackingNo]
+      additionalProperties: true
+      description: |
+        未定义顶层字段会进入内部原始载荷快照。status 不是可写属性；即使作为未知字段出现，
+        也不会改变 CM-HUB 状态。
+      properties:
+        firstLegTrackingNo:
+          type: string
+          maxLength: 128
+          description: 当前客户范围内唯一的头程单号
+        courierTrackingNo:
+          type: string
+          maxLength: 128
+          description: 末端快递单号
+        carrier:
+          type: string
+          maxLength: 64
+        labelUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: '^https://'
+          description: 兼容保留的上游来源元数据；CM-HUB 和仓库均不会抓取。
+        labelSha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+        attributes:
+          type: object
+          additionalProperties: true
+        order_id:
+          type: string
+          maxLength: 128
+          description: 上游订单参考号
+        recipient_name:
+          type: string
+          maxLength: 128
+        phone:
+          type: string
+          maxLength: 64
+        address:
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: object
+              minProperties: 1
+              additionalProperties: true
+        items:
+          type: array
+          items: {}
+    ShipmentStatus:
+      type: string
+      readOnly: true
+      description: CM-HUB-owned 状态；上游写入合同不接受该字段。
+      enum: [RECEIVED, READY_TO_PRINT, PRINTED, BLOCKED, PRINT_FAILED, CANCELLED]
+    Shipment:
+      type: object
+      required: [id, firstLegTrackingNo, status, labelAssetReady, rawDataCaptured, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          nullable: true
+        firstLegTrackingNo:
+          type: string
+          maxLength: 128
+        courierTrackingNo:
+          type: string
+          nullable: true
+        carrier:
+          type: string
+          nullable: true
+        labelUrl:
+          type: string
+          nullable: true
+          description: 兼容保留的上游来源元数据；CM-HUB 和仓库均不会抓取。
+        labelSha256:
+          type: string
+          nullable: true
+        labelAssetReady:
+          type: boolean
+          description: 是否已有当前 CM-HUB 私有面单资产；不暴露存储路径。
+        recipientName:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        address:
+          nullable: true
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties: true
+        items:
+          type: array
+          nullable: true
+          items: {}
+        status:
+          $ref: '#/components/schemas/ShipmentStatus'
+        attributes:
+          type: object
+          nullable: true
+          additionalProperties: true
+        rawDataCaptured:
+          type: boolean
+          description: 完整上游请求体已在内部保存；原始载荷不在常规响应中返回。
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ShipmentResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/Shipment'
+        requestId:
+          type: string
+        idempotentReplay:
+          type: boolean
+    LabelAsset:
+      type: object
+      required: [id, shipmentId, sha256, byteSize, contentType, shipmentStatus, reused]
+      properties:
+        id:
+          type: string
+          format: uuid
+        shipmentId:
+          type: string
+          format: uuid
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        byteSize:
+          type: integer
+          minimum: 1
+        contentType:
+          type: string
+          enum: [application/pdf]
+        shipmentStatus:
+          $ref: '#/components/schemas/ShipmentStatus'
+        reused:
+          type: boolean
+    LabelAssetResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/LabelAsset'
+        requestId:
+          type: string
+    ErrorBody:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+  responses:
+    BadRequest:
+      description: 请求参数或幂等键无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: API Key 缺失、无效、过期或已停用
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: INVALID_API_KEY
+              message: 缺少或无效的 X-API-Key。
+              requestId: 4b2c8080-87a4-4f5c-901d-2efcb3d8bba5
+    Forbidden:
+      description: API Key 有效，但缺少当前操作所需的作用域
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: INSUFFICIENT_SCOPE
+              message: 当前 API Key 缺少 shipments:write 权限。
+              requestId: 4b2c8080-87a4-4f5c-901d-2efcb3d8bba5
+    NotFound:
+      description: 当前客户下未找到物流单据或路径不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: 相同请求或面单正在处理、同一幂等键用于不同载荷，或上传被更新面单取代
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: 超出客户频率限制
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: PDF 超过服务端允许的大小
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnsupportedMediaType:
+      description: 面单上传未使用 application/pdf
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableContent:
+      description: PDF 结构或 SHA-256 校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: 未预期的服务端错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: 数据库、缓存或其他依赖暂时不可用
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

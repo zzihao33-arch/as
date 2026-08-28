@@ -13,13 +13,7 @@ import {
 import {
   AlertCircle,
   ArrowLeft,
-  CalendarDays,
-  Check,
   CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
   Download,
   FileCheck2,
   FileText,
@@ -91,10 +85,6 @@ const quantityFields: Array<{ key: QuantityField; label: string; shortLabel: str
   { key: 'boxes', label: '箱数', shortLabel: '箱', placeholder: 'Boxes' },
   { key: 'pallets', label: '板数', shortLabel: '板', placeholder: 'Pallets' }
 ];
-
-const weekDayLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const hourOptions = Array.from({ length: 12 }, (_, index) => index + 1);
-const minuteOptions = Array.from({ length: 60 }, (_, index) => index);
 
 function createEmptyQuantityValues(): ChannelQuantityValues {
   return {
@@ -206,47 +196,6 @@ function parsePickupDate(value: string) {
 
 function toDateTimeInputValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function getHour12(date: Date) {
-  const hour = date.getHours() % 12;
-  return hour === 0 ? 12 : hour;
-}
-
-function getMeridiem(date: Date) {
-  return date.getHours() >= 12 ? 'PM' : 'AM';
-}
-
-function formatDateTimePickerLabel(value: string) {
-  const date = parsePickupDate(value);
-  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${date.getFullYear()} ${pad(getHour12(date))}:${pad(date.getMinutes())} ${getMeridiem(date)}`;
-}
-
-function getMonthLabel(date: Date) {
-  return `${date.toLocaleString('en-US', { month: 'long' })} ${date.getFullYear()}`;
-}
-
-function addMonths(date: Date, amount: number) {
-  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
-}
-
-function isSameCalendarDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
-}
-
-function getCalendarDays(displayMonth: Date) {
-  const firstDayOfMonth = new Date(displayMonth.getFullYear(), displayMonth.getMonth(), 1);
-  const firstGridDay = new Date(
-    displayMonth.getFullYear(),
-    displayMonth.getMonth(),
-    1 - firstDayOfMonth.getDay()
-  );
-
-  return Array.from({ length: 42 }, (_, index) => (
-    new Date(firstGridDay.getFullYear(), firstGridDay.getMonth(), firstGridDay.getDate() + index)
-  ));
 }
 
 function getNormalizedChannelIds(form: Pick<BolForm, 'channelIds' | 'channelId'>) {
@@ -669,258 +618,6 @@ async function renderBolOutputCanvas(form: BolForm, scale = BOL_OUTPUT_SCALE) {
   return canvas;
 }
 
-function BolDateTimePicker({
-  value,
-  onChange,
-  hasError = false
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  hasError?: boolean;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selectedDate = useMemo(() => parsePickupDate(value), [value]);
-  const [isOpen, setIsOpen] = useState(false);
-  const [displayMonth, setDisplayMonth] = useState(
-    () => new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1)
-  );
-
-  useEffect(() => {
-    if (isOpen) {
-      setDisplayMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
-    }
-  }, [isOpen, selectedDate]);
-
-  useEffect(() => {
-    const closePicker = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', closePicker);
-    document.addEventListener('keydown', closeOnEscape);
-
-    return () => {
-      document.removeEventListener('mousedown', closePicker);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, []);
-
-  const updateDateTime = (updater: (current: Date) => Date) => {
-    const nextDate = updater(new Date(selectedDate));
-    onChange(toDateTimeInputValue(nextDate));
-  };
-
-  const chooseDay = (day: Date) => {
-    updateDateTime(current => {
-      current.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
-      return current;
-    });
-  };
-
-  const chooseHour = (hour12: number) => {
-    updateDateTime(current => {
-      const isPm = current.getHours() >= 12;
-      current.setHours((hour12 % 12) + (isPm ? 12 : 0));
-      return current;
-    });
-  };
-
-  const chooseMinute = (minute: number) => {
-    updateDateTime(current => {
-      current.setMinutes(minute);
-      return current;
-    });
-  };
-
-  const chooseMeridiem = (meridiem: 'AM' | 'PM') => {
-    updateDateTime(current => {
-      current.setHours((getHour12(current) % 12) + (meridiem === 'PM' ? 12 : 0));
-      return current;
-    });
-  };
-
-  const calendarDays = getCalendarDays(displayMonth);
-  const currentHour12 = getHour12(selectedDate);
-  const currentMinute = selectedDate.getMinutes();
-  const currentMeridiem = getMeridiem(selectedDate);
-
-  return (
-    <div ref={rootRef} className="relative mt-2">
-      <button
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={isOpen}
-        onClick={() => setIsOpen(open => !open)}
-        className={`flex w-full items-center justify-between rounded-2xl border bg-dark-bg/80 px-4 py-3 text-left outline-none transition-all ${
-          hasError
-            ? 'border-red-400/70 ring-4 ring-red-400/10'
-            : 'border-brand-green/80 shadow-sm shadow-brand-green/20 hover:border-brand-green focus:border-brand-green focus:ring-4 focus:ring-brand-green/15'
-        }`}
-      >
-        <span className="flex items-center gap-3">
-          <Clock className="h-5 w-5 text-brand-green" />
-          <span>
-            <span className="block text-lg font-black leading-tight text-text-primary">
-              {formatDateTimePickerLabel(value)}
-            </span>
-            <span className="mt-1 block text-xs font-semibold text-text-secondary/60">提货时间</span>
-          </span>
-        </span>
-        <CalendarDays className="h-5 w-5 text-text-secondary/80" />
-      </button>
-
-      {isOpen && (
-        <div className="absolute left-0 top-full z-40 mt-3 w-[540px] max-w-[calc(100vw-2rem)] rounded-2xl border border-brand-green/60 bg-dark-bg/95 p-4 shadow-2xl shadow-brand-green/20 backdrop-blur-xl">
-          <div className="grid gap-4 md:grid-cols-[1.08fr_0.92fr]">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              <div className="mb-3 flex items-center justify-between">
-                <button
-                  type="button"
-                  aria-label="上个月"
-                  onClick={() => setDisplayMonth(current => addMonths(current, -1))}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-text-secondary hover:bg-brand-green/10 hover:text-brand-green transition-colors"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </button>
-                <div className="text-sm font-black text-text-primary">{getMonthLabel(displayMonth)}</div>
-                <button
-                  type="button"
-                  aria-label="下个月"
-                  onClick={() => setDisplayMonth(current => addMonths(current, 1))}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-text-secondary hover:bg-brand-green/10 hover:text-brand-green transition-colors"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-7 gap-1 text-center">
-                {weekDayLabels.map(day => (
-                  <div key={day} className="py-1 text-[11px] font-black text-text-secondary/70">{day}</div>
-                ))}
-                {calendarDays.map(day => {
-                  const isSelected = isSameCalendarDay(day, selectedDate);
-                  const isCurrentMonth = day.getMonth() === displayMonth.getMonth();
-                  const isToday = isSameCalendarDay(day, new Date());
-
-                  return (
-                    <button
-                      key={day.toISOString()}
-                      type="button"
-                      onClick={() => chooseDay(day)}
-                      className={`flex h-9 items-center justify-center rounded-xl text-sm font-bold transition-all ${
-                        isSelected
-                          ? 'bg-brand-green text-black shadow-lg shadow-brand-green/30'
-                          : isCurrentMonth
-                            ? 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
-                            : 'text-text-secondary/35 hover:bg-white/5 hover:text-text-secondary'
-                      } ${isToday && !isSelected ? 'ring-1 ring-brand-green/30' : ''}`}
-                    >
-                      {day.getDate()}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-black text-text-primary">时间</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    updateDateTime(() => new Date(Date.now() + 2 * 60 * 60 * 1000));
-                    setDisplayMonth(addMonths(new Date(), 0));
-                  }}
-                  className="rounded-full bg-brand-green/10 px-3 py-1 text-xs font-bold text-brand-green hover:bg-brand-green/20 transition-colors"
-                >
-                  默认 +2h
-                </button>
-              </div>
-
-              <div className="grid grid-cols-[1fr_1fr_1.15fr] gap-2">
-                <div>
-                  <div className="mb-2 text-center text-[11px] font-black uppercase tracking-wide text-text-secondary/60">Hour</div>
-                  <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-                    {hourOptions.map(hour => (
-                      <button
-                        key={hour}
-                        type="button"
-                        onClick={() => chooseHour(hour)}
-                        className={`w-full rounded-xl px-2 py-2 text-sm font-black transition-all ${
-                          hour === currentHour12
-                            ? 'bg-brand-green text-black'
-                            : 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
-                        }`}
-                      >
-                        {pad(hour)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 text-center text-[11px] font-black uppercase tracking-wide text-text-secondary/60">Min</div>
-                  <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-                    {minuteOptions.map(minute => (
-                      <button
-                        key={minute}
-                        type="button"
-                        onClick={() => chooseMinute(minute)}
-                        className={`w-full rounded-xl px-2 py-2 text-sm font-black transition-all ${
-                          minute === currentMinute
-                            ? 'bg-brand-green text-black'
-                            : 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
-                        }`}
-                      >
-                        {pad(minute)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="mb-2 text-center text-[11px] font-black uppercase tracking-wide text-text-secondary/60">Mode</div>
-                  <div className="space-y-2">
-                    {(['AM', 'PM'] as const).map(meridiem => (
-                      <button
-                        key={meridiem}
-                        type="button"
-                        onClick={() => chooseMeridiem(meridiem)}
-                        className={`w-full rounded-xl px-3 py-3 text-sm font-black transition-all ${
-                          meridiem === currentMeridiem
-                            ? 'bg-brand-green text-black'
-                            : 'text-text-primary hover:bg-brand-green/10 hover:text-brand-green'
-                        }`}
-                      >
-                        {meridiem}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                className="mt-4 w-full rounded-xl bg-brand-green px-4 py-3 text-sm font-black text-dark-bg shadow-lg shadow-brand-green/20 hover:bg-brand-green/85 transition-all"
-              >
-                完成
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function BolDocument({
   form,
   printable
@@ -1050,25 +747,6 @@ export default function BolManager() {
     setErrors(current => ({ ...current, [field]: undefined }));
   };
 
-  const selectChannelForEditing = (channelId: string) => {
-    setForm(current => {
-      const currentIds = getNormalizedChannelIds(current);
-      const nextIds = currentIds.includes(channelId) ? currentIds : [...currentIds, channelId];
-
-      return {
-        ...current,
-        channelIds: nextIds,
-        channelId: nextIds[0],
-        activeChannelId: channelId,
-        channelQuantities: {
-          ...current.channelQuantities,
-          [channelId]: getQuantityValuesForChannel(current, channelId)
-        }
-      };
-    });
-    setErrors(current => ({ ...current, channelId: undefined }));
-  };
-
   const updateSelectedChannels = (nextChannelIds: string[]) => {
     const validChannelIds = new Set(BOL_CHANNELS.map(channel => channel.id));
     const normalizedIds = Array.from(new Set(nextChannelIds)).filter(channelId => validChannelIds.has(channelId));
@@ -1116,23 +794,6 @@ export default function BolManager() {
         packages: values.packages,
         boxes: values.boxes,
         pallets: values.pallets
-      };
-    });
-  };
-
-  const removeChannel = (channelId: string) => {
-    setForm(current => {
-      const currentIds = getNormalizedChannelIds(current);
-      const nextIds = currentIds.filter(id => id !== channelId);
-      const nextActiveChannelId = current.activeChannelId === channelId
-        ? nextIds[0] ?? ''
-        : getActiveChannelId({ ...current, channelIds: nextIds });
-
-      return {
-        ...current,
-        channelIds: nextIds,
-        channelId: nextIds[0],
-        activeChannelId: nextActiveChannelId
       };
     });
   };

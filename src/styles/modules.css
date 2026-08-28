@@ -10,63 +10,6 @@
   outline: none;
 }
 
-.t-acc-panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
-}
-
-.t-acc[data-open="true"] .t-acc-panel {
-  grid-template-rows: 1fr;
-  transition: grid-template-rows var(--acc-expand) var(--acc-ease);
-}
-
-.t-acc-panel-inner {
-  min-height: 0;
-  overflow: hidden;
-  opacity: 0;
-  filter: blur(2px);
-  transition:
-    opacity var(--acc-collapse) var(--acc-ease),
-    filter var(--acc-collapse) var(--acc-ease);
-}
-
-.t-acc[data-open="true"] .t-acc-panel-inner {
-  opacity: 1;
-  filter: blur(0);
-  transition:
-    opacity var(--acc-expand) var(--acc-ease),
-    filter var(--acc-expand) var(--acc-ease);
-}
-
-.t-acc-chevron {
-  display: inline-flex;
-  transform: scaleY(1);
-  transform-origin: center;
-  transition: transform var(--acc-chevron) var(--acc-ease);
-}
-
-.t-acc-chevron path {
-  vector-effect: non-scaling-stroke;
-}
-
-.t-acc[data-open="true"] .t-acc-chevron {
-  transform: scaleY(-1);
-}
-
-.t-acc-head {
-  width: 100%;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.t-acc-head:focus-visible {
-  outline: 2px solid var(--primary-6);
-  outline-offset: -2px;
-}
-
 .cmhub-data-import-summary {
   display: flex;
   align-items: center;
@@ -568,21 +511,6 @@
   margin-bottom: 0;
 }
 
-.cmhub-intercept-page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--cmhub-space-4);
-}
-
-.cmhub-intercept-page-header h3.arco-typography {
-  margin: 0 0 var(--cmhub-space-1);
-}
-
-.cmhub-intercept-page-header .arco-typography {
-  margin: 0;
-}
-
 .cmhub-intercept-entry,
 .cmhub-intercept-list-card {
   border-color: var(--color-border-2);
@@ -783,11 +711,6 @@
   line-height: 1.1;
 }
 
-.cmhub-intercept-alert-description {
-  margin: var(--cmhub-space-3) auto 0;
-  color: color-mix(in srgb, var(--color-white) 88%, transparent);
-}
-
 .cmhub-intercept-alert-waybill {
   margin: var(--cmhub-space-5) 0;
   overflow-wrap: anywhere;
@@ -856,17 +779,6 @@
   min-width: 0;
   align-items: center;
   gap: var(--cmhub-space-4);
-}
-
-.cmhub-operating-title-mark {
-  display: grid;
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 14px;
-  background: var(--color-primary-light-1);
-  color: var(--primary-6);
 }
 
 .cmhub-operating-title h3.arco-typography {

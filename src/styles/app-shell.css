@@ -256,3 +256,42 @@
   .cmhub-page-heading .arco-tag { align-self: flex-start; }
   .cmhub-action-card { min-height: 200px; }
 }
+.cmhub-session-loading,
+.cmhub-login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--color-bg-1);
+}
+
+.cmhub-session-loading {
+  align-content: center;
+  gap: 14px;
+  color: var(--color-text-2);
+}
+
+.cmhub-login-card {
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  gap: 20px;
+  padding: 32px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 16px;
+  background: var(--color-bg-2);
+}
+
+.cmhub-login-card .arco-typography {
+  margin: 0;
+}
+
+.cmhub-login-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgb(var(--primary-6));
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+}

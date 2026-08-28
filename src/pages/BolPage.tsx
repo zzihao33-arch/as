@@ -1,7 +1,5 @@
-import { Card, Spin } from '@arco-design/web-react';
-import { lazy, Suspense } from 'react';
-
-const BolManager = lazy(() => import('../features/bol/BolManager'));
+import { Card } from '@arco-design/web-react';
+import BolManager from '../features/bol/BolManager';
 
 export default function BolPage() {
   return (
@@ -13,9 +11,7 @@ export default function BolPage() {
         </div>
       </div>
       <Card className="cmhub-module-frame">
-        <Suspense fallback={<div className="cmhub-module-loading"><Spin /> 正在加载 BOL 模块…</div>}>
-          <BolManager />
-        </Suspense>
+        <BolManager />
       </Card>
     </section>
   );

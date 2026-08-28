@@ -27,11 +27,19 @@ function PrintLogTable({ logs, latestLogId }: PrintLogTableProps) {
       title: '结果',
       dataIndex: 'status',
       width: 100,
-      render: (status: PrintLog['status']) => (
-        <Tag color={status === 'success' ? 'green' : 'red'}>
-          {status === 'success' ? '成功' : '失败'}
-        </Tag>
-      )
+      render: (_: unknown, record: PrintLog) => {
+        if (record.type === 'print' && record.status === 'success') {
+          return <Tag color="blue">已提交</Tag>;
+        }
+        if (record.type === 'print' && record.outcome === 'TIMEOUT') {
+          return <Tag color="orange">结果未知</Tag>;
+        }
+        return (
+          <Tag color={record.status === 'success' ? 'green' : 'red'}>
+            {record.status === 'success' ? '成功' : '失败'}
+          </Tag>
+        );
+      }
     }
   ], []);
 

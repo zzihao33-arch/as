@@ -1,6 +1,12 @@
 node_modules
 .figma/
 dist/
-server/temp/
-
+data/
 .vercel
+.codex/
+.cursor/
+cursor-install.log
+*.log
+.env
+.env.*
+!.env.example

@@ -22,7 +22,7 @@ const sendText = (res: any, statusCode: number, body: string) => {
 
 const isAllowedSameOriginRequest = (req: any) => {
   const origin = getHeader(req.headers.origin);
-  if (!origin) return true;
+  if (!origin) return false;
 
   const requestHost = getHeader(req.headers['x-forwarded-host']) || getHeader(req.headers.host);
   const configuredOrigins = (process.env.QZ_ALLOWED_ORIGINS || '')
@@ -48,16 +48,12 @@ const getRequestToSign = (req: any) => {
       const parsed = JSON.parse(req.body);
       return typeof parsed.request === 'string' ? parsed.request : '';
     } catch {
-      return req.body;
+      return '';
     }
   }
 
   if (req.body && typeof req.body.request === 'string') {
     return req.body.request;
-  }
-
-  if (typeof req.query?.request === 'string') {
-    return req.query.request;
   }
 
   return '';
@@ -76,8 +72,12 @@ export default function handler(req: any, res: any) {
   }
 
   const requestToSign = getRequestToSign(req);
-  if (!requestToSign) {
-    sendText(res, 400, '缺少需要签名的 QZ request。');
+  // PrintWorkspace configures qz-tray with SHA-512. qz-tray hashes its call
+  // payload before invoking the signature callback, so the server should only
+  // accept the corresponding 128-character hex digest rather than arbitrary
+  // text that could turn this endpoint into a general signing oracle.
+  if (!/^[a-f0-9]{128}$/i.test(requestToSign)) {
+    sendText(res, 400, 'QZ request 必须是 128 位 SHA-512 摘要。');
     return;
   }
 

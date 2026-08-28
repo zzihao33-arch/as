@@ -1,0 +1,32 @@
+{
+  "name": "@cmhub/cloud-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "test": "node scripts/runTests.mjs",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "create-client-key": "node dist/scripts/createClientKey.js",
+    "revoke-client-key": "node dist/scripts/revokeClientKey.js",
+    "create-warehouse-admin": "node dist/scripts/createWarehouseAdmin.js",
+    "generate-webhook-secret": "node dist/scripts/generateWebhookSecret.js",
+    "configure-client-callback": "node dist/scripts/configureClientCallback.js",
+    "disable-client-callback": "node dist/scripts/disableClientCallback.js",
+    "rotate-webhook-master-key": "node dist/scripts/rotateWebhookMasterKey.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "ioredis": "^5.6.1",
+    "mysql2": "^3.14.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}

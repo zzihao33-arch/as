@@ -131,7 +131,7 @@ const applyTemplateStyles = (workbookBytes: ArrayBuffer, totalRowNumber: number,
   const sheetPath = 'xl/worksheets/sheet1.xml';
   const sheet = strFromU8(archive[sheetPath]);
   archive['xl/styles.xml'] = strToU8(PAYROLL_TEMPLATE_STYLES);
-  archive[sheetPath] = strToU8(sheet.replace(/<c r="([A-Z]+)(\d+)"/g, (match, column: string, rawRow: string) => {
+  archive[sheetPath] = strToU8(sheet.replace(/<c r="([A-Z]+)(\d+)"/g, (_match, column: string, rawRow: string) => {
     const rowNumber = Number(rawRow);
     return `<c r="${column}${rawRow}" s="${getCellStyle(column, rowNumber, totalRowNumber, issueRows)}"`;
   }));

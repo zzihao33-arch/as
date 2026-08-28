@@ -1,8 +1,6 @@
-import { Button, Card, Result } from '@arco-design/web-react';
-import { ArrowRight, FileSpreadsheet } from 'lucide-react';
-import { lazy, Suspense } from 'react';
-
-const PayrollManager = lazy(() => import('../features/payroll/PayrollManager'));
+import { Card, Result } from '@arco-design/web-react';
+import { FileSpreadsheet } from 'lucide-react';
+import PayrollManager from '../features/payroll/PayrollManager';
 
 export default function PayrollPage() {
   return (
@@ -18,11 +16,7 @@ export default function PayrollPage() {
           icon={<FileSpreadsheet size={42} aria-hidden="true" />}
           title="打开考勤与薪酬计算"
           subTitle="系统会识别月度模板中的上下班时间和油补标记；所有计算都在本机浏览器中完成。"
-          extra={(
-            <Suspense fallback={<Button loading type="primary">加载计算模块</Button>}>
-              <PayrollManager />
-            </Suspense>
-          )}
+          extra={<PayrollManager />}
         />
       </Card>
     </section>

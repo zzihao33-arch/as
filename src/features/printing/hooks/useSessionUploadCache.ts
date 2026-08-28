@@ -157,19 +157,31 @@ const getAllPdfFiles = async (database: IDBDatabase) => {
   return records as StoredPdfFile[];
 };
 
-export const collectPdfFilesFromDirectory = async (directory: FileSystemDirectoryHandle) => {
+export const collectPdfFilesFromDirectory = async (directory: FileSystemDirectoryHandle, relativePath = directory.name) => {
   const files: Record<string, File> = {};
   const entries = directory as unknown as { values: () => AsyncIterable<FileSystemHandle> };
 
   for await (const entry of entries.values()) {
     if (entry.kind === 'directory') {
-      Object.assign(files, await collectPdfFilesFromDirectory(entry as FileSystemDirectoryHandle));
+      const nestedFiles = await collectPdfFilesFromDirectory(
+        entry as FileSystemDirectoryHandle,
+        `${relativePath}/${entry.name}`
+      );
+      for (const [key, file] of Object.entries(nestedFiles)) {
+        if (Object.hasOwn(files, key)) {
+          throw new Error(`文件夹中存在同名 PDF：${key}.pdf。为避免错打，请先重命名后再导入。`);
+        }
+        files[key] = file;
+      }
       continue;
     }
 
     const file = await (entry as FileSystemFileHandle).getFile();
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) continue;
     const key = file.name.replace(/\.[^/.]+$/, '');
+    if (Object.hasOwn(files, key)) {
+      throw new Error(`文件夹 ${relativePath} 中存在同名 PDF：${file.name}。为避免错打，请先重命名后再导入。`);
+    }
     files[key] = file;
   }
 

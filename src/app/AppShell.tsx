@@ -2,6 +2,7 @@ import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Select, Spin, Tooltip 
 import {
   BarChart3,
   LayoutDashboard,
+  LogOut,
   FilePlus2,
   Menu as MenuIcon,
   PackageSearch,
@@ -14,6 +15,7 @@ import {
 import { Suspense, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { type ThemeMode, useTheme } from './theme/ThemeProvider';
+import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 
 interface NavigationItem {
   key: string;
@@ -48,6 +50,7 @@ export function AppShell() {
     [location.pathname],
   );
   const { mode, setMode } = useTheme();
+  const warehouseSession = useWarehouseSession();
 
   const groupedNavigation = useMemo(() => {
     return navigationItems.reduce<Record<string, NavigationItem[]>>((groups, item) => {
@@ -94,9 +97,9 @@ export function AppShell() {
           ))}
         </nav>
         <div className="cmhub-sider-footer">
-          <Badge status="success" text="本机工作台" />
-          <span>QZ 打印通过当前电脑执行</span>
-          <small>数据仅保存在当前浏览器；清理缓存会影响历史与草稿。</small>
+          <Badge status="success" text={warehouseSession.session?.warehouseName ?? '仓库工作台'} />
+          <span>云端同步 · QZ 本机打印</span>
+          <small>面单按仓库权限同步至当前浏览器；上游密钥不会进入本机。</small>
         </div>
       </Layout.Sider>
 
@@ -129,10 +132,13 @@ export function AppShell() {
               ]}
               onChange={(value) => setMode(value as ThemeMode)}
             />
-            <Tooltip content="当前浏览器与本机服务会话">
-              <span className="cmhub-online-status"><i /> 本机模式</span>
+            <Tooltip content={`${warehouseSession.session?.warehouseName ?? ''} · ${warehouseSession.workstation?.displayName ?? ''}`}>
+              <span className="cmhub-online-status"><i /> 云端已连接</span>
             </Tooltip>
-            <Avatar size={30} className="cmhub-user-avatar">C</Avatar>
+            <Avatar size={30} className="cmhub-user-avatar">{warehouseSession.session?.userName.slice(0, 1) ?? 'C'}</Avatar>
+            <Tooltip content="退出仓库账号">
+              <Button aria-label="退出仓库账号" type="text" shape="circle" icon={<LogOut size={17} />} onClick={() => void warehouseSession.logout()} />
+            </Tooltip>
           </div>
         </header>
 
