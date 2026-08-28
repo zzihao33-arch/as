@@ -65,6 +65,7 @@ jobs:
           fi
 
           ssh \
+            -vvv \
             -i "$HOME/.ssh/cmhub_deploy" \
             -p "$CMHUB_DEPLOY_PORT" \
             -o BatchMode=yes \
