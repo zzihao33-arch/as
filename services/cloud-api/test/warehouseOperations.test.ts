@@ -10,12 +10,21 @@ const session: WarehouseSession = {
   sessionId: '00000000-0000-4000-8000-000000000001',
   userId: '00000000-0000-4000-8000-000000000002',
   userName: 'Operator',
+  loginName: 'operator',
   email: 'operator@example.com',
+  phone: null,
+  platformRole: null,
+  passwordState: 'ACTIVE',
   warehouseId: '00000000-0000-4000-8000-000000000003',
   warehouseCode: 'jfk',
   warehouseName: 'JFK',
   membershipId: '00000000-0000-4000-8000-000000000004',
-  role: 'OPERATOR',
+  roleId: '00000000-0000-4000-8000-000000000005',
+  roleName: '仓库操作员',
+  permissions: ['scan.use', 'print.submit'],
+  workspaces: [],
+  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  absoluteExpiresAt: new Date(Date.now() + 120_000).toISOString(),
 };
 const storage = {} as LabelStorage;
 
@@ -34,6 +43,27 @@ describe('warehouse delivery cursor', () => {
       () => decodeDeliveryCursor('not-json'),
       (error: unknown) => error instanceof ApiError && error.status === 400,
     );
+  });
+});
+
+describe('global warehouse visibility', () => {
+  it('lists shipments from every upstream client without a warehouse-client join', async () => {
+    let statement = '';
+    let parameters: unknown[] = [];
+    const mysql = {
+      execute: async (sql: string, values: unknown[]) => {
+        statement = sql;
+        parameters = values;
+        return [[]];
+      },
+    } as unknown as Pool;
+    const outboundWebhooks = { enqueuePrintAttempt: async () => 'unused' };
+
+    const result = await createWarehouseOperations({ mysql, storage, outboundWebhooks }).listShipments(session, {});
+
+    assert.deepEqual(result.shipments, []);
+    assert.doesNotMatch(statement, /warehouse_client_access/);
+    assert.deepEqual(parameters, [201]);
   });
 });
 
@@ -75,6 +105,7 @@ describe('warehouse print attempts', () => {
     assert.equal(committed, true);
     assert.ok(statements.some(sql => sql.includes('INSERT IGNORE INTO print_attempts')));
     assert.ok(statements.some(sql => sql.includes('INSERT INTO shipment_events')));
+    assert.equal(statements.some(sql => sql.includes('warehouse_client_access')), false);
     assert.equal(enqueued, true);
     assert.equal(statements.some(sql => /UPDATE\s+shipments/i.test(sql)), false);
   });

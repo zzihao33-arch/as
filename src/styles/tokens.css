@@ -1,6 +1,21 @@
 :root {
   color-scheme: light;
 
+  --cmhub-font-sans: "Geist", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --cmhub-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --cmhub-canvas-mist: #f8fafc;
+  --cmhub-pure-surface: #ffffff;
+  --cmhub-charcoal-ink: #172033;
+  --cmhub-slate-text: #475569;
+  --cmhub-muted-text: #64748b;
+  --cmhub-whisper-border: #e2e8f0;
+  --cmhub-soft-blue: #eff6ff;
+  --cmhub-brand-blue: #2563eb;
+  --cmhub-brand-blue-strong: #1d4ed8;
+  --cmhub-success-green: #16a34a;
+  --cmhub-warning-amber: #d97706;
+  --cmhub-danger-red: #dc2626;
+
   --cmhub-primary: var(--primary-6);
   --cmhub-primary-hover: var(--primary-7);
   --cmhub-primary-subtle: var(--color-primary-light-1);
@@ -20,8 +35,10 @@
   --cmhub-document-ink: var(--color-neutral-10);
   --cmhub-shadow-elevated: 0 14px 36px color-mix(in srgb, var(--color-text-1) 18%, transparent);
   --cmhub-shadow-drawer: 12px 0 32px color-mix(in srgb, var(--color-text-1) 24%, transparent);
-  --cmhub-radius-lg: 16px;
-  --cmhub-radius-md: 12px;
+  --cmhub-radius-xl: 16px;
+  --cmhub-radius-lg: 12px;
+  --cmhub-radius-md: 8px;
+  --cmhub-radius-sm: 6px;
   --cmhub-space-1: 4px;
   --cmhub-space-2: 8px;
   --cmhub-space-3: 12px;

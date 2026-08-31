@@ -12,7 +12,6 @@ export default function AppRoot() {
         <WarehouseSessionProvider>
           <ConfigProvider
             componentConfig={{
-              Button: { shape: 'round' },
               Card: { bordered: false },
             }}
           >

@@ -11,21 +11,21 @@ function option(name: string): string | undefined {
 async function main(): Promise<void> {
   const warehouseCode = option('--warehouse-code')?.toLowerCase();
   const warehouseName = option('--warehouse-name');
-  const email = normalizeWarehouseEmail(option('--email') ?? '');
+  const loginName = option('--login-name')?.toLowerCase();
+  const emailOption = option('--email');
+  const email = emailOption ? normalizeWarehouseEmail(emailOption) : null;
   const displayName = option('--display-name');
-  const clientCodes = [...new Set((option('--client-codes') ?? '').split(',').map(value => value.trim()).filter(Boolean))];
   const password = process.env.CMHUB_BOOTSTRAP_PASSWORD ?? '';
-  if (!warehouseCode || !/^[a-z0-9_-]{2,64}$/.test(warehouseCode) || !warehouseName || warehouseName.length > 128) {
-    throw new Error('Usage: CMHUB_BOOTSTRAP_PASSWORD=<secret> npm run create-warehouse-admin -- --warehouse-code <code> --warehouse-name <name> --email <email> --display-name <name> --client-codes <code,code>');
+  if (!warehouseCode || !/^[a-z0-9_-]{2,64}$/.test(warehouseCode) || !warehouseName || warehouseName.length > 128
+      || !loginName || !/^[a-z0-9][a-z0-9._-]{2,49}$/.test(loginName)) {
+    throw new Error('Usage: CMHUB_BOOTSTRAP_PASSWORD=<secret> npm run create-warehouse-admin -- --warehouse-code <code> --warehouse-name <name> --login-name <login> [--email <email>] --display-name <name>');
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !displayName || displayName.length > 128) {
-    throw new Error('A valid --email and --display-name are required.');
+  if ((email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) || !displayName || displayName.length > 128) {
+    throw new Error('A valid optional --email and required --display-name are required.');
   }
   if (password.length < 16 || password.length > 256) {
     throw new Error('CMHUB_BOOTSTRAP_PASSWORD must contain 16 to 256 characters. It is intentionally not accepted as a command-line argument.');
   }
-  if (clientCodes.length === 0) throw new Error('--client-codes must grant at least one existing upstream client.');
-
   const passwordHash = await hashWarehousePassword(password);
   const connection = await mysql.getConnection();
   try {
@@ -41,35 +41,25 @@ async function main(): Promise<void> {
       );
     }
     const [existingUsers] = await connection.execute<(RowDataPacket & { id: string })[]>(
-      `SELECT id FROM warehouse_users WHERE email = ? LIMIT 1 FOR UPDATE`, [email],
+      `SELECT id FROM warehouse_users WHERE login_name = ? LIMIT 1 FOR UPDATE`, [loginName],
     );
-    if (existingUsers[0]) throw new Error('This warehouse user already exists. Use a future account-management command instead of resetting a password through bootstrap.');
+    if (existingUsers[0]) throw new Error('This login name already exists. Use account management instead of resetting a password through bootstrap.');
     const userId = randomUUID();
     await connection.execute(
-      `INSERT INTO warehouse_users (id, email, display_name, password_hash) VALUES (?, ?, ?, ?)`,
-      [userId, email, displayName, passwordHash],
+      `INSERT INTO warehouse_users
+         (id, login_name, email, display_name, password_hash, platform_role, password_state, password_changed_at)
+       VALUES (?, ?, ?, ?, ?, 'SYSTEM_ADMIN', 'ACTIVE', CURRENT_TIMESTAMP(3))`,
+      [userId, loginName, email, displayName, passwordHash],
     );
     await connection.execute(
-      `INSERT INTO warehouse_memberships (id, warehouse_id, user_id, role) VALUES (?, ?, ?, 'ADMIN')`,
+      `INSERT INTO warehouse_memberships (id, warehouse_id, user_id, role, role_id)
+       VALUES (?, ?, ?, 'ADMIN', '00000000-0000-4000-8000-000000000102')`,
       [randomUUID(), warehouseId, userId],
     );
-    const [clientRows] = await connection.query<(RowDataPacket & { id: string; client_code: string })[]>(
-      `SELECT id, client_code FROM clients WHERE client_code IN (?) AND client_status = 'ACTIVE' FOR UPDATE`,
-      [clientCodes],
-    );
-    const foundCodes = new Set(clientRows.map(row => row.client_code));
-    const missingCodes = clientCodes.filter(code => !foundCodes.has(code));
-    if (missingCodes.length > 0) throw new Error(`Unknown or disabled client codes: ${missingCodes.join(', ')}`);
-    for (const client of clientRows) {
-      await connection.execute(
-        `INSERT INTO warehouse_client_access (id, warehouse_id, client_id) VALUES (?, ?, ?)`,
-        [randomUUID(), warehouseId, client.id],
-      );
-    }
     await connection.commit();
-    console.log(`Warehouse administrator created: ${email}`);
+    console.log(`System administrator created: ${loginName}`);
     console.log(`Warehouse: ${warehouseCode} (${warehouseName})`);
-    console.log(`Granted clients: ${clientCodes.join(', ')}`);
+    console.log('Shipment visibility: all upstream clients');
   } catch (error) {
     await connection.rollback().catch(() => undefined);
     throw error;

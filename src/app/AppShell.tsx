@@ -1,14 +1,16 @@
-import { Avatar, Badge, Breadcrumb, Button, Layout, Menu, Select, Spin, Tooltip } from '@arco-design/web-react';
+import { Avatar, Breadcrumb, Button, Dropdown, Form, Input, Layout, Menu, Message, Modal, Select, Spin, Tooltip } from '@arco-design/web-react';
 import {
   BarChart3,
   LayoutDashboard,
   LogOut,
-  FilePlus2,
+  KeyRound,
   Menu as MenuIcon,
   PackageSearch,
+  Plane,
   Printer,
   Settings2,
-  ShieldAlert,
+  ShieldCheck,
+  Users,
   Volume2,
   X,
 } from 'lucide-react';
@@ -16,48 +18,64 @@ import { Suspense, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { type ThemeMode, useTheme } from './theme/ThemeProvider';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
+import { WAREHOUSE_MOCK_API_ENABLED } from '../features/session/warehouseApi';
 
 interface NavigationItem {
   key: string;
   label: string;
   group: string;
   icon: typeof PackageSearch;
+  permissions: string[];
 }
 
 const navigationItems: NavigationItem[] = [
-  { key: '/dashboard', label: '工作概览', group: '运营中心', icon: LayoutDashboard },
-  { key: '/operations/scan-print', label: '扫码打单', group: '运营中心', icon: PackageSearch },
-  { key: '/operations/intercepts', label: '拦截名单', group: '运营中心', icon: ShieldAlert },
-  { key: '/bol/records', label: 'BOL管理', group: '单据与结算', icon: FilePlus2 },
-  { key: '/payroll', label: '考勤薪酬', group: '单据与结算', icon: BarChart3 },
-  { key: '/settings/printer', label: '打印机', group: '系统设置', icon: Printer },
-  { key: '/settings/audio', label: '音效设置', group: '系统设置', icon: Volume2 },
-  { key: '/settings/system', label: '系统状态', group: '系统设置', icon: Settings2 },
+  { key: '/dashboard', label: '工作概览', group: '运营中心', icon: LayoutDashboard, permissions: ['dashboard.view'] },
+  { key: '/operations/scan-print', label: '扫码打单', group: '运营中心', icon: PackageSearch, permissions: ['scan.use'] },
+  { key: '/air-pickups', label: '空提管理', group: '单据与结算', icon: Plane, permissions: ['air_pickups.view', 'bol.view'] },
+  { key: '/payroll', label: '考勤薪酬', group: '单据与结算', icon: BarChart3, permissions: [
+    'attendance.punch', 'attendance.self_view', 'attendance.appeal', 'attendance.team_view',
+    'attendance.review', 'attendance.locations.manage', 'attendance.rules.manage', 'payroll.view',
+  ] },
+  { key: '/admin/accounts', label: '账户管理', group: '管理中心', icon: Users, permissions: ['accounts.view'] },
+  { key: '/admin/roles', label: '角色配置', group: '管理中心', icon: ShieldCheck, permissions: ['roles.view'] },
+  { key: '/settings/printer', label: '打印机', group: '系统设置', icon: Printer, permissions: ['settings.printer'] },
+  { key: '/settings/audio', label: '音效设置', group: '系统设置', icon: Volume2, permissions: ['settings.audio'] },
+  { key: '/settings/system', label: '系统状态', group: '系统设置', icon: Settings2, permissions: ['system_status.view'] },
 ];
 
-function getActiveItem(pathname: string) {
-  return [...navigationItems]
+function getActiveItem(pathname: string, items: NavigationItem[]) {
+  return [...items]
     .sort((a, b) => b.key.length - a.key.length)
-    .find((item) => pathname === item.key || pathname.startsWith(`${item.key}/`)) ?? navigationItems[0];
+    .find((item) => pathname === item.key || pathname.startsWith(`${item.key}/`)) ?? items[0];
 }
 
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
-  const activeItem = useMemo(
-    () => getActiveItem(location.pathname),
-    [location.pathname],
-  );
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordForm] = Form.useForm();
   const { mode, setMode } = useTheme();
   const warehouseSession = useWarehouseSession();
+  const visibleNavigation = useMemo(() => navigationItems
+    .filter(item => item.permissions.some(permission => warehouseSession.hasPermission(permission)))
+    .map(item => item.key === '/air-pickups'
+      && !warehouseSession.hasPermission('air_pickups.view')
+      && warehouseSession.hasPermission('bol.view')
+      ? { ...item, key: '/air-pickups/handover-documents' }
+      : item), [warehouseSession]);
+  const activeItem = useMemo(
+    () => getActiveItem(location.pathname, visibleNavigation),
+    [location.pathname, visibleNavigation],
+  );
 
   const groupedNavigation = useMemo(() => {
-    return navigationItems.reduce<Record<string, NavigationItem[]>>((groups, item) => {
+    return visibleNavigation.reduce<Record<string, NavigationItem[]>>((groups, item) => {
       (groups[item.group] ??= []).push(item);
       return groups;
     }, {});
-  }, []);
+  }, [visibleNavigation]);
 
   const openRoute = (path: string) => {
     setMobileNavigationOpen(false);
@@ -78,7 +96,7 @@ export function AppShell() {
             <section className="cmhub-nav-group" key={group} aria-label={group}>
               <p>{group}</p>
               <Menu
-                selectedKeys={[activeItem.key]}
+                selectedKeys={activeItem ? [activeItem.key] : []}
                 onClickMenuItem={openRoute}
                 collapse={false}
                 className="cmhub-menu"
@@ -97,7 +115,7 @@ export function AppShell() {
           ))}
         </nav>
         <div className="cmhub-sider-footer">
-          <Badge status="success" text={warehouseSession.session?.warehouseName ?? '仓库工作台'} />
+          <span className="cmhub-workspace-status"><i /> {warehouseSession.session?.warehouseName ?? '仓库工作台'}</span>
           <span>云端同步 · QZ 本机打印</span>
           <small>面单按仓库权限同步至当前浏览器；上游密钥不会进入本机。</small>
         </div>
@@ -115,8 +133,8 @@ export function AppShell() {
             />
             <Breadcrumb>
               <Breadcrumb.Item>CM-HUB</Breadcrumb.Item>
-              <Breadcrumb.Item>{activeItem.group}</Breadcrumb.Item>
-              <Breadcrumb.Item>{activeItem.label}</Breadcrumb.Item>
+              <Breadcrumb.Item>{activeItem?.group ?? 'CM-HUB'}</Breadcrumb.Item>
+              <Breadcrumb.Item>{activeItem?.label ?? '工作台'}</Breadcrumb.Item>
             </Breadcrumb>
           </div>
           <div className="cmhub-topbar-actions">
@@ -133,19 +151,42 @@ export function AppShell() {
               onChange={(value) => setMode(value as ThemeMode)}
             />
             <Tooltip content={`${warehouseSession.session?.warehouseName ?? ''} · ${warehouseSession.workstation?.displayName ?? ''}`}>
-              <span className="cmhub-online-status"><i /> 云端已连接</span>
+              <span className="cmhub-online-status"><i /> {WAREHOUSE_MOCK_API_ENABLED ? '本地 Mock' : '云端已连接'}</span>
             </Tooltip>
-            <Avatar size={30} className="cmhub-user-avatar">{warehouseSession.session?.userName.slice(0, 1) ?? 'C'}</Avatar>
-            <Tooltip content="退出仓库账号">
-              <Button aria-label="退出仓库账号" type="text" shape="circle" icon={<LogOut size={17} />} onClick={() => void warehouseSession.logout()} />
-            </Tooltip>
+            <Dropdown
+              trigger="click"
+              droplist={(
+                <Menu onClickMenuItem={key => {
+                  if (key === 'password') setPasswordOpen(true);
+                  if (key === 'logout') {
+                    Modal.confirm({
+                      title: '退出当前账号？',
+                      content: '请确认本机打印任务已完成。退出后会清除登录凭证。',
+                      okText: '退出登录',
+                      onOk: () => warehouseSession.logout(),
+                    });
+                  }
+                }}>
+                  <Menu.Item key="password"><KeyRound size={15} />修改密码</Menu.Item>
+                  <Menu.Item key="logout"><LogOut size={15} />退出登录</Menu.Item>
+                </Menu>
+              )}
+            >
+              <button className="cmhub-user-menu-trigger" aria-label="打开账户菜单">
+                <Avatar size={30} className="cmhub-user-avatar">{warehouseSession.session?.userName.slice(0, 1) ?? 'C'}</Avatar>
+                <span>
+                  <strong>{warehouseSession.session?.userName ?? '仓库用户'}</strong>
+                  <small>{warehouseSession.session?.platformRole === 'SYSTEM_ADMIN' ? '系统管理员' : warehouseSession.session?.roleName ?? '未分配角色'}</small>
+                </span>
+              </button>
+            </Dropdown>
           </div>
         </header>
 
         <Layout.Content className="cmhub-content">
           {/*
             THESIS: A focused warehouse workbench, not a generic analytics dashboard.
-            OWN-WORLD: Arco structure with CM-HUB green only for operational state and primary action.
+            OWN-WORLD: Arco structure with neutral surfaces and CM-HUB blue for active operational state.
             STORY: Operators move from current status to a focused task without losing access to print controls.
             FIRST VIEWPORT: Persistent navigation, compact context bar, then task content at full working width.
             FORM: Arco enterprise application shell; implementation phase 1, design-context unavailable until a Figma layer is selected.
@@ -178,7 +219,7 @@ export function AppShell() {
                 <p>{group}</p>
                 {items.map((item) => {
                   const Icon = item.icon;
-                  const selected = activeItem.key === item.key;
+                  const selected = activeItem?.key === item.key;
                   return (
                     <button className={selected ? 'is-active' : ''} key={item.key} onClick={() => openRoute(item.key)}>
                       <Icon size={17} aria-hidden="true" />
@@ -191,6 +232,45 @@ export function AppShell() {
           </aside>
         </div>
       )}
+
+      <Modal
+        title="修改密码"
+        visible={passwordOpen}
+        confirmLoading={passwordSaving}
+        okText="保存新密码"
+        onCancel={() => { setPasswordOpen(false); passwordForm.resetFields(); }}
+        onOk={() => passwordForm.submit()}
+        unmountOnExit
+      >
+        <Form form={passwordForm} layout="vertical" onSubmit={async values => {
+          const input = values as { currentPassword: string; newPassword: string; confirmPassword: string };
+          if (input.newPassword !== input.confirmPassword) {
+            Message.error('两次输入的新密码不一致');
+            return;
+          }
+          setPasswordSaving(true);
+          try {
+            await warehouseSession.changePassword(input);
+            setPasswordOpen(false);
+            passwordForm.resetFields();
+            Message.success('密码已更新');
+          } catch (cause) {
+            Message.error(cause instanceof Error ? cause.message : '密码修改失败。');
+          } finally {
+            setPasswordSaving(false);
+          }
+        }}>
+          <Form.Item label="当前密码" field="currentPassword" rules={[{ required: true, message: '请输入当前密码' }]}>
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item label="新密码" field="newPassword" rules={[{ required: true, minLength: 16, message: '新密码至少 16 个字符' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item label="确认新密码" field="confirmPassword" rules={[{ required: true, message: '请再次输入新密码' }]}>
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Layout>
   );
 }

@@ -55,6 +55,38 @@ describe('outbound webhook delivery policy', () => {
 });
 
 describe('outbound webhook outbox', () => {
+  it('lets a warehouse admin inspect events for every upstream client', async () => {
+    let statement = '';
+    let parameters: unknown[] = [];
+    const mysql = {
+      query: async (sql: string, values: unknown[]) => {
+        statement = sql;
+        parameters = values;
+        return [[]];
+      },
+    } as unknown as Pool;
+    const module = createOutboundWebhooks({
+      mysql,
+      options: {
+        enabled: false,
+        masterKeys: new Map(),
+        encryptionKeyVersion: 'v1',
+        environment: 'test',
+        pollIntervalMs: 5000,
+        batchSize: 20,
+        leaseSeconds: 60,
+        timeoutMs: 10000,
+        maxAttempts: 12,
+      },
+    });
+
+    const events = await module.listForWarehouse({ warehouseId: 'warehouse-1' } as never, {});
+
+    assert.deepEqual(events, []);
+    assert.doesNotMatch(statement, /warehouse_client_access/);
+    assert.deepEqual(parameters, [null, null]);
+  });
+
   it('persists an exact, minimal event even before a callback is configured', async () => {
     let insertParameters: unknown[] = [];
     const statements: string[] = [];

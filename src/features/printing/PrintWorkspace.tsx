@@ -14,14 +14,15 @@ import {
   Tooltip,
   Typography
 } from '@arco-design/web-react';
-import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert } from 'lucide-react';
+import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, ArrowRight, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { unzip } from 'fflate';
 import QzSetupGuide from '../settings/QzSetupGuide';
 import InterceptAlertOverlay from '../intercepts/InterceptAlertOverlay';
-import { type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
+import InterceptListPage from '../intercepts/InterceptListPage';
+import { normalizeInterceptWaybill, type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
 import PrintLogTable from './PrintLogTable';
 import { usePrintLogs, MAX_PRINT_LOG_ENTRIES } from './hooks/usePrintLogs';
 import { useScanFeedback } from './hooks/useScanFeedback';
@@ -39,6 +40,21 @@ import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType
 import { readCloudLabelFile, useWarehousePrintLibrary, type CloudPrintTarget } from './warehousePrintLibrary';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
+import { useSharedWorkPrintAudit } from './sharedWorkPrintAudit';
+import {
+  claimSharedWorkBatchItem,
+  checkGlobalIntercepts,
+  closeSharedWorkBatch,
+  createSharedWorkBatch,
+  downloadWarehouseLabel,
+  listSharedWorkBatches,
+  publishSharedWorkBatch,
+  uploadSharedWorkBatchLabel,
+  upsertSharedWorkBatchItems,
+  type SharedWorkBatch,
+  WAREHOUSE_MOCK_API_ENABLED,
+  WarehouseApiError
+} from '../session/warehouseApi';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -218,10 +234,11 @@ interface ActiveAudio {
 
 export default function App() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { session: activeWarehouse, workstation } = useWarehouseSession();
+  const warehouseSession = useWarehouseSession();
+  const { session: activeWarehouse, workstation } = warehouseSession;
   const cloudLibrary = useWarehousePrintLibrary();
   const cloudAudit = useWarehousePrintAudit(workstation?.id);
+  const sharedAudit = useSharedWorkPrintAudit(workstation?.id);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pdfFiles, setPdfFiles] = useState<Record<string, File>>({});
   const [scanInput, setScanInput] = useState('');
@@ -236,20 +253,37 @@ export default function App() {
     saveExcelMapping,
     savePdfFiles
   } = useSessionUploadCache();
-  const { findRule: findInterceptRule, storageStatus: interceptStorageStatus } = useInterceptRules();
+  const {
+    findRule: findInterceptRule,
+    storageStatus: interceptStorageStatus,
+    lastSyncedAt: interceptLastSyncedAt,
+    sync: syncInterceptRules,
+  } = useInterceptRules();
   const [activeTab, setActiveTab] = useState<PrintLogTab>('print');
   const [logPage, setLogPage] = useState(1);
   const logQuery = useMemo(
     () => paginatePrintLogs(logs, activeTab, logPage, LOGS_PER_PAGE),
     [activeTab, logPage, logs]
   );
+  const latestPrintLog = useMemo(() => logs.find(log => log.type === 'print') ?? null, [logs]);
   const [stats, setStats] = useState({ excelCount: 0, pdfCount: 0, printedCount: 0 });
   const [isDataImportOpen, setIsDataImportOpen] = useState(false);
   const [isQzGuideOpen, setIsQzGuideOpen] = useState(false);
+  const [isInterceptManagerOpen, setIsInterceptManagerOpen] = useState(() => location.hash === '#intercepts');
   const [excelFile, setExcelFile] = useState<FileInfo | null>(null);
   const [pdfFolder, setPdfFolder] = useState<FileInfo | null>(null);
   const [excelSourceCount, setExcelSourceCount] = useState(0);
   const [pdfSourceCount, setPdfSourceCount] = useState(0);
+  const [sharedBatchId, setSharedBatchId] = useState('');
+  const [sharedBatchStatus, setSharedBatchStatus] = useState<'idle' | 'syncing' | 'draft' | 'active' | 'error'>('idle');
+  const [sharedBatchMessage, setSharedBatchMessage] = useState('');
+  const [activeSharedBatches, setActiveSharedBatches] = useState<SharedWorkBatch[]>([]);
+  const [closingSharedBatchId, setClosingSharedBatchId] = useState('');
+  const [emergencyOfflineEnabled, setEmergencyOfflineEnabled] = useState(false);
+  const sharedBatchIdRef = useRef('');
+  const sharedBatchPromiseRef = useRef<Promise<string> | null>(null);
+  const sharedUploadedItemsRef = useRef(new Set<string>());
+  const sharedUploadedLabelsRef = useRef(new Set<string>());
   const [activeImportDropTarget, setActiveImportDropTarget] = useState<ImportDropTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<SettingsPanel>('printer');
@@ -340,6 +374,179 @@ export default function App() {
     };
   }, [mapping, pdfFiles]);
 
+  const canCreateSharedBatch = warehouseSession.hasPermission('batches.create');
+  const canPublishSharedBatch = warehouseSession.hasPermission('batches.publish');
+  const canCloseSharedBatch = warehouseSession.hasPermission('batches.close');
+  const canEnableEmergencyOffline = warehouseSession.hasPermission('offline_mode.enable');
+  const canViewIntercepts = warehouseSession.hasPermission('intercepts.view');
+
+  useEffect(() => {
+    if (canViewIntercepts && location.hash === '#intercepts') setIsInterceptManagerOpen(true);
+  }, [canViewIntercepts, location.hash]);
+  const sharedDraftStorageKey = activeWarehouse?.userId && activeWarehouse.warehouseId
+    ? `cmhub-shared-draft-v1:${activeWarehouse.userId}:${activeWarehouse.warehouseId}`
+    : '';
+
+  const refreshActiveSharedBatches = useCallback(async () => {
+    if (!canCloseSharedBatch) return;
+    try {
+      setActiveSharedBatches(await listSharedWorkBatches('ACTIVE'));
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '读取活动共享批次失败。');
+    }
+  }, [canCloseSharedBatch]);
+
+  useEffect(() => {
+    if (isDataImportOpen && canCloseSharedBatch) void refreshActiveSharedBatches();
+  }, [canCloseSharedBatch, isDataImportOpen, refreshActiveSharedBatches]);
+
+  const ensureSharedDraft = async () => {
+    if (!canCreateSharedBatch) throw new Error('当前角色没有创建共享批次的权限。');
+    if (sharedBatchIdRef.current) return sharedBatchIdRef.current;
+    if (sharedBatchPromiseRef.current) return sharedBatchPromiseRef.current;
+    const pending = (async () => {
+      const storedBatchId = sharedDraftStorageKey ? sessionStorage.getItem(sharedDraftStorageKey) : null;
+      const drafts = storedBatchId ? await listSharedWorkBatches('DRAFT') : [];
+      const batch = drafts.find(candidate => candidate.id === storedBatchId)
+        ?? await createSharedWorkBatch(`扫码批次 ${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+      sharedBatchIdRef.current = batch.id;
+      if (sharedDraftStorageKey) sessionStorage.setItem(sharedDraftStorageKey, batch.id);
+      setSharedBatchId(batch.id);
+      setSharedBatchStatus('draft');
+      return batch.id;
+    })();
+    sharedBatchPromiseRef.current = pending;
+    try {
+      return await pending;
+    } finally {
+      sharedBatchPromiseRef.current = null;
+    }
+  };
+
+  const syncSharedMappings = async (nextMapping: Record<string, string>) => {
+    if (!canCreateSharedBatch || Object.keys(nextMapping).length === 0) return true;
+    setSharedBatchStatus('syncing');
+    setSharedBatchMessage('正在同步 Excel 映射到共享批次…');
+    try {
+      const batchId = await ensureSharedDraft();
+      const entries = Object.entries(nextMapping).filter(([firstLeg]) => !sharedUploadedItemsRef.current.has(normalizeBarcode(firstLeg)));
+      for (let start = 0; start < entries.length; start += 1_000) {
+        const chunk = entries.slice(start, start + 1_000);
+        await upsertSharedWorkBatchItems(batchId, chunk.map(([firstLegTrackingNo, courierTrackingNo]) => ({
+          firstLegTrackingNo,
+          courierTrackingNo,
+        })));
+        chunk.forEach(([firstLeg]) => sharedUploadedItemsRef.current.add(normalizeBarcode(firstLeg)));
+        setSharedBatchMessage(`共享映射已同步 ${Math.min(start + chunk.length, entries.length).toLocaleString()} / ${entries.length.toLocaleString()} 条`);
+      }
+      setSharedBatchStatus('draft');
+      setSharedBatchMessage(`共享批次草稿已保存 ${Object.keys(nextMapping).length.toLocaleString()} 条映射`);
+      return true;
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享映射同步失败。');
+      return false;
+    }
+  };
+
+  const syncSharedLabels = async (nextMapping: Record<string, string>, nextPdfFiles: Record<string, File>) => {
+    if (!canCreateSharedBatch || Object.keys(nextMapping).length === 0 || Object.keys(nextPdfFiles).length === 0) return true;
+    setSharedBatchStatus('syncing');
+    setSharedBatchMessage('正在上传共享 PDF 面单…');
+    try {
+      const batchId = await ensureSharedDraft();
+      if (!await syncSharedMappings(nextMapping)) return false;
+      const searchIndex = createPdfSearchIndex(nextPdfFiles);
+      const matches = Object.entries(nextMapping).flatMap(([firstLeg, exchange]) => {
+        const normalized = normalizeBarcode(firstLeg);
+        if (sharedUploadedLabelsRef.current.has(normalized)) return [];
+        const match = findPdfMatch(searchIndex, [firstLeg, exchange]);
+        const file = match.key ? nextPdfFiles[match.key] : null;
+        return file && !match.ambiguous ? [{ firstLeg, normalized, file }] : [];
+      });
+      let nextIndex = 0;
+      let completed = 0;
+      const worker = async () => {
+        while (nextIndex < matches.length) {
+          const match = matches[nextIndex++];
+          await uploadSharedWorkBatchLabel(batchId, match.firstLeg, match.file);
+          sharedUploadedLabelsRef.current.add(match.normalized);
+          completed += 1;
+          if (completed % 25 === 0 || completed === matches.length) {
+            setSharedBatchMessage(`共享面单已上传 ${completed.toLocaleString()} / ${matches.length.toLocaleString()} 个`);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, matches.length) }, () => worker()));
+      setSharedBatchStatus('draft');
+      setSharedBatchMessage(`共享批次草稿已就绪：${sharedUploadedLabelsRef.current.size.toLocaleString()} 个 PDF`);
+      return true;
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享面单上传失败。');
+      return false;
+    }
+  };
+
+  const publishCurrentSharedBatch = async () => {
+    if (!canPublishSharedBatch) return;
+    setSharedBatchStatus('syncing');
+    setSharedBatchMessage('正在完成共享数据同步…');
+    try {
+      if (!await syncSharedMappings(mappingRef.current) || !await syncSharedLabels(mappingRef.current, pdfFilesRef.current)) {
+        throw new Error('共享数据尚未完整同步，已取消发布。');
+      }
+      const batchId = sharedBatchIdRef.current || await ensureSharedDraft();
+      await publishSharedWorkBatch(batchId);
+      setSharedBatchStatus('active');
+      setSharedBatchMessage('共享批次已发布；其他工作站现在无需重复导入即可扫码。');
+      sharedBatchIdRef.current = '';
+      if (sharedDraftStorageKey) sessionStorage.removeItem(sharedDraftStorageKey);
+      sharedUploadedItemsRef.current = new Set();
+      sharedUploadedLabelsRef.current = new Set();
+      await refreshActiveSharedBatches();
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次发布失败。');
+    }
+  };
+
+  const closeCurrentSharedBatch = async () => {
+    if (!canCloseSharedBatch || !sharedBatchId || sharedBatchStatus !== 'active') return;
+    setSharedBatchStatus('syncing');
+    setSharedBatchMessage('正在关闭共享批次…');
+    try {
+      await closeSharedWorkBatch(sharedBatchId);
+      setSharedBatchId('');
+      setSharedBatchStatus('idle');
+      setSharedBatchMessage('共享批次已关闭，该批次不再参与新的扫码匹配。');
+      await refreshActiveSharedBatches();
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次关闭失败。');
+    }
+  };
+
+  const closeListedSharedBatch = async (batch: SharedWorkBatch) => {
+    if (!canCloseSharedBatch || closingSharedBatchId) return;
+    setClosingSharedBatchId(batch.id);
+    try {
+      await closeSharedWorkBatch(batch.id);
+      if (batch.id === sharedBatchId) {
+        setSharedBatchId('');
+        setSharedBatchStatus('idle');
+      }
+      setSharedBatchMessage(`共享批次“${batch.name}”已关闭。`);
+      await refreshActiveSharedBatches();
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '关闭共享批次失败。');
+    } finally {
+      setClosingSharedBatchId('');
+    }
+  };
+
   const commitExcelImport = (
     importedMapping: Record<string, string>,
     importedSourceCount: number,
@@ -363,6 +570,7 @@ export default function App() {
       count: Object.keys(nextMapping).length,
       sourceCount: nextSourceCount
     });
+    void syncSharedMappings(nextMapping).then(ok => ok && syncSharedLabels(nextMapping, pdfFilesRef.current));
   };
 
   const ensureMappingWorker = () => {
@@ -588,6 +796,10 @@ export default function App() {
   };
 
   const printPdfWithQz = async (pdfBase64: string) => {
+    if (WAREHOUSE_MOCK_API_ENABLED) {
+      await new Promise(resolve => window.setTimeout(resolve, 180));
+      return { message: '本地 Mock：已模拟提交打印任务', printerName: 'CM-HUB Mock Printer' };
+    }
     const securityStatus = await ensureQzConnected();
     const printerName = await getSelectedQzPrinterName();
     const config = qz.configs.create(printerName, {
@@ -811,6 +1023,7 @@ export default function App() {
   };
 
   const openDataImport = () => {
+    if (!canCreateSharedBatch) return;
     setIsDataImportOpen(true);
   };
 
@@ -1248,6 +1461,7 @@ export default function App() {
     setPdfFiles(nextPdfFiles);
     setPdfSourceCount(nextSourceCount);
     setStats(s => ({ ...s, pdfCount: Object.keys(nextPdfFiles).length }));
+    void syncSharedLabels(mappingRef.current, nextPdfFiles);
     setPdfFolder({
       name: sourceName,
       status: 'loading',
@@ -1401,7 +1615,7 @@ export default function App() {
     ) => {
       if (!workstation) return;
       try {
-        const delivery = await cloudAudit.record({
+        await cloudAudit.record({
           workstationId: workstation.id,
           shipmentId: target.shipmentId,
           labelAssetId: target.labelAssetId,
@@ -1411,16 +1625,6 @@ export default function App() {
           message: details.message,
           occurredAt: new Date().toISOString()
         });
-        if (delivery === 'queued') {
-          appendLog({
-            firstLeg: target.firstLegTrackingNo,
-            exchange: target.courierTrackingNo ?? '-',
-            status: 'error',
-            message: '打印结果已进入本机待回传队列，网络恢复后将自动重试。',
-            type: 'system',
-            outcome: 'FAILED'
-          });
-        }
       } catch (error) {
         appendLog({
           firstLeg: target.firstLegTrackingNo,
@@ -1445,10 +1649,10 @@ export default function App() {
       return;
     }
 
-    if (interceptStorageStatus !== 'ready') {
+    if (interceptStorageStatus !== 'ready' && !emergencyOfflineEnabled) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      addLog(scannedValue, '-', '拦截名单不可用，为避免风险已阻断打印。请先恢复本机名单。', 'error', 'system');
+      addLog(scannedValue, '-', '全局拦截名单不可用，为避免漏拦截已阻断打印。主管可在现场确认后启用单机应急模式。', 'error', 'system');
       return;
     }
 
@@ -1491,6 +1695,7 @@ export default function App() {
         return;
       }
     }
+    const processLegacyScan = () => {
     // The lookup indexes are updated on import/restore. Exact matches no longer
     // scan thousands of mappings and file names on every scanner input.
     let finalExchangeNumber = cloudTarget?.courierTrackingNo ?? mappingIndexRef.current.get(cleanedScannedValue) ?? null;
@@ -1547,7 +1752,38 @@ export default function App() {
 
     void (async () => {
       try {
-        const pdfFile = cloudTarget && activeWarehouse
+        try {
+          const trackingNumbers = [scannedValue, finalExchangeNumber]
+            .filter((value): value is string => Boolean(value && value !== '-'));
+          const liveIntercept = await checkGlobalIntercepts(trackingNumbers);
+          if (liveIntercept.blocked) {
+            const rule: InterceptRule = {
+              id: `cloud-${normalizeBarcode(liveIntercept.trackingNo)}`,
+              waybillNo: liveIntercept.trackingNo,
+              normalizedWaybillNo: normalizeInterceptWaybill(liveIntercept.trackingNo),
+              createdAt: Date.now(),
+              source: 'manual',
+              reason: liveIntercept.reason ?? undefined,
+            };
+            interceptScanLockRef.current = cleanedScannedValue;
+            setInterceptedScan({ code: scannedValue, rule });
+            announceScanFeedback('error');
+            void playInterceptAlert();
+            addLog(scannedValue, finalExchangeNumber, `命中实时全局拦截${liveIntercept.reason ? `：${liveIntercept.reason}` : ''}`, 'error', 'system');
+            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '命中实时全局拦截名单。' });
+            return;
+          }
+        } catch (interceptError) {
+          if (!emergencyOfflineEnabled) {
+            announceScanFeedback('error');
+            void playScanFeedback('failure');
+            addLog(scannedValue, finalExchangeNumber, `实时拦截校验失败，已阻断打印：${interceptError instanceof Error ? interceptError.message : '云端不可用'}`, 'error', 'system');
+            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '实时全局拦截校验不可用，按安全策略阻断。' });
+            return;
+          }
+          addLog(scannedValue, finalExchangeNumber, '实时拦截校验不可用，已按主管启用的单机应急模式继续使用最后同步缓存。', 'error', 'system');
+        }
+        const pdfFile = cloudTarget && activeWarehouse?.warehouseId
           ? await readCloudLabelFile(activeWarehouse.warehouseId, cloudTarget)
           : localPdfFile!;
         const result = await printPdfWithQz(await readPdfAsBase64(pdfFile));
@@ -1571,6 +1807,127 @@ export default function App() {
             { code: scannedValue, timestamp }
           ].filter(item => item.timestamp > timestamp - 5 * 60 * 1000));
         }
+      } finally {
+        inFlightScansRef.current.delete(cleanedScannedValue);
+      }
+    })();
+    };
+
+    if (!workstation) {
+      processLegacyScan();
+      return;
+    }
+
+    announceScanFeedback('processing');
+    inFlightScansRef.current.add(cleanedScannedValue);
+    void (async () => {
+      try {
+        let claim;
+        try {
+          claim = await claimSharedWorkBatchItem({ trackingNo: scannedValue, workstationId: workstation.id });
+        } catch (cause) {
+          if (cause instanceof WarehouseApiError && cause.code === 'BATCH_ITEM_NOT_FOUND') {
+            inFlightScansRef.current.delete(cleanedScannedValue);
+            processLegacyScan();
+            return;
+          }
+          const cloudUnavailable = cause instanceof WarehouseApiError
+            ? cause.status >= 500
+            : cause instanceof TypeError;
+          if (emergencyOfflineEnabled && cloudUnavailable) {
+            inFlightScansRef.current.delete(cleanedScannedValue);
+            addLog(scannedValue, '-', '云端共享服务不可用，已按主管启用的单机应急模式使用本机已验证数据。', 'error', 'system');
+            processLegacyScan();
+            return;
+          }
+          throw cause;
+        }
+
+        if (claim.blocked) {
+          const rule: InterceptRule = {
+            id: `cloud-${cleanedScannedValue}`,
+            waybillNo: claim.trackingNo,
+            normalizedWaybillNo: normalizeInterceptWaybill(claim.trackingNo),
+            createdAt: Date.now(),
+            source: 'manual',
+            reason: claim.reason ?? undefined,
+          };
+          interceptScanLockRef.current = cleanedScannedValue;
+          setInterceptedScan({ code: scannedValue, rule });
+          announceScanFeedback('error');
+          void playInterceptAlert();
+          addLog(scannedValue, '-', `命中全局拦截名单${claim.reason ? `：${claim.reason}` : ''}`, 'error', 'system');
+          return;
+        }
+
+        const clientAttemptId = crypto.randomUUID();
+        const exchange = claim.item.courierTrackingNo ?? '-';
+        try {
+          const blob = await downloadWarehouseLabel(claim.item.labelDownloadPath);
+          const file = new File([blob], `${claim.item.courierTrackingNo || claim.item.firstLegTrackingNo}.pdf`, { type: 'application/pdf' });
+          const result = await printPdfWithQz(await readPdfAsBase64(file));
+          setQzConnectionHealth('healthy');
+          try {
+            await sharedAudit.record({
+              itemId: claim.item.id,
+              workstationId: workstation.id,
+              clientAttemptId,
+              claimToken: claim.claimToken,
+              outcome: 'SUBMITTED',
+              printerName: result.printerName,
+              message: result.message,
+              occurredAt: new Date().toISOString(),
+            });
+          } catch (auditError) {
+            appendLog({
+              firstLeg: scannedValue,
+              exchange,
+              status: 'error',
+              message: `打印已提交，但本机审计队列写入失败：${auditError instanceof Error ? auditError.message : '未知错误'}`,
+              type: 'system',
+              outcome: 'FAILED',
+            });
+          }
+          announceScanFeedback('success');
+          void playScanFeedback('success');
+          addLog(scannedValue, exchange, result.message || `共享批次 ${claim.item.batchName} 已提交打印`, 'success', 'print', isDuplicateOverride ? 'DUPLICATE_OVERRIDE' : 'SUCCESS');
+          setStats(previous => ({ ...previous, printedCount: previous.printedCount + 1 }));
+          const timestamp = Date.now();
+          setRecentlyPrinted(previous => [...previous, { code: scannedValue, timestamp }]
+            .filter(item => item.timestamp > timestamp - 5 * 60 * 1000));
+        } catch (cause) {
+          const message = formatQzError(cause);
+          const isUnknownOutcome = message.includes('超过 30 秒');
+          try {
+            await sharedAudit.record({
+              itemId: claim.item.id,
+              workstationId: workstation.id,
+              clientAttemptId,
+              claimToken: claim.claimToken,
+              outcome: isUnknownOutcome ? 'RESULT_UNKNOWN' : 'FAILED',
+              message,
+              occurredAt: new Date().toISOString(),
+            });
+          } catch (auditError) {
+            appendLog({
+              firstLeg: scannedValue,
+              exchange,
+              status: 'error',
+              message: `打印结果本机队列写入失败：${auditError instanceof Error ? auditError.message : '未知错误'}`,
+              type: 'system',
+              outcome: 'FAILED',
+            });
+          }
+          announceScanFeedback('error');
+          void playScanFeedback('failure');
+          if (!isUnknownOutcome) setQzConnectionHealth('offline');
+          addLog(scannedValue, exchange, message, 'error', 'print', isUnknownOutcome ? 'TIMEOUT' : 'FAILED');
+        }
+      } catch (cause) {
+        announceScanFeedback('error');
+        void playScanFeedback('failure');
+        const message = cause instanceof Error ? cause.message : '共享批次处理失败。';
+        addLog(scannedValue, '-', message, 'error', 'system');
       } finally {
         inFlightScansRef.current.delete(cleanedScannedValue);
       }
@@ -1718,7 +2075,7 @@ export default function App() {
         <header className="cmhub-operating-header">
           <div className="cmhub-operating-title">
             <div>
-              <Typography.Title heading={3}>扫码与本机打印</Typography.Title>
+              <Typography.Title heading={3}>扫码打单工作台</Typography.Title>
               <p>连续扫描后自动匹配面单，并发送至当前电脑的打印机。</p>
             </div>
           </div>
@@ -1744,42 +2101,38 @@ export default function App() {
               <Tooltip content="QZ Tray 教程与新电脑配置">
                 <ArcoButton
                   type="text"
-                  shape="circle"
                   size="large"
                   aria-label="打开 QZ Tray 教程与新电脑配置"
                   icon={<PlugZap size={20} />}
                   onClick={() => setIsQzGuideOpen(true)}
-                />
+                ><span>QZ 配置</span></ArcoButton>
               </Tooltip>
-              <Tooltip content="拦截名单管理">
+              {canViewIntercepts && <Tooltip content="拦截名单管理">
                 <ArcoButton
                   type="text"
-                  shape="circle"
                   size="large"
                   aria-label="打开拦截名单管理"
                   icon={<ShieldAlert size={20} />}
-                  onClick={() => void navigate('/operations/intercepts')}
-                />
-              </Tooltip>
-              <Tooltip content="导入 Excel 映射与 PDF 面单">
+                  onClick={() => setIsInterceptManagerOpen(true)}
+                ><span>拦截名单</span></ArcoButton>
+              </Tooltip>}
+              {canCreateSharedBatch && <Tooltip content="导入 Excel 映射与 PDF 面单">
                 <ArcoButton
                   type="text"
-                  shape="circle"
                   size="large"
                   aria-label="打开数据导入"
                   icon={<FileSpreadsheet size={20} />}
                   onClick={openDataImport}
-                />
-              </Tooltip>
+                ><span>数据导入</span></ArcoButton>
+              </Tooltip>}
               <Tooltip content="系统设置">
                 <ArcoButton
                   type="text"
-                  shape="circle"
                   size="large"
                   aria-label="打开系统设置"
                   icon={<Settings size={20} />}
                   onClick={() => openSettings('printer')}
-                />
+                ><span>打印与音效</span></ArcoButton>
               </Tooltip>
             </div>
           </div>
@@ -1833,6 +2186,17 @@ export default function App() {
         >
           <QzSetupGuide />
         </Drawer>
+
+        {canViewIntercepts && <Drawer
+          visible={isInterceptManagerOpen}
+          className="cmhub-utility-drawer cmhub-intercept-drawer"
+          width={760}
+          title={<div className="cmhub-intercept-drawer-title"><span><ShieldAlert size={20} />拦截名单</span><small>维护后对所有授权仓库工作站实时生效。</small></div>}
+          footer={null}
+          onCancel={() => setIsInterceptManagerOpen(false)}
+        >
+          <InterceptListPage embedded />
+        </Drawer>}
 
         {/* System Settings Modal */}
         {showSettings && (
@@ -2088,7 +2452,7 @@ export default function App() {
         )}
 
         <Drawer
-          visible={isDataImportOpen}
+          visible={isDataImportOpen && canCreateSharedBatch}
           className="cmhub-utility-drawer"
           width={680}
           title={<ArcoSpace><FileSpreadsheet size={20} /><span>数据导入与面单库</span></ArcoSpace>}
@@ -2100,6 +2464,50 @@ export default function App() {
               <span>{excelFile ? `${excelSourceCount} 个 Excel · ${stats.excelCount.toLocaleString()} 条映射` : '未导入 Excel'}</span>
               <span>{pdfFolder ? `${pdfSourceCount} 个来源 · ${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹或 ZIP'}</span>
             </div>
+            {canCreateSharedBatch && (
+              <div className="cmhub-shared-batch-status">
+                <ArcoAlert
+                  type={sharedBatchStatus === 'error' ? 'error' : sharedBatchStatus === 'active' ? 'success' : 'info'}
+                  showIcon
+                  content={sharedBatchMessage || '导入的数据会先保存为共享草稿；确认 Excel 与 PDF 后发布，其他工作站即可直接扫码。'}
+                />
+                {canPublishSharedBatch && (
+                  <ArcoSpace>
+                    <ArcoButton
+                      type="primary"
+                      loading={sharedBatchStatus === 'syncing'}
+                      disabled={!sharedBatchId || stats.excelCount === 0 || stats.pdfCount === 0 || sharedBatchStatus === 'active'}
+                      onClick={() => void publishCurrentSharedBatch()}
+                    >
+                      {sharedBatchStatus === 'active' ? '共享批次已发布' : '发布共享批次'}
+                    </ArcoButton>
+                    {canCloseSharedBatch && sharedBatchStatus === 'active' && (
+                      <ArcoButton status="warning" onClick={() => void closeCurrentSharedBatch()}>关闭当前批次</ArcoButton>
+                    )}
+                  </ArcoSpace>
+                )}
+                {canCloseSharedBatch && activeSharedBatches.length > 0 && (
+                  <div className="cmhub-active-shared-batches" aria-label="活动共享批次">
+                    <div className="cmhub-active-shared-batches-title">当前活动批次</div>
+                    {activeSharedBatches.map(batch => (
+                      <div className="cmhub-active-shared-batch" key={batch.id}>
+                        <div>
+                          <strong>{batch.name}</strong>
+                          <span>{batch.mappingCount.toLocaleString()} 条映射 · {batch.pdfCount.toLocaleString()} 个 PDF</span>
+                        </div>
+                        <ArcoButton
+                          size="mini"
+                          status="warning"
+                          loading={closingSharedBatchId === batch.id}
+                          disabled={Boolean(closingSharedBatchId)}
+                          onClick={() => void closeListedSharedBatch(batch)}
+                        >关闭</ArcoButton>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {importPrecheck && (
               <div className="cmhub-import-precheck" aria-live="polite">
                 <ArcoAlert
@@ -2212,6 +2620,35 @@ export default function App() {
           </section>
         </Drawer>
 
+        {canEnableEmergencyOffline && (
+          <ArcoAlert
+            className="cmhub-emergency-mode-alert"
+            type={emergencyOfflineEnabled ? 'warning' : 'info'}
+            showIcon
+            content={emergencyOfflineEnabled
+              ? `单机应急模式已开启：仅使用本机已验证面单与最后同步的拦截名单（${interceptLastSyncedAt ? new Date(interceptLastSyncedAt).toLocaleString() : '尚无同步记录'}）。本机面单缓存：${uploadCacheMessage}。待回传 ${cloudAudit.pendingCount + sharedAudit.pendingCount} 条。`
+              : '共享模式断网时默认停止打印。现场主管可临时启用单机应急模式。'}
+            action={(
+              <ArcoSpace>
+                {emergencyOfflineEnabled && (
+                  <ArcoButton onClick={() => {
+                    void Promise.all([
+                      syncInterceptRules(),
+                      cloudLibrary.sync(),
+                      cloudAudit.flushPending(),
+                      sharedAudit.flushPending(),
+                    ]);
+                  }}>恢复连接</ArcoButton>
+                )}
+                <ArcoButton
+                  status={emergencyOfflineEnabled ? 'danger' : undefined}
+                  onClick={() => setEmergencyOfflineEnabled(enabled => !enabled)}
+                >{emergencyOfflineEnabled ? '关闭应急模式' : '启用单机应急'}</ArcoButton>
+              </ArcoSpace>
+            )}
+          />
+        )}
+
         <div className="cmhub-operating-stack">
             {/* Scanner Input */}
             <ArcoCard
@@ -2266,6 +2703,23 @@ export default function App() {
                   <span>拦截名单即时校验</span>
                 </div>
               </div>
+            </ArcoCard>
+
+            <ArcoCard className="cmhub-operating-card cmhub-scan-result-card" bordered>
+              <div className="cmhub-scan-result-heading">
+                <span>本次处理结果</span>
+                <small>{latestPrintLog ? latestPrintLog.time : '等待首次扫描'}</small>
+              </div>
+              {latestPrintLog ? (
+                <div className="cmhub-scan-result-content" data-status={latestPrintLog.status}>
+                  <div><small>扫描单号</small><strong>{latestPrintLog.firstLeg}</strong></div>
+                  <ArrowRight size={20} aria-hidden="true" />
+                  <div><small>匹配末端单号</small><strong>{latestPrintLog.exchange || '—'}</strong></div>
+                  <span>{latestPrintLog.status === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}{latestPrintLog.status === 'success' ? '已提交到打印机' : latestPrintLog.message}</span>
+                </div>
+              ) : (
+                <div className="cmhub-scan-result-empty"><Scan size={20} /><span>扫描完成后将在这里显示本次匹配与提交结果</span></div>
+              )}
             </ArcoCard>
 
             {/* Logs */}

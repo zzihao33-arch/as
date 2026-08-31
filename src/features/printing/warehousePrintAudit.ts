@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   deleteLocalFirstValue,
   readAllLocalFirstEntries,
@@ -25,10 +25,13 @@ async function deliver(attempt: QueuedAttempt): Promise<void> {
 }
 async function flush(workstationId: string): Promise<void> {
   const pending = await readAllLocalFirstEntries<QueuedAttempt>('cloudPrintOutbox');
-  for (const entry of pending) {
-    if (entry.value.workstationId !== workstationId) continue;
+  const ordered = pending
+    .map(entry => entry.value)
+    .filter(attempt => attempt.workstationId === workstationId)
+    .sort((left, right) => left.queuedAt - right.queuedAt);
+  for (const attempt of ordered) {
     try {
-      await deliver(entry.value);
+      await deliver(attempt);
     } catch {
       // Preserve order and stop on the first unavailable response. The next online
       // event/interval retries the same idempotent clientAttemptId.
@@ -39,15 +42,24 @@ async function flush(workstationId: string): Promise<void> {
 
 export function useWarehousePrintAudit(workstationId: string | undefined) {
   const flushingRef = useRef<Promise<void> | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const refreshPendingCount = useCallback(async () => {
+    const pending = await readAllLocalFirstEntries<QueuedAttempt>('cloudPrintOutbox');
+    setPendingCount(pending.filter(entry => !workstationId || entry.value.workstationId === workstationId).length);
+  }, [workstationId]);
   const flushPending = useCallback(() => {
     if (!workstationId || flushingRef.current) return flushingRef.current ?? Promise.resolve();
-    const running = flush(workstationId).finally(() => { flushingRef.current = null; });
+    const running = flush(workstationId).finally(() => {
+      flushingRef.current = null;
+      void refreshPendingCount();
+    });
     flushingRef.current = running;
     return running;
-  }, [workstationId]);
+  }, [refreshPendingCount, workstationId]);
 
   useEffect(() => {
     if (!workstationId) return;
+    void refreshPendingCount();
     void flushPending();
     const interval = window.setInterval(() => void flushPending(), 30_000);
     const online = () => void flushPending();
@@ -56,18 +68,14 @@ export function useWarehousePrintAudit(workstationId: string | undefined) {
       window.clearInterval(interval);
       window.removeEventListener('online', online);
     };
-  }, [flushPending, workstationId]);
+  }, [flushPending, refreshPendingCount, workstationId]);
 
-  const record = useCallback(async (input: WarehousePrintAttemptInput): Promise<'delivered' | 'queued'> => {
+  const record = useCallback(async (input: WarehousePrintAttemptInput): Promise<void> => {
     const queued = { ...input, queuedAt: Date.now() } satisfies QueuedAttempt;
     await writeLocalFirstValue('cloudPrintOutbox', input.clientAttemptId, queued);
-    try {
-      await deliver(queued);
-      return 'delivered';
-    } catch {
-      return 'queued';
-    }
-  }, []);
+    setPendingCount(count => count + 1);
+    void flushPending();
+  }, [flushPending]);
 
-  return { record, flushPending };
+  return { record, flushPending, pendingCount };
 }

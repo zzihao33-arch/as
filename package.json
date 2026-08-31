@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts",
+    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "preview": "vite preview"
   },

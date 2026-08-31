@@ -122,6 +122,7 @@ export const config = {
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: asPort('PORT', 8080),
   jsonLimit: process.env.JSON_BODY_LIMIT ?? '256kb',
+  inboundBatchJsonLimit: process.env.INBOUND_BATCH_JSON_LIMIT ?? '10mb',
   labelPdfLimit: process.env.LABEL_PDF_LIMIT ?? '20mb',
   labelStorageRoot: configuredLabelStorageRoot || resolve(process.cwd(), 'data', 'labels'),
   mysql: {
@@ -138,7 +139,7 @@ export const config = {
       ? ['https://cmhubtool.com']
       : ['http://127.0.0.1:5173', 'http://localhost:5173']),
     cookieName: 'cmhub_warehouse_session',
-    sessionLifetimeHours: asIntegerRange('WAREHOUSE_SESSION_HOURS', 8, 1, 168),
+    sessionLifetimeHours: asIntegerRange('WAREHOUSE_SESSION_HOURS', 8, 1, 8),
   },
   outboundWebhooks: {
     enabled: outboundWebhookEnabled,

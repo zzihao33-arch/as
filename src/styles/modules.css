@@ -16,6 +16,357 @@
   gap: var(--cmhub-space-3);
 }
 
+/* Attendance and payroll workspace */
+.cmhub-attendance-page {
+  max-width: 1540px;
+}
+
+.cmhub-attendance-workspace > .arco-card-body {
+  padding: 0;
+}
+
+.cmhub-attendance-workspace > .arco-card-body > .arco-tabs > .arco-tabs-header {
+  margin: 0;
+  padding: 0 var(--cmhub-space-5);
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.cmhub-attendance-workspace .arco-tabs-content {
+  padding: var(--cmhub-space-5);
+}
+
+.cmhub-attendance-capture-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, .8fr);
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-attendance-camera-card .arco-card-body,
+.cmhub-attendance-check-column,
+.cmhub-attendance-form-stack,
+.cmhub-attendance-config-list {
+  display: grid;
+  gap: var(--cmhub-space-4);
+}
+
+.cmhub-attendance-camera-frame {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  min-height: 360px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  background: #111827;
+}
+
+.cmhub-attendance-camera-frame video,
+.cmhub-attendance-camera-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.cmhub-attendance-camera-frame img {
+  position: absolute;
+  inset: 0;
+}
+
+.cmhub-attendance-camera-guide {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  width: min(44%, 280px);
+  height: 72%;
+  transform: translateX(-50%);
+  border: 2px solid rgb(255 255 255 / 72%);
+  border-radius: 46% 46% 42% 42%;
+  box-shadow: 0 0 0 999px rgb(15 23 42 / 18%);
+}
+
+.cmhub-attendance-camera-prompt {
+  position: absolute;
+  right: var(--cmhub-space-5);
+  bottom: var(--cmhub-space-5);
+  left: var(--cmhub-space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cmhub-space-3);
+  padding: 12px 16px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: var(--cmhub-radius-md);
+  background: rgb(15 23 42 / 84%);
+  color: white;
+  backdrop-filter: blur(8px);
+}
+
+.cmhub-attendance-camera-prompt strong {
+  font-size: 16px;
+}
+
+.cmhub-attendance-camera-prompt span {
+  color: rgb(255 255 255 / 72%);
+  font-size: 12px;
+}
+
+.cmhub-attendance-camera-actions,
+.cmhub-attendance-toolbar,
+.cmhub-attendance-range,
+.cmhub-attendance-privacy-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--cmhub-space-3);
+}
+
+.cmhub-attendance-camera-actions > span,
+.cmhub-attendance-toolbar > span,
+.cmhub-attendance-server-time,
+.cmhub-attendance-privacy-note {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.cmhub-attendance-preflight-card .arco-card-body {
+  display: grid;
+  gap: 0;
+}
+
+.cmhub-attendance-preflight-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: var(--cmhub-space-3);
+  align-items: center;
+  min-height: 64px;
+  border-bottom: 1px solid var(--color-border-2);
+  color: var(--color-text-2);
+}
+
+.cmhub-attendance-preflight-row span,
+.cmhub-attendance-employee,
+.cmhub-attendance-config-list button span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cmhub-attendance-preflight-row strong,
+.cmhub-attendance-employee strong,
+.cmhub-attendance-config-list button strong {
+  color: var(--color-text-1);
+  font-weight: 600;
+}
+
+.cmhub-attendance-preflight-row small,
+.cmhub-attendance-employee small,
+.cmhub-attendance-config-list button small {
+  overflow: hidden;
+  color: var(--color-text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-attendance-today-card .arco-card-body {
+  display: grid;
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-attendance-punch-state {
+  display: grid;
+  grid-template-columns: auto minmax(72px, 1fr) auto;
+  gap: var(--cmhub-space-3);
+  align-items: center;
+}
+
+.cmhub-attendance-punch-state > div:not(.cmhub-attendance-state-line) {
+  display: grid;
+  gap: 4px;
+}
+
+.cmhub-attendance-punch-state span {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.cmhub-attendance-punch-state strong {
+  color: var(--color-text-1);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cmhub-attendance-panel-card > .arco-card-body {
+  padding: 0;
+}
+
+.cmhub-attendance-panel-card > .arco-card-header + .arco-card-body > .cmhub-attendance-toolbar,
+.cmhub-attendance-panel-card > .arco-card-body > .arco-alert {
+  margin: var(--cmhub-space-4) var(--cmhub-space-5);
+}
+
+.cmhub-attendance-toolbar {
+  justify-content: space-between;
+}
+
+.cmhub-attendance-range label,
+.cmhub-attendance-form-grid label,
+.cmhub-attendance-form-stack label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.cmhub-attendance-range label {
+  grid-template-columns: auto 144px;
+  align-items: center;
+}
+
+.cmhub-attendance-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cmhub-space-4);
+}
+
+.cmhub-attendance-form-full,
+.cmhub-attendance-weekdays {
+  grid-column: 1 / -1;
+}
+
+.cmhub-attendance-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cmhub-space-3);
+  margin: 0;
+  padding: var(--cmhub-space-3);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+}
+
+.cmhub-attendance-weekdays legend {
+  padding: 0 6px;
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.cmhub-attendance-form-action {
+  display: flex;
+  align-items: end;
+}
+
+.cmhub-attendance-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-attendance-config-list button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: var(--cmhub-space-3);
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-bg-1);
+  color: var(--color-text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.cmhub-attendance-config-list button:hover,
+.cmhub-attendance-config-list button:focus-visible {
+  border-color: rgb(var(--primary-6));
+  background: var(--color-primary-light-1);
+  outline: none;
+}
+
+.cmhub-attendance-loading {
+  display: flex;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cmhub-space-3);
+  color: var(--color-text-3);
+}
+
+.cmhub-attendance-privacy-note {
+  margin-top: var(--cmhub-space-4);
+  padding: 0 var(--cmhub-space-2);
+}
+
+.cmhub-attendance-privacy-note svg {
+  color: rgb(var(--primary-6));
+}
+
+.cmhub-attendance-photo-thumb {
+  display: grid;
+  overflow: hidden;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-sm);
+  background: var(--color-fill-1);
+  color: var(--color-text-3);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.cmhub-attendance-photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cmhub-attendance-photo-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: auto;
+  object-fit: contain;
+}
+
+@media (max-width: 1100px) {
+  .cmhub-attendance-capture-grid,
+  .cmhub-attendance-config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .cmhub-attendance-workspace .arco-tabs-content {
+    padding: var(--cmhub-space-3);
+  }
+
+  .cmhub-attendance-camera-frame {
+    aspect-ratio: 3 / 4;
+    min-height: 420px;
+  }
+
+  .cmhub-attendance-camera-prompt,
+  .cmhub-attendance-toolbar,
+  .cmhub-attendance-range {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cmhub-attendance-range label,
+  .cmhub-attendance-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-attendance-form-full,
+  .cmhub-attendance-weekdays {
+    grid-column: auto;
+  }
+}
+
 .cmhub-qz-guide-content {
   display: grid;
   gap: var(--cmhub-space-5);
@@ -128,6 +479,10 @@
   background: var(--color-bg-1);
 }
 
+.cmhub-utility-drawer {
+  max-width: 100vw;
+}
+
 .cmhub-utility-drawer .arco-drawer-header {
   min-height: 64px;
   border-bottom-color: var(--color-border-2);
@@ -150,6 +505,75 @@
 
 .cmhub-data-import-drawer-summary {
   margin-bottom: var(--cmhub-space-4);
+}
+
+.cmhub-shared-batch-status {
+  display: grid;
+  gap: var(--cmhub-space-3);
+  margin: 0 0 var(--cmhub-space-4);
+  padding: var(--cmhub-space-4);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-bg-1);
+}
+
+.cmhub-active-shared-batches {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-border-2);
+  border-radius: 10px;
+  background: var(--color-fill-1);
+}
+
+.cmhub-active-shared-batches-title {
+  color: var(--color-text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cmhub-active-shared-batch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-2);
+}
+
+.cmhub-active-shared-batch > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cmhub-active-shared-batch strong,
+.cmhub-active-shared-batch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-active-shared-batch span {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.cmhub-shared-batch-status > .arco-btn {
+  justify-self: end;
+}
+
+.cmhub-emergency-mode-alert {
+  margin-bottom: var(--cmhub-space-4);
+  border: 1px solid var(--color-warning-light-4);
+}
+
+.cmhub-intercept-sync-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--cmhub-space-2);
 }
 
 .cmhub-import-precheck {
@@ -509,6 +933,19 @@
 
 .cmhub-intercept-page > .cmhub-page-heading {
   margin-bottom: 0;
+}
+
+.cmhub-intercept-page.is-embedded {
+  gap: var(--cmhub-space-4);
+  padding: 0;
+}
+
+.cmhub-intercept-page.is-embedded .cmhub-page-heading {
+  align-items: flex-start;
+}
+
+.cmhub-intercept-drawer .arco-drawer-content {
+  padding: var(--cmhub-space-5);
 }
 
 .cmhub-intercept-entry,
@@ -1101,6 +1538,14 @@
   transform: none;
 }
 
+/* Scan-and-print is a high-frequency operational surface. State changes remain
+   immediate and legible without hover lift, shake, pulse, or transition motion. */
+.cmhub-operating-workspace,
+.cmhub-operating-workspace * {
+  animation: none !important;
+  transition: none !important;
+}
+
 .cmhub-bol-toolbar {
   display: flex;
   align-items: center;
@@ -1649,6 +2094,10 @@
     display: grid;
   }
 
+  .cmhub-intercept-drawer .arco-drawer-content {
+    padding: var(--cmhub-space-4);
+  }
+
   .cmhub-intercept-entry .arco-card-body {
     grid-template-columns: 1fr;
   }
@@ -1943,5 +2392,641 @@
   .cmhub-settings-modal .arco-modal-content,
   .cmhub-confirm-modal .arco-modal-content {
     animation: none !important;
+  }
+}
+
+/* Air pickup lifecycle */
+.cmhub-air-page {
+  display: grid;
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-air-page > .cmhub-page-heading {
+  margin-bottom: 0;
+}
+
+.cmhub-air-module-header {
+  display: grid;
+  gap: var(--cmhub-space-4);
+}
+
+.cmhub-air-module-header > .cmhub-page-heading {
+  margin-bottom: 0;
+}
+
+.cmhub-air-section-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--cmhub-space-2);
+  min-height: 48px;
+  padding: 4px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  background: var(--color-bg-1);
+}
+
+.cmhub-air-section-nav a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: var(--cmhub-radius-md);
+  color: var(--color-text-2);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.cmhub-air-section-nav a:hover {
+  background: var(--color-fill-2);
+  color: var(--color-text-1);
+}
+
+.cmhub-air-section-nav a:focus-visible {
+  outline: 2px solid rgb(var(--primary-6));
+  outline-offset: 2px;
+}
+
+.cmhub-air-section-nav a.is-active {
+  background: var(--color-primary-light-1);
+  color: rgb(var(--primary-6));
+  font-weight: 600;
+}
+
+.cmhub-air-updated-at {
+  display: inline-block;
+  font-family: var(--cmhub-font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cmhub-air-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  background: var(--color-bg-1);
+}
+
+.cmhub-air-summary > div {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 66px;
+  padding: 0 var(--cmhub-space-5);
+  color: var(--color-text-2);
+}
+
+.cmhub-air-summary > div + div {
+  border-left: 1px solid var(--color-border-2);
+}
+
+.cmhub-air-summary strong {
+  color: var(--color-text-1);
+  font: 600 22px/1 var(--cmhub-font-mono);
+}
+
+.cmhub-air-list-card > .arco-card-body {
+  padding: 0;
+}
+
+.cmhub-air-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cmhub-space-4);
+  padding: 0 var(--cmhub-space-5);
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.cmhub-air-filter-row .arco-tabs-header {
+  margin: 0;
+}
+
+.cmhub-air-filter-row .arco-tabs-content {
+  display: none;
+}
+
+.cmhub-air-filter-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) 150px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.cmhub-air-batchbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cmhub-space-4);
+  min-height: 58px;
+  padding: 10px var(--cmhub-space-5);
+  border-bottom: 1px solid var(--color-border-2);
+  background: var(--color-fill-1);
+  color: var(--color-text-2);
+  font-size: 13px;
+}
+
+.cmhub-air-link {
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--primary-6));
+  font: 600 13px/1.5 var(--cmhub-font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cmhub-air-link.is-secondary {
+  color: var(--color-text-2);
+  font-weight: 500;
+}
+
+.cmhub-air-source {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-air-tab-with-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding-right: 4px;
+}
+
+.cmhub-air-progress {
+  display: grid;
+  min-width: 180px;
+  gap: 5px;
+}
+
+.cmhub-air-progress-heading,
+.cmhub-air-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.cmhub-air-progress-heading strong,
+.cmhub-air-progress-heading span {
+  font-family: var(--cmhub-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cmhub-air-progress-heading strong {
+  color: var(--color-text-1);
+  font-size: 12px;
+}
+
+.cmhub-air-progress-heading span,
+.cmhub-air-progress-meta,
+.cmhub-air-progress-empty {
+  color: var(--color-text-3);
+  font-size: 11px;
+}
+
+.cmhub-air-progress-meta {
+  justify-content: flex-start;
+}
+
+.cmhub-air-progress-meta .is-warning {
+  color: rgb(var(--danger-6));
+  font-weight: 600;
+}
+
+.cmhub-air-progress .arco-progress-line {
+  margin: 0;
+}
+
+.cmhub-air-form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cmhub-air-form-grid .arco-input-number {
+  width: 100%;
+}
+
+.cmhub-air-receipt-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(58vh, 620px);
+  margin-top: var(--cmhub-space-4);
+  overflow: auto;
+}
+
+.cmhub-air-common-time {
+  display: grid;
+  grid-template-columns: 160px minmax(220px, 360px);
+  gap: 12px;
+  align-items: center;
+  margin-top: var(--cmhub-space-4);
+  color: var(--color-text-2);
+  font-size: 13px;
+}
+
+.cmhub-air-mobile-list {
+  display: none;
+}
+
+.cmhub-air-receipt-row {
+  display: grid;
+  grid-template-columns: 150px repeat(4, minmax(90px, 0.7fr)) minmax(180px, 1.4fr);
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-bg-1);
+}
+
+.cmhub-air-receipt-row > strong {
+  align-self: center;
+  overflow: hidden;
+  color: var(--color-text-1);
+  font-family: var(--cmhub-font-mono);
+  text-overflow: ellipsis;
+}
+
+.cmhub-air-receipt-row label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-2);
+  font-size: 12px;
+}
+
+.cmhub-air-receipt-row .arco-input-number,
+.cmhub-air-receipt-row .arco-select {
+  width: 100%;
+}
+
+.cmhub-air-receipt-evidence-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: center;
+  margin-top: var(--cmhub-space-4);
+  padding: var(--cmhub-space-4);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-fill-1);
+}
+
+.cmhub-air-receipt-evidence-picker > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.cmhub-air-receipt-evidence-picker > div:first-child span {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.cmhub-air-pending-evidence-grid {
+  display: grid !important;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px !important;
+}
+
+.cmhub-air-pending-evidence-grid article {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.cmhub-air-pending-evidence-grid img {
+  width: 100%;
+  height: 88px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-sm);
+  object-fit: cover;
+}
+
+.cmhub-air-pending-evidence-grid span {
+  overflow: hidden;
+  color: var(--color-text-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-air-difference i {
+  color: rgb(var(--danger-6));
+  font-style: normal;
+}
+
+.cmhub-air-selected-bills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 240px;
+  padding: var(--cmhub-space-4);
+  overflow: auto;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-fill-1);
+}
+
+.cmhub-air-handover-workspace,
+.cmhub-air-detail {
+  display: grid;
+  gap: var(--cmhub-space-5);
+}
+
+.cmhub-air-evidence-section {
+  display: grid;
+  gap: var(--cmhub-space-3);
+  padding: var(--cmhub-space-4);
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-md);
+  background: var(--color-bg-1);
+}
+
+.cmhub-air-evidence-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cmhub-space-3);
+}
+
+.cmhub-air-evidence-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.cmhub-air-evidence-heading span {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+
+.cmhub-air-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cmhub-air-evidence-grid article {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.cmhub-air-evidence-grid article > button:first-child,
+.cmhub-air-evidence-thumb {
+  display: grid;
+  min-height: 104px;
+  place-items: center;
+  gap: 4px;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-sm);
+  background: var(--color-fill-1);
+  color: var(--color-text-2);
+  cursor: pointer;
+}
+
+.cmhub-air-evidence-thumb img,
+.cmhub-air-evidence-placeholder {
+  display: block;
+  width: 100%;
+  height: 78px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.cmhub-air-evidence-placeholder {
+  display: grid;
+  place-items: center;
+  background: var(--color-fill-2);
+  color: var(--color-text-3);
+}
+
+.cmhub-air-evidence-thumb small {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-air-detail-evidence {
+  display: grid;
+  gap: 10px;
+}
+
+.cmhub-air-detail-evidence-grid,
+.cmhub-air-event-evidence {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cmhub-air-event-evidence {
+  margin-top: 8px;
+}
+
+.cmhub-air-detail-evidence-grid .cmhub-air-evidence-thumb,
+.cmhub-air-event-evidence .cmhub-air-evidence-thumb {
+  min-height: 112px;
+  padding: 7px;
+}
+
+.cmhub-air-evidence-grid article span,
+.cmhub-air-evidence-grid article small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-air-preview {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  background: var(--color-fill-2);
+}
+
+.cmhub-air-detail h3 {
+  margin: var(--cmhub-space-2) 0 0;
+  font-size: 16px;
+}
+
+.cmhub-air-detail .arco-timeline-item-content p {
+  margin: 4px 0 0;
+  color: var(--color-text-2);
+}
+
+@media (max-width: 1180px) {
+  .cmhub-air-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+    padding-bottom: var(--cmhub-space-4);
+  }
+
+  .cmhub-air-filter-controls {
+    grid-template-columns: minmax(0, 1fr) 150px auto;
+  }
+
+  .cmhub-air-receipt-row {
+    grid-template-columns: 140px repeat(2, minmax(100px, 1fr));
+  }
+
+  .cmhub-air-difference {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 720px) {
+  .cmhub-air-section-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cmhub-air-section-nav a {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+
+  .cmhub-air-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-air-summary > div + div {
+    border-top: 1px solid var(--color-border-2);
+    border-left: 0;
+  }
+
+  .cmhub-air-filter-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-air-batchbar,
+  .cmhub-air-evidence-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cmhub-air-batchbar .arco-space,
+  .cmhub-air-batchbar .arco-btn {
+    width: 100%;
+  }
+
+  .cmhub-air-form-grid,
+  .cmhub-air-receipt-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cmhub-air-receipt-row > strong,
+  .cmhub-air-difference {
+    grid-column: 1 / -1;
+  }
+
+  .cmhub-air-evidence-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cmhub-air-pending-evidence-grid,
+  .cmhub-air-detail-evidence-grid,
+  .cmhub-air-event-evidence {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cmhub-air-receipt-evidence-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-air-desktop-table {
+    display: none;
+  }
+
+  .cmhub-air-mobile-list {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .cmhub-air-mobile-list article {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--color-border-2);
+    border-radius: var(--cmhub-radius-md);
+    background: var(--color-bg-1);
+  }
+
+  .cmhub-air-mobile-list article header,
+  .cmhub-air-mobile-list article footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .cmhub-air-mobile-list article header .cmhub-air-link {
+    min-width: 0;
+    flex: 1;
+    font-size: 15px;
+  }
+
+  .cmhub-air-mobile-list dl {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .cmhub-air-mobile-list dl > div {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .cmhub-air-mobile-list dt,
+  .cmhub-air-mobile-list dd {
+    margin: 0;
+  }
+
+  .cmhub-air-mobile-list dt {
+    color: var(--color-text-3);
+  }
+
+  .cmhub-air-mobile-list dd {
+    color: var(--color-text-1);
+    overflow-wrap: anywhere;
+  }
+
+  .cmhub-air-mobile-list article footer .arco-btn {
+    min-height: 36px;
+    flex: 1;
+  }
+
+  .cmhub-air-mobile-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .cmhub-air-common-time {
+    grid-template-columns: 1fr;
+  }
+
+  .cmhub-air-page input,
+  .cmhub-air-page textarea {
+    font-size: 16px;
   }
 }

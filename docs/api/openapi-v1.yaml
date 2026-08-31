@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: CM-HUB 上游客户对接 API
-  version: 1.4.0
+  version: 1.5.0
   description: |
-    当前已实现的上游服务器端合同：创建/更新物流单据、主动上传 PDF 面单，以及按头程单号查询。
+    当前已实现的上游服务器端合同：原子推送空提预报与整批物流单据、创建/更新单条物流单据、
+    主动上传 PDF 面单，以及按头程单号查询。
     除独立的 /healthz 探针外，请求必须携带有效 X-API-Key。
     上游不能写入 CM-HUB 状态或打印事件；仓库取单与未来签名回调不属于本合同。
 servers:
@@ -12,9 +13,70 @@ servers:
 security:
   - ApiKeyAuth: []
 tags:
+  - name: Inbound Batches
+    description: 使用当前客户身份提交一张空提预报及其全部物流单据
   - name: Shipments
     description: 当前客户范围内的物流单据
 paths:
+  /inbound-batches:
+    post:
+      tags: [Inbound Batches]
+      summary: 推送空提预报与整批物流单据
+      description: |
+        从 X-API-Key 推导来源客户，并在一个事务中创建或更新一张空运提货单、关联本批全部物流单据。
+        shipments 支持 1 至 5,000 条；推荐一批货使用本接口，而不是分别调用独立的空提接口。
+        完整请求持久化用于幂等、对账和兼容未知字段。SUBMITTED 进度只代表 QZ 已接受，不代表物理出纸。
+      operationId: upsertInboundBatch
+      x-required-scope: shipments:write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundBatchInput'
+            examples:
+              inboundBatch:
+                summary: 一张空提预报与两条物流映射
+                value:
+                  batchId: TY-20260829-18098109734
+                  airPickup:
+                    billNo: 180-98109734
+                    forecastCartons: 120
+                    forecastPackages: 2000
+                    forecastWeight: 1850.5
+                    forecastWeightUnit: KG
+                    remarks: JFK 预报
+                  shipments:
+                    - firstLegTrackingNo: HHWV06218005702YQ
+                      courierTrackingNo: LC095500137US
+                    - firstLegTrackingNo: HHWVP6225107301YQ
+                      courierTrackingNo: LP095529498US
+      responses:
+        '200':
+          description: 整批已经原子写入，或幂等返回既有结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /shipments:
     post:
       tags: [Shipments]
@@ -205,6 +267,80 @@ components:
         type: string
         pattern: '^[a-fA-F0-9]{64}$'
   schemas:
+    AirPickupForecastInput:
+      type: object
+      required: [billNo, forecastCartons, forecastPackages, forecastWeight, forecastWeightUnit]
+      additionalProperties: true
+      properties:
+        billNo:
+          type: string
+          maxLength: 32
+          description: 全局归一化唯一；忽略空格、大小写和连字符。
+        cargoName:
+          type: string
+          maxLength: 100
+        forecastCartons:
+          type: integer
+          minimum: 1
+          maximum: 999999
+        forecastPackages:
+          type: integer
+          minimum: 1
+          maximum: 999999
+        forecastWeight:
+          type: number
+          exclusiveMinimum: 0
+        forecastWeightUnit:
+          type: string
+          enum: [KG, LB]
+        remarks:
+          type: string
+          maxLength: 200
+    InboundBatchInput:
+      type: object
+      required: [batchId, airPickup, shipments]
+      additionalProperties: true
+      properties:
+        batchId:
+          type: string
+          maxLength: 128
+          description: 当前客户内稳定唯一的上游批次标识。
+        airPickup:
+          $ref: '#/components/schemas/AirPickupForecastInput'
+        shipments:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          uniqueItems: false
+          items:
+            $ref: '#/components/schemas/ShipmentInput'
+    InboundBatchResult:
+      type: object
+      required: [batchId, airPickupOrderId, billNo, clientName, shipmentCount]
+      properties:
+        batchId:
+          type: string
+        airPickupOrderId:
+          type: string
+          format: uuid
+        billNo:
+          type: string
+        clientName:
+          type: string
+        shipmentCount:
+          type: integer
+          minimum: 1
+          maximum: 5000
+    InboundBatchResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/InboundBatchResult'
+        requestId:
+          type: string
+        idempotentReplay:
+          type: boolean
     ShipmentInput:
       type: object
       required: [firstLegTrackingNo]

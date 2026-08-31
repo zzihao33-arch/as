@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ApiError } from './errors.js';
-import type { WarehouseIdentity, WarehouseRole, WarehouseSession } from './warehouseIdentity.js';
+import type { WarehouseIdentity, WarehouseSession } from './warehouseIdentity.js';
 import { parseCookie } from './warehouseSecurity.js';
 
 declare global {
@@ -10,8 +10,6 @@ declare global {
     }
   }
 }
-
-const roleRank: Record<WarehouseRole, number> = { OPERATOR: 1, SUPERVISOR: 2, ADMIN: 3 };
 
 export function createWarehouseHttpBoundary(input: {
   identity: WarehouseIdentity;
@@ -28,8 +26,8 @@ export function createWarehouseHttpBoundary(input: {
       }
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Request-ID');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Request-ID, X-Image-Sha256');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
         res.status(204).end();
@@ -46,20 +44,5 @@ export function createWarehouseHttpBoundary(input: {
         next(error);
       }
     },
-  };
-}
-
-export function requireWarehouseRole(minimum: WarehouseRole) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    const current = req.warehouseSession?.role;
-    if (!current) {
-      next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。'));
-      return;
-    }
-    if (roleRank[current] < roleRank[minimum]) {
-      next(new ApiError(403, 'INSUFFICIENT_ROLE', '当前仓库角色无权执行此操作。'));
-      return;
-    }
-    next();
   };
 }

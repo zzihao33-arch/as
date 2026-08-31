@@ -125,13 +125,14 @@ export function useWarehousePrintLibrary() {
   const runningRef = useRef<Promise<void> | null>(null);
 
   const sync = useCallback(() => {
-    if (!session || runningRef.current) return runningRef.current ?? Promise.resolve();
+    const warehouseId = session?.warehouseId;
+    if (!warehouseId || runningRef.current) return runningRef.current ?? Promise.resolve();
     const run = (async () => {
       setStatus('syncing');
       setMessage('正在同步云端单据与面单…');
       try {
-        const count = await synchronizeWarehouse(session.warehouseId, setTargets);
-        setTargets(await loadTargets(session.warehouseId));
+        const count = await synchronizeWarehouse(warehouseId, setTargets);
+        setTargets(await loadTargets(warehouseId));
         setStatus('ready');
         setMessage(count > 0 ? `云端同步完成，本次处理 ${count} 条更新。` : '云端数据已是最新。');
       } catch (cause) {
@@ -146,9 +147,10 @@ export function useWarehousePrintLibrary() {
   }, [session]);
 
   useEffect(() => {
-    if (!session) return;
+    const warehouseId = session?.warehouseId;
+    if (!warehouseId) return;
     let current = true;
-    void loadTargets(session.warehouseId).then(cached => {
+    void loadTargets(warehouseId).then(cached => {
       if (!current) return;
       setTargets(cached);
       void sync();

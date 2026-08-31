@@ -7,10 +7,11 @@
 - 字符编码：UTF-8
 - 调用方：持有客户 API Key 的上游服务端
 
-当前实现以下三条业务路由：
+当前实现以下四条业务路由：
 
 | 方法与路径 | 用途 |
 | --- | --- |
+| `POST /api/v1/inbound-batches` | 使用同一客户身份原子推送空提预报及其整批物流单据 |
 | `POST /api/v1/shipments` | 创建或更新当前客户的物流单据 |
 | `PUT /api/v1/shipments/by-first-leg/{firstLegTrackingNo}/label` | 主动上传并保存 PDF 面单资产 |
 | `GET /api/v1/shipments/by-first-leg/{firstLegTrackingNo}` | 查询当前客户的物流单据 |
@@ -77,7 +78,86 @@ API Key 是服务器间机器凭据，不得写入网页、浏览器端 JavaScri
 
 该 API 仅面向服务器端调用方；浏览器调用不受支持，客户 Key 也不得下发到浏览器。
 
-## 3. 创建或更新物流单据
+## 3. 推送空提预报与整批物流单据
+
+```http
+POST /api/v1/inbound-batches
+```
+
+这是推荐的完整业务链路入口。调用方继续使用当前客户的同一把 API Key，不需要为“空提”申请第二套接口或凭据。服务端从 API Key 确定来源客户，在一个事务中创建或更新一张空运提货单，并把本批 1～5,000 条物流单据全部关联到该提单。仓库工作台对所有有权限的操作员共享这些数据。
+
+`batchId` 是当前客户的上游批次标识；同一客户内必须稳定唯一。`billNo` 做去空格、大小写和连字符归一化，因此 `abc-123`、`ABC-123`、`ABC123` 与 `abc123` 视为同一提货单号。完整请求保存在入站消息与空提原始载荷中，每条物流单据仍单独保留自身原始对象。
+
+### 请求字段
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `batchId` | string | 是 | 当前客户内唯一，最长128字符 |
+| `airPickup.billNo` | string | 是 | 全局归一化唯一，最长32字符 |
+| `airPickup.cargoName` | string | 否 | 货物名称，最长100字符；当前列表不展示 |
+| `airPickup.forecastCartons` | integer | 是 | 预报箱数，1～999999 |
+| `airPickup.forecastPackages` | integer | 是 | 预报包裹数，1～999999 |
+| `airPickup.forecastWeight` | number | 是 | 大于0，最多3位小数 |
+| `airPickup.forecastWeightUnit` | string | 是 | `KG` 或 `LB` |
+| `airPickup.remarks` | string | 否 | 最长200字符 |
+| `shipments` | array | 是 | 1～5,000条；每项字段与单条物流单据接口一致 |
+
+### 请求示例
+
+```json
+{
+  "batchId": "TY-20260829-18098109734",
+  "airPickup": {
+    "billNo": "180-98109734",
+    "forecastCartons": 120,
+    "forecastPackages": 2000,
+    "forecastWeight": 1850.5,
+    "forecastWeightUnit": "KG",
+    "remarks": "JFK 预报"
+  },
+  "shipments": [
+    {
+      "firstLegTrackingNo": "HHWV06218005702YQ",
+      "courierTrackingNo": "LC095500137US",
+      "carrier": "USPS",
+      "order_id": "SO-20260829-0001"
+    },
+    {
+      "firstLegTrackingNo": "HHWVP6225107301YQ",
+      "courierTrackingNo": "LP095529498US",
+      "carrier": "USPS",
+      "order_id": "SO-20260829-0002"
+    }
+  ]
+}
+```
+
+```bash
+curl --request POST 'https://api.cmhubtool.com/api/v1/inbound-batches' \
+  --header 'Content-Type: application/json' \
+  --header 'X-API-Key: cmh_live_<请从安全渠道取得>' \
+  --header 'Idempotency-Key: TY-20260829-18098109734-v1' \
+  --data @inbound-batch.json
+```
+
+成功返回 `200 OK`：
+
+```json
+{
+  "data": {
+    "batchId": "TY-20260829-18098109734",
+    "airPickupOrderId": "6feff09c-925d-46fa-8cd2-e69751fbb2d7",
+    "billNo": "180-98109734",
+    "clientName": "TY Logistics",
+    "shipmentCount": 2000
+  },
+  "requestId": "upstream-20260829-0001"
+}
+```
+
+整批采用事务提交：任一物流单据重复、已属于其他提单，或提货单已属于其他客户/批次时，整批回滚。更新已经入库或交仓的提货单不会改写其预报字段，只补齐同一客户、同一批次的物流关联。超时重试必须复用原 `Idempotency-Key`。
+
+## 4. 创建或更新单条物流单据
 
 ```http
 POST /api/v1/shipments
@@ -180,7 +260,7 @@ curl --request POST 'https://api.cmhubtool.com/api/v1/shipments' \
 
 缺少或无效字段返回 `400 Bad Request`。缺少幂等键时的错误码为 `IDEMPOTENCY_KEY_REQUIRED`。
 
-## 4. 主动上传 PDF 面单
+## 5. 主动上传 PDF 面单
 
 ```http
 PUT /api/v1/shipments/by-first-leg/{firstLegTrackingNo}/label
@@ -220,7 +300,7 @@ curl --request PUT 'https://api.cmhubtool.com/api/v1/shipments/by-first-leg/HHWV
 
 这不是公开下载接口。仓库端面单交付将在仓库身份和权限模块完成后开放；网页不会持有上游 API Key。
 
-## 5. 按头程单号查询
+## 6. 按头程单号查询
 
 ```http
 GET /api/v1/shipments/by-first-leg/{firstLegTrackingNo}
@@ -235,7 +315,7 @@ curl --get 'https://api.cmhubtool.com/api/v1/shipments/by-first-leg/HHWV06218005
 
 成功返回 `200 OK`，`data` 与写入响应中的物流单据结构一致。`labelAssetReady` 表明是否已有当前 CM-HUB 私有面单资产；它不提供存储路径。未找到时返回 `404 SHIPMENT_NOT_FOUND`。
 
-## 6. 健康检查
+## 7. 健康检查
 
 ```http
 GET https://api.cmhubtool.com/healthz
@@ -247,17 +327,18 @@ GET https://api.cmhubtool.com/healthz
 { "ok": true }
 ```
 
-## 7. 结果通知
+## 8. 结果通知
 
 CM-HUB 将仓库打印事实与待通知事件原子写入持久化出站箱，再向客户预先配置的 HTTPS URL 投递 HMAC-SHA256 签名回调。上游仍不能调用打印事件写入接口，也不能设置 CM-HUB 状态。
 
 事件字段、验签、幂等与重试合同见 [上游结果回调 v1](./upstream-callbacks-v1.md)。仓库代码已实现该能力；正式环境必须完成 `006` 迁移、密钥和 URL 配置、启用投递器及双方联调后才可视为上线。
 
-## 8. 上游接入检查
+## 9. 上游接入检查
 
 1. API Key 只存入服务端密钥管理系统或受限环境变量。
 2. 每次业务写入生成稳定唯一的 `Idempotency-Key`；超时重试复用原值。
 3. 保存 `requestId` 供排障，日志中不得记录完整 API Key 或完整个人信息载荷。
 4. 只使用 `/api/v1` 规范基址，不尝试 `/v1`、打印事件或仓库内部路径。
 5. 不提交或依赖上游 `status`；CM-HUB 是内部业务状态的唯一所有者。
-6. 先推送物流数据，再主动上传 PDF；不要等待 CM-HUB 或仓库抓取 `labelUrl`。
+6. 一批货使用 `/inbound-batches` 一次建立空提与物流单据关联；只有确实没有空提上下文的单条更新才使用 `/shipments`。
+7. 先推送物流数据，再主动上传 PDF；不要等待 CM-HUB 或仓库抓取 `labelUrl`。

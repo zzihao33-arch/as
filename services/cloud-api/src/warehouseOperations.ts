@@ -96,13 +96,11 @@ export function createWarehouseOperations(dependencies: {
   const { mysql, storage, outboundWebhooks } = dependencies;
 
   return {
-    async listShipments(session: WarehouseSession, input: { cursor?: unknown; limit?: unknown }) {
+    async listShipments(_session: WarehouseSession, input: { cursor?: unknown; limit?: unknown }) {
       const cursor = decodeDeliveryCursor(input.cursor);
       const limit = limitValue(input.limit);
       const cursorClause = cursor ? `AND d.revision > ?` : '';
-      const parameters = cursor
-        ? [session.warehouseId, cursor.revision, limit + 1]
-        : [session.warehouseId, limit + 1];
+      const parameters = cursor ? [cursor.revision, limit + 1] : [limit + 1];
       const [rows] = await mysql.execute<ShipmentDeliveryRow[]>(
         `SELECT d.revision, s.id, s.first_leg_tracking_no, s.courier_tracking_no, s.carrier, s.status, s.version, s.updated_at,
                 CASE WHEN la.asset_status = 'READY' THEN la.id ELSE NULL END AS label_asset_id,
@@ -110,8 +108,6 @@ export function createWarehouseOperations(dependencies: {
                 CASE WHEN la.asset_status = 'READY' THEN la.byte_size ELSE NULL END AS byte_size
          FROM shipment_delivery_changes d
          INNER JOIN shipments s ON s.id = d.shipment_id
-         INNER JOIN warehouse_client_access a
-           ON a.client_id = s.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
          LEFT JOIN label_assets la ON la.id = s.current_label_asset_id
          WHERE 1 = 1 ${cursorClause}
          ORDER BY d.revision ASC
@@ -143,19 +139,17 @@ export function createWarehouseOperations(dependencies: {
       };
     },
 
-    async openLabel(session: WarehouseSession, assetIdValue: unknown): Promise<{ metadata: LabelDownloadRow; object: LabelStorageObject }> {
+    async openLabel(_session: WarehouseSession, assetIdValue: unknown): Promise<{ metadata: LabelDownloadRow; object: LabelStorageObject }> {
       const assetId = text(assetIdValue, 'assetId', 36)!;
       const [rows] = await mysql.execute<LabelDownloadRow[]>(
         `SELECT la.id, la.content_sha256, la.content_type, la.byte_size, la.storage_key
          FROM label_assets la
          INNER JOIN shipments s ON s.id = la.shipment_id AND s.current_label_asset_id = la.id
-         INNER JOIN warehouse_client_access a
-           ON a.client_id = s.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
          WHERE la.id = ? AND la.asset_status = 'READY'
          LIMIT 1`,
-        [session.warehouseId, assetId],
+        [assetId],
       );
-      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在或当前仓库无权访问。');
+      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在、尚未就绪或已失效。');
       const object = await storage.open(rows[0].storage_key).catch(() => {
         throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单文件暂时不可用。');
       });
@@ -167,6 +161,11 @@ export function createWarehouseOperations(dependencies: {
     },
 
     async recordPrintAttempt(session: WarehouseSession, input: Record<string, unknown>) {
+      const warehouseId = session.warehouseId;
+      const warehouseCode = session.warehouseCode;
+      if (!warehouseId || !warehouseCode) {
+        throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库。');
+      }
       const workstationId = text(input.workstationId, 'workstationId', 36)!;
       const shipmentId = text(input.shipmentId, 'shipmentId', 36)!;
       const labelAssetId = text(input.labelAssetId, 'labelAssetId', 36)!;
@@ -196,7 +195,7 @@ export function createWarehouseOperations(dependencies: {
         await connection.beginTransaction();
         const [workstations] = await connection.execute<WorkstationAccessRow[]>(
           `SELECT id FROM workstations WHERE id = ? AND warehouse_id = ? AND workstation_status = 'ACTIVE' LIMIT 1`,
-          [workstationId, session.warehouseId],
+          [workstationId, warehouseId],
         );
         if (!workstations[0]) throw new ApiError(403, 'WORKSTATION_NOT_ALLOWED', '工作站不存在、已停用或不属于当前仓库。');
         const [targets] = await connection.execute<PrintTargetRow[]>(
@@ -204,12 +203,10 @@ export function createWarehouseOperations(dependencies: {
                   s.first_leg_tracking_no, s.courier_tracking_no, s.carrier, s.status, s.version
            FROM shipments s
            INNER JOIN label_assets la ON la.id = s.current_label_asset_id AND la.asset_status = 'READY'
-           INNER JOIN warehouse_client_access a
-             ON a.client_id = s.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
            WHERE s.id = ? AND la.id = ? LIMIT 1`,
-          [session.warehouseId, shipmentId, labelAssetId],
+          [shipmentId, labelAssetId],
         );
-        if (!targets[0]) throw new ApiError(409, 'PRINT_TARGET_STALE', '当前面单已失效或无权打印，请先重新同步。');
+        if (!targets[0]) throw new ApiError(409, 'PRINT_TARGET_STALE', '当前面单已失效，请先重新同步。');
 
         const attemptId = randomUUID();
         const [insert] = await connection.execute<ResultSetHeader>(
@@ -217,7 +214,7 @@ export function createWarehouseOperations(dependencies: {
              (id, client_id, shipment_id, label_asset_id, warehouse_id, user_id, workstation_id,
               client_attempt_id, payload_sha256, outcome, printer_name, message, occurred_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [attemptId, targets[0].client_id, shipmentId, labelAssetId, session.warehouseId, session.userId,
+          [attemptId, targets[0].client_id, shipmentId, labelAssetId, warehouseId, session.userId,
             workstationId, clientAttemptId, payloadHash, outcome, printerName, message, occurredAt],
         );
         if (insert.affectedRows === 0) {
@@ -238,7 +235,7 @@ export function createWarehouseOperations(dependencies: {
              (id, client_id, shipment_id, request_id, event_type, actor_type, actor_id, event_data, occurred_at)
            VALUES (?, ?, ?, ?, ?, 'WORKSTATION', ?, ?, ?)`,
           [randomUUID(), targets[0].client_id, shipmentId, clientAttemptId, eventType, workstationId,
-            JSON.stringify({ attemptId, outcome, printerName, message, userId: session.userId, warehouseId: session.warehouseId }), occurredAt],
+            JSON.stringify({ attemptId, outcome, printerName, message, userId: session.userId, warehouseId }), occurredAt],
         );
         await outboundWebhooks.enqueuePrintAttempt(connection, {
           clientId: targets[0].client_id,
@@ -253,7 +250,7 @@ export function createWarehouseOperations(dependencies: {
           shipmentVersion: Number(targets[0].version),
           printerName,
           message,
-          warehouseCode: session.warehouseCode,
+          warehouseCode,
         });
         await connection.commit();
         return { id: attemptId, outcome, recordedAt: new Date().toISOString(), replayed: false };

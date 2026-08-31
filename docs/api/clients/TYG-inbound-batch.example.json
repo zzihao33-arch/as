@@ -1,0 +1,26 @@
+{
+  "batchId": "TYG-20260830-18098109734",
+  "airPickup": {
+    "billNo": "180-98109734",
+    "cargoName": "E-commerce parcels",
+    "forecastCartons": 120,
+    "forecastPackages": 2,
+    "forecastWeight": 1850.5,
+    "forecastWeightUnit": "KG",
+    "remarks": "JFK warehouse integration test"
+  },
+  "shipments": [
+    {
+      "firstLegTrackingNo": "HHWV06218005702YQ",
+      "courierTrackingNo": "LC095500137US",
+      "carrier": "USPS",
+      "order_id": "TYG-SO-20260830-0001"
+    },
+    {
+      "firstLegTrackingNo": "HHWVP6225107301YQ",
+      "courierTrackingNo": "LP095529498US",
+      "carrier": "USPS",
+      "order_id": "TYG-SO-20260830-0002"
+    }
+  ]
+}

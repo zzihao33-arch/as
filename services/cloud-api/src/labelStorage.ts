@@ -12,6 +12,7 @@ export type LabelStorage = {
   healthCheck(): Promise<void>;
   put(storageKey: string, content: Buffer): Promise<void>;
   open(storageKey: string): Promise<LabelStorageObject>;
+  remove?(storageKey: string): Promise<void>;
 };
 
 function isAlreadyExists(error: unknown): boolean {
@@ -77,6 +78,13 @@ export function createFilesystemLabelStorage(rootDirectory: string): LabelStorag
       const metadata = await stat(target);
       if (!metadata.isFile()) throw new Error('Stored label is not a file.');
       return { stream: createReadStream(target), byteSize: metadata.size };
+    },
+
+    async remove(storageKey) {
+      const target = resolveStoragePath(root, storageKey);
+      await unlink(target).catch(error => {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      });
     },
   };
 }

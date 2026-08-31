@@ -706,7 +706,7 @@ export default function BolManager() {
 
         if (isCurrent) setRecords(nextRecords);
       } catch {
-        if (isCurrent) setNotice('无法读取本机 BOL 历史，当前会话仍可继续创建和输出。');
+        if (isCurrent) setNotice('无法读取本机交仓凭证历史，当前会话仍可继续创建和输出。');
       } finally {
         if (isCurrent) setIsRecordsLoading(false);
       }
@@ -720,7 +720,7 @@ export default function BolManager() {
   useEffect(() => {
     if (isRecordsLoading) return;
     void writeLocalFirstValue('bolRecords', BOL_RECORDS_DATABASE_KEY, records).catch(() => {
-      setNotice('BOL 已保留在当前页面，但无法写入 IndexedDB 历史记录。');
+      setNotice('交仓凭证已保留在当前页面，但无法写入 IndexedDB 历史记录。');
     });
   }, [isRecordsLoading, records]);
 
@@ -827,7 +827,7 @@ export default function BolManager() {
     setErrors(nextErrors);
 
     if (!isBolValid(nextErrors)) {
-      setNotice('请先修正红色提示项，再生成 BOL。');
+      setNotice('请先修正红色提示项，再生成交仓凭证。');
       return;
     }
 
@@ -879,7 +879,7 @@ export default function BolManager() {
 
     setRecords(current => keepLatestBolRecords([record, ...current.filter(item => item.id !== record.id)]));
     setActiveRecord(record);
-    setNotice('BOL 已保存，可打印或下载 PDF。');
+    setNotice('交仓凭证已保存，可打印或下载 PDF。');
     setStage('output');
   };
 
@@ -987,7 +987,7 @@ export default function BolManager() {
         ))));
         setActiveRecord(current => current ? { ...current, printCount: current.printCount + 1 } : current);
       }
-      setNotice('完整 Letter 版 BOL 已送入浏览器打印队列。');
+      setNotice('完整 Letter 版交仓凭证已送入浏览器打印队列。');
     } catch (error) {
       printWindow.close();
       setNotice(`打印准备失败：${error instanceof Error ? error.message : '请重试'}`);
@@ -1012,8 +1012,8 @@ export default function BolManager() {
             <FileCheck2 className="w-6 h-6 text-brand-green" />
           </div>
           <div>
-            <Typography.Title heading={3} className="!mb-0">BOL管理</Typography.Title>
-            <Typography.Paragraph type="secondary" className="!mb-0">录入单号、渠道、装货数量和提货时间，实时生成标准 BOL 提货单。</Typography.Paragraph>
+            <Typography.Title heading={3} className="!mb-0">交仓凭证</Typography.Title>
+            <Typography.Paragraph type="secondary" className="!mb-0">录入单号、渠道、装货数量和提货时间，实时生成标准交仓凭证。</Typography.Paragraph>
           </div>
         </div>
         <div className="cmhub-bol-toolbar-actions">
@@ -1032,7 +1032,7 @@ export default function BolManager() {
               disabled={isRecordsLoading}
               icon={<FileText className="w-4 h-4" />}
             >
-              {isRecordsLoading ? '正在恢复历史…' : '新建 BOL'}
+              {isRecordsLoading ? '正在恢复历史…' : '新建交仓凭证'}
             </ArcoButton>
           )}
         </div>
@@ -1045,9 +1045,9 @@ export default function BolManager() {
       {stage === 'list' && (
         <div className="no-print cmhub-bol-list">
           {isRecordsLoading ? (
-            <Empty description="正在从本机 IndexedDB 恢复 BOL 历史…" />
+            <Empty description="正在从本机恢复交仓凭证历史…" />
           ) : records.length === 0 ? (
-            <Empty description="还没有生成过 BOL。点击“新建 BOL”，扫码或输入 BOL 单号后即可生成预览。" />
+            <Empty description="还没有生成过交仓凭证。点击“新建交仓凭证”，扫码或输入 BOL 单号后即可生成预览。" />
           ) : (
             <ArcoTable
               rowKey="id"
@@ -1181,7 +1181,7 @@ export default function BolManager() {
                 onClick={submitForPreview}
                 icon={<Save className="w-4 h-4" />}
               >
-                生成 BOL
+                生成交仓凭证
               </ArcoButton>
             </div>
           </div>
@@ -1198,8 +1198,8 @@ export default function BolManager() {
             <div className="flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-brand-green" />
               <div>
-                <h3 className="font-bold text-text-primary">请核对 BOL 模板字段</h3>
-                <p className="text-sm text-text-secondary/70">确认无误后保存正式 BOL；返回修改会保留当前表单内容。</p>
+                <h3 className="font-bold text-text-primary">请核对交仓凭证字段</h3>
+                <p className="text-sm text-text-secondary/70">确认无误后保存正式交仓凭证；返回修改会保留当前表单内容。</p>
               </div>
             </div>
             <div className="flex gap-3">
@@ -1231,7 +1231,7 @@ export default function BolManager() {
             <div className="flex items-center gap-3">
               <Truck className="w-5 h-5 text-brand-green" />
               <div>
-                <h3 className="font-bold text-text-primary">BOL 已生成</h3>
+                <h3 className="font-bold text-text-primary">交仓凭证已生成</h3>
                 <p className="text-sm text-text-secondary/70">
                   {activeRecord ? `${activeRecord.bolNo} · v${activeRecord.version} · 已打印 ${activeRecord.printCount} 次` : '可打印或下载 PDF'}
                 </p>

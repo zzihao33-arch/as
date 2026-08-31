@@ -38,10 +38,10 @@ export default function InterceptAlertOverlay({ rule, scannedValue, onConfirm }:
         <div className="cmhub-intercept-alert-icon" aria-hidden="true"><ShieldAlert size={54} strokeWidth={2.2} /></div>
         <Tag className="cmhub-intercept-alert-tag" color="red">拦截</Tag>
         <h1 id="intercept-alert-title">快件已阻断</h1>
-        <p id="intercept-alert-description">命中本地拦截名单，请将该快件移入指定区域后再继续扫码。</p>
+        <p id="intercept-alert-description">命中全局拦截名单，请将该快件移入指定区域后再继续扫码。</p>
         <div className="cmhub-intercept-alert-waybill" aria-label={`拦截单号：${scannedValue}`}>{scannedValue}</div>
         <dl className="cmhub-intercept-alert-details">
-          <div><dt>拦截原因</dt><dd>命中拦截名单</dd></div>
+          <div><dt>拦截原因</dt><dd>{rule.reason || '命中拦截名单'}</dd></div>
           <div><dt>添加来源</dt><dd>{rule.source === 'scan' ? '扫码录入' : '手动录入'}</dd></div>
         </dl>
         <Button className="cmhub-intercept-alert-confirm" type="primary" status="danger" size="large" onClick={onConfirm}>

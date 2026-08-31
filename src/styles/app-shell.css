@@ -95,7 +95,8 @@
   font-size: 12px;
   line-height: 1.55;
 }
-.cmhub-sider-footer .arco-badge-status-text { color: var(--success-6); }
+.cmhub-workspace-status { display: inline-flex; align-items: center; gap: 7px; color: var(--color-text-2); }
+.cmhub-workspace-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--primary-6); box-shadow: 0 0 0 4px var(--color-primary-light-1); }
 .cmhub-sider-footer small {
   color: var(--color-text-3);
   font-size: 11px;
@@ -120,8 +121,24 @@
 .cmhub-topbar-actions { display: flex; align-items: center; gap: 14px; }
 .cmhub-theme-select { width: 110px; }
 .cmhub-online-status { display: inline-flex; align-items: center; gap: 7px; color: var(--color-text-2); font-size: 13px; }
-.cmhub-online-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--success-6); box-shadow: 0 0 0 4px var(--color-success-light-1); }
+.cmhub-online-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--primary-6); box-shadow: 0 0 0 4px var(--color-primary-light-1); }
 .cmhub-user-avatar { background: var(--primary-6) !important; color: var(--color-bg-1) !important; font-weight: 700; }
+.cmhub-user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-1);
+  cursor: pointer;
+  text-align: left;
+}
+.cmhub-user-menu-trigger:hover { background: var(--color-fill-2); }
+.cmhub-user-menu-trigger > span { display: grid; gap: 1px; }
+.cmhub-user-menu-trigger strong { max-width: 150px; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.cmhub-user-menu-trigger small { max-width: 150px; overflow: hidden; color: var(--color-text-3); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .cmhub-mobile-menu-button { display: none !important; margin-right: 8px; color: var(--color-text-1) !important; }
 .cmhub-content { min-width: 0; padding: 28px 30px 40px; }
 
@@ -251,6 +268,7 @@
   .cmhub-topbar .arco-breadcrumb-separator:nth-of-type(1),
   .cmhub-topbar .arco-breadcrumb-separator:nth-of-type(2) { display: none; }
   .cmhub-online-status { display: none; }
+  .cmhub-user-menu-trigger > span { display: none; }
   .cmhub-page-heading { flex-direction: column; gap: 10px; margin-bottom: 18px; }
   .cmhub-page-heading h1 { font-size: 23px; }
   .cmhub-page-heading .arco-tag { align-self: flex-start; }
@@ -294,4 +312,86 @@
   color: #fff;
   font-size: 20px;
   font-weight: 700;
+}
+
+.cmhub-login-version {
+  justify-self: end;
+  color: var(--color-text-3);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+}
+
+.cmhub-admin-page > .arco-alert { margin-bottom: 16px; }
+
+.cmhub-admin-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 160px 180px auto;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  background: var(--color-bg-1);
+}
+
+.cmhub-admin-page > .arco-table {
+  border: 1px solid var(--color-border-2);
+  border-radius: var(--cmhub-radius-lg);
+  overflow: hidden;
+}
+
+.cmhub-account-cell { display: grid; gap: 3px; }
+.cmhub-account-cell strong { color: var(--color-text-1); font-weight: 600; }
+.cmhub-account-cell span { color: var(--color-text-3); font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+
+.cmhub-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cmhub-form-grid .arco-form-item { min-width: 0; }
+
+.cmhub-secret-result dl { display: grid; gap: 8px; }
+.cmhub-secret-result dl div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
+.cmhub-secret-result dt { color: var(--color-text-3); }
+.cmhub-secret-result dd { margin: 0; color: var(--color-text-1); overflow-wrap: anywhere; }
+.cmhub-mono { font-family: 'IBM Plex Mono', monospace; }
+
+.cmhub-role-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cmhub-role-list .arco-card-body { display: grid; gap: 6px; padding: 10px; }
+.cmhub-role-list button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.cmhub-role-list button:hover { background: var(--color-fill-2); }
+.cmhub-role-list button.is-active { border-color: var(--color-primary-light-3); background: var(--color-primary-light-1); color: var(--primary-6); }
+.cmhub-role-list button span { display: flex; align-items: center; gap: 8px; }
+.cmhub-role-list button small { color: var(--color-text-3); }
+
+.cmhub-permission-editor .arco-card-body { min-height: 420px; }
+.cmhub-permission-groups { display: grid; gap: 12px; margin: 20px 0; }
+.cmhub-permission-groups section { padding: 14px; border: 1px solid var(--color-border-2); border-radius: 10px; }
+.cmhub-permission-groups section > .arco-checkbox { margin-bottom: 12px; font-weight: 600; }
+.cmhub-permission-groups section > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; padding-left: 26px; }
+.cmhub-permission-groups .arco-checkbox-text { display: inline-flex; align-items: center; gap: 6px; }
+.cmhub-editor-footer { display: flex; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--color-border-2); }
+
+@media (max-width: 900px) {
+  .cmhub-admin-toolbar { grid-template-columns: 1fr; }
+  .cmhub-role-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .cmhub-form-grid,
+  .cmhub-permission-groups section > div { grid-template-columns: 1fr; }
 }

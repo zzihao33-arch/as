@@ -576,7 +576,7 @@ export function createOutboundWebhooks(dependencies: {
     timer = null;
   }
 
-  async function listForWarehouse(session: WarehouseSession, input: { status?: unknown; limit?: unknown }) {
+  async function listForWarehouse(_session: WarehouseSession, input: { status?: unknown; limit?: unknown }) {
     const status = input.status === undefined || input.status === '' ? null : String(input.status);
     if (status && !DELIVERY_STATUSES.has(status as WebhookDeliveryStatus)) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
@@ -588,12 +588,10 @@ export function createOutboundWebhooks(dependencies: {
               e.last_http_status, e.last_error_code, e.last_error_message, e.delivered_at, e.created_at
        FROM outbound_webhook_events e
        INNER JOIN clients c ON c.id = e.client_id
-       INNER JOIN warehouse_client_access a
-         ON a.client_id = e.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
        WHERE (? IS NULL OR e.delivery_status = ?)
        ORDER BY e.created_at DESC
        LIMIT ${limit}`,
-      [session.warehouseId, status, status],
+      [status, status],
     );
     return rows.map(row => ({
       id: row.id,
@@ -613,16 +611,14 @@ export function createOutboundWebhooks(dependencies: {
     }));
   }
 
-  async function listAttemptsForWarehouse(session: WarehouseSession, eventIdValue: unknown) {
+  async function listAttemptsForWarehouse(_session: WarehouseSession, eventIdValue: unknown) {
     const eventId = typeof eventIdValue === 'string' ? eventIdValue.trim() : '';
     if (!UUID_PATTERN.test(eventId)) throw new ApiError(400, 'VALIDATION_ERROR', 'eventId 必须是 UUID。');
     const [access] = await mysql.execute<EventAccessRow[]>(
       `SELECT e.id, e.client_id, e.delivery_status
        FROM outbound_webhook_events e
-       INNER JOIN warehouse_client_access a
-         ON a.client_id = e.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
        WHERE e.id = ? LIMIT 1`,
-      [session.warehouseId, eventId],
+      [eventId],
     );
     if (!access[0]) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件。');
     const [rows] = await mysql.execute<ListedAttemptRow[]>(
@@ -655,10 +651,8 @@ export function createOutboundWebhooks(dependencies: {
       const [events] = await connection.execute<EventAccessRow[]>(
         `SELECT e.id, e.client_id, e.delivery_status
          FROM outbound_webhook_events e
-         INNER JOIN warehouse_client_access a
-           ON a.client_id = e.client_id AND a.warehouse_id = ? AND a.access_status = 'ACTIVE'
          WHERE e.id = ? FOR UPDATE`,
-        [session.warehouseId, eventId],
+        [eventId],
       );
       const event = events[0];
       if (!event) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件。');

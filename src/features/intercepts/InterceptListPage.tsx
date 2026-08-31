@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Card, Empty, Input, Message, Table, Tag, Typography } from '@arco-design/web-react';
+import { Alert, Button, Card, Empty, Input, Message, Modal, Select, Table, Tag, Typography } from '@arco-design/web-react';
 import type { RefInputType, RefTextAreaType } from '@arco-design/web-react/es/Input';
-import { Barcode, ClipboardPlus, ShieldAlert, Trash2 } from 'lucide-react';
+import { Barcode, ClipboardPlus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import { type InterceptRule, useInterceptRules } from './useInterceptRules';
+import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 
 const formatAddedAt = (timestamp: number) => new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
 }).format(timestamp);
 
-export default function InterceptListPage() {
-  const { rules, storageStatus, addRules, removeRule } = useInterceptRules();
+export default function InterceptListPage({ embedded = false }: { embedded?: boolean }) {
+  const { rules, storageStatus, lastSyncedAt, sync, addRules, removeRule } = useInterceptRules();
+  const warehouseSession = useWarehouseSession();
+  const canManage = warehouseSession.hasPermission('intercepts.manage');
   const [waybillInput, setWaybillInput] = useState('');
   const [scanMode, setScanMode] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
+  const [reason, setReason] = useState('客户要求拦截');
   const inputRef = useRef<RefInputType>(null);
   const batchInputRef = useRef<RefTextAreaType>(null);
 
@@ -28,7 +32,7 @@ export default function InterceptListPage() {
   }, [scanMode]);
 
   const commitRule = async () => {
-    const result = await addRules(waybillInput, scanMode ? 'scan' : 'manual');
+    const result = await addRules(waybillInput, scanMode ? 'scan' : 'manual', reason);
     if (!result.ok) {
       Message.warning(result.message);
       return;
@@ -44,6 +48,11 @@ export default function InterceptListPage() {
       title: '拦截单号',
       dataIndex: 'waybillNo',
       render: (value: string) => <Typography.Text className="cmhub-intercept-waybill">{value}</Typography.Text>
+    },
+    {
+      title: '拦截原因',
+      dataIndex: 'reason',
+      render: (value: string | undefined) => value || '命中拦截名单',
     },
     {
       title: '添加时间',
@@ -62,7 +71,15 @@ export default function InterceptListPage() {
       dataIndex: 'id',
       width: 96,
       render: (id: string, record: InterceptRule) => (
-        <Button className="cmhub-intercept-delete-button" type="text" status="danger" size="small" onClick={() => void removeRule(id)} aria-label={`删除拦截单号 ${record.waybillNo}`}>
+        <Button disabled={!canManage} className="cmhub-intercept-delete-button" type="text" status="danger" size="small" onClick={() => {
+          Modal.confirm({
+            title: '删除拦截条目？',
+            content: `删除后 ${record.waybillNo} 将不再阻止所有工作站打印。`,
+            okText: '确认删除',
+            okButtonProps: { status: 'danger' },
+            onOk: () => removeRule(id),
+          });
+        }} aria-label={`删除拦截单号 ${record.waybillNo}`}>
           <Trash2 size={15} aria-hidden="true" />
           <span>删除</span>
         </Button>
@@ -71,13 +88,21 @@ export default function InterceptListPage() {
   ];
 
   return (
-    <section className="cmhub-page cmhub-intercept-page" aria-labelledby="intercept-page-title">
+    <section className={`cmhub-page cmhub-intercept-page${embedded ? ' is-embedded' : ''}`} aria-labelledby="intercept-page-title">
       <div className="cmhub-page-heading">
         <div>
-          <h1 id="intercept-page-title">拦截名单</h1>
-          <p>本机缓存实时匹配扫描单号；命中后将立即阻断打印任务。</p>
+          <h1 id="intercept-page-title">{embedded ? '全局拦截规则' : '拦截名单'}</h1>
+          <p>云端全局共享拦截单号，所有仓库工作站同步命中并立即阻断打印。</p>
         </div>
-        <Tag color="red" bordered={false}>本地硬拦截</Tag>
+        <div className="cmhub-intercept-sync-state">
+          <Tag color="red" bordered={false}>全局硬拦截</Tag>
+          <Tag color={storageStatus === 'ready' ? 'arcoblue' : 'orange'}>
+            {storageStatus === 'ready'
+              ? `已同步 ${lastSyncedAt ? formatAddedAt(lastSyncedAt) : ''}`
+              : storageStatus === 'loading' ? '正在同步' : '同步异常'}
+          </Tag>
+          <Button size="small" icon={<RefreshCw size={14} />} onClick={() => void sync()}>立即同步</Button>
+        </div>
       </div>
 
       {storageStatus !== 'ready' && storageStatus !== 'loading' && (
@@ -85,11 +110,11 @@ export default function InterceptListPage() {
           className="cmhub-intercept-storage-alert"
           type="warning"
           showIcon
-          content={storageStatus === 'corrupted' ? '拦截库读取异常，当前已跳过拦截判断；请重新添加需要拦截的单号。' : '本机无法写入 IndexedDB，当前名单可能无法在刷新后恢复。'}
+          content={storageStatus === 'corrupted' ? '本机拦截缓存读取异常，正在等待云端重新同步。' : '无法连接云端拦截服务。为避免漏掉拦截，当前扫码打印将被暂停。'}
         />
       )}
 
-      <Card className="cmhub-intercept-entry" bordered>
+      {canManage && <Card className="cmhub-intercept-entry" bordered>
         <div className="cmhub-intercept-entry-summary">
           <div className="cmhub-intercept-entry-icon"><ShieldAlert size={22} aria-hidden="true" /></div>
           <div className="cmhub-intercept-entry-copy">
@@ -116,7 +141,7 @@ export default function InterceptListPage() {
             <Input
               ref={inputRef}
               value={waybillInput}
-              maxLength={25}
+              maxLength={128}
               allowClear
               placeholder={scanMode ? '请扫描条码（10 秒内）' : '输入或粘贴单号'}
               onChange={setWaybillInput}
@@ -124,6 +149,18 @@ export default function InterceptListPage() {
               aria-label="拦截单号"
             />
           )}
+          <Select
+            aria-label="拦截原因"
+            value={reason}
+            onChange={setReason}
+            options={[
+              { label: '客户要求拦截', value: '客户要求拦截' },
+              { label: '地址异常', value: '地址异常' },
+              { label: '包裹破损', value: '包裹破损' },
+              { label: '需人工复核', value: '需人工复核' },
+              { label: '其他原因', value: '其他原因' },
+            ]}
+          />
           <div className="cmhub-intercept-entry-actions" role="group" aria-label="拦截单号操作">
             <Button className="cmhub-intercept-scan-button" loading={scanMode} onClick={() => {
               setWaybillInput('');
@@ -149,7 +186,7 @@ export default function InterceptListPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </Card>}
 
       <Card className="cmhub-intercept-list-card" title={`拦截列表 · ${rules.length} 条`} bordered>
         {rules.length ? (

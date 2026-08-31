@@ -65,6 +65,12 @@ sudo env PATH="$PATH:/usr/bin" pm2 startup systemd -u cmhub --hp /home/cmhub
 4. `database/004_add_label_assets_and_shipment_events.sql`
 5. `database/005_add_warehouse_identity_and_print_attempts.sql`
 6. `database/006_add_outbound_webhook_outbox.sql`
+7. `database/007_add_global_identity_and_rbac.sql`
+8. `database/008_add_shared_work_batches_and_intercepts.sql`
+9. `database/009_add_air_pickup_lifecycle.sql`
+10. `database/010_integrate_handover_document_permissions.sql`
+11. `database/011_link_air_pickups_clients_shipments_and_receipt_evidence.sql`
+12. `database/012_add_attendance_and_payroll.sql`
 
 在受控副本中替换 `001` 的 `REPLACE_WITH_A_LONG_RANDOM_PASSWORD`，不得把真实密码提交到仓库。新数据库示例：
 
@@ -75,6 +81,12 @@ sudo mysql < /opt/cmhub-api/database/003_harden_upstream_integrations.sql
 sudo mysql < /opt/cmhub-api/database/004_add_label_assets_and_shipment_events.sql
 sudo mysql < /opt/cmhub-api/database/005_add_warehouse_identity_and_print_attempts.sql
 sudo mysql < /opt/cmhub-api/database/006_add_outbound_webhook_outbox.sql
+sudo mysql < /opt/cmhub-api/database/007_add_global_identity_and_rbac.sql
+sudo mysql < /opt/cmhub-api/database/008_add_shared_work_batches_and_intercepts.sql
+sudo mysql < /opt/cmhub-api/database/009_add_air_pickup_lifecycle.sql
+sudo mysql < /opt/cmhub-api/database/010_integrate_handover_document_permissions.sql
+sudo mysql < /opt/cmhub-api/database/011_link_air_pickups_clients_shipments_and_receipt_evidence.sql
+sudo mysql < /opt/cmhub-api/database/012_add_attendance_and_payroll.sql
 ```
 
 以后增加的编号迁移同样按升序执行一次。不要重放已执行的脚本。旧环境若已通过早期草稿迁移或扩展版 `001` 获得 `order_id`/`raw_data` 等字段，应把当前 `002` 视为同一个逻辑变更，先由数据库负责人核对实际 schema 和部署记录，**不要再次执行**。
@@ -89,12 +101,20 @@ sudo mysql < /opt/cmhub-api/database/006_add_outbound_webhook_outbox.sql
 - `shipment_events`：物流单据通用审计事件；订单写入不再借用打印日志。
 - `print_logs`：保留给后续真实打印提交和结果事件。
 - `warehouses`、`warehouse_users`、`warehouse_memberships`：第一方仓库身份与角色。
-- `warehouse_client_access`：仓库可处理哪些上游客户数据的显式授权。
+- `warehouse_client_access`：迁移 `005` 留下的废弃授权结构；当前应用采用全局仓库可见性，不再读取该表。
 - `warehouse_sessions`、`workstations`：HttpOnly 会话和浏览器工作站审计身份。
 - `shipment_delivery_changes`：仓库增量同步使用的单调修订账本。
 - `print_attempts`：QZ 提交、失败、未知和拦截结果；不表示物理出纸。
 - `client_callback_endpoints`：每客户 HTTPS 地址与 AES-256-GCM 加密的回调签名密钥。
 - `outbound_webhook_events`、`outbound_webhook_attempts`：事务出站事件、租约、重试、死信、重放周期和逐次投递审计。
+- `warehouse_permissions`、`warehouse_roles`、`warehouse_role_permissions`：全局权限目录、运营角色和角色授权。
+- `warehouse_security_audit_events`：登录、密码、账户、角色和解锁安全审计。
+- `warehouse_work_batches`、`warehouse_work_batch_items`、`warehouse_work_batch_assets`：多工作站共享的 Excel/PDF 作业批次。
+- `warehouse_work_batch_print_attempts`：共享批次的幂等 QZ 提交回执。
+- `global_intercepts`、`global_intercept_changes`：所有仓库工作站共享的拦截规则和增量修订账本。
+- `air_pickup_orders`、`air_pickup_events`：记录来源客户、空提生命周期及一对多换单关联的主单据和审计轨迹。
+- `air_receipt_batches`、`air_receipt_evidence_assets`：多人共享的批量入库事实与入库照片。
+- `air_handover_batches`、`air_handover_evidence_assets`：多提单同车交仓及 POD/装车凭证。
 
 当前存储 Adapter 使用美国服务器私有磁盘，未来可在不改变业务接口的前提下切换到美国区对象存储。
 
@@ -128,6 +148,7 @@ MYSQL_USER=cmhub_api
 MYSQL_PASSWORD=<真实随机密码>
 REDIS_URL=redis://127.0.0.1:6379/0
 JSON_BODY_LIMIT=256kb
+INBOUND_BATCH_JSON_LIMIT=10mb
 LABEL_PDF_LIMIT=20mb
 LABEL_STORAGE_ROOT=/var/lib/cmhub/labels
 WAREHOUSE_ALLOWED_ORIGINS=https://cmhubtool.com
@@ -143,7 +164,7 @@ OUTBOUND_WEBHOOK_TIMEOUT_MS=10000
 OUTBOUND_WEBHOOK_MAX_ATTEMPTS=12
 ```
 
-`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。`LABEL_STORAGE_ROOT` 必须位于美国服务器的持久磁盘，并纳入独立备份；不要映射成 Nginx `root` 或 `alias`。
+`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。`INBOUND_BATCH_JSON_LIMIT=10mb` 仅用于已通过 API Key 与作用域校验的批量入口，以支持约 2,000 条物流映射；普通 JSON 接口继续受 `JSON_BODY_LIMIT=256kb` 限制。两者均不得无限放大。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。`LABEL_STORAGE_ROOT` 必须位于美国服务器的持久磁盘，并纳入独立备份；不要映射成 Nginx `root` 或 `alias`。
 
 主密钥与每客户 HMAC 密钥是两类不同凭据。主密钥只存在于 CM-HUB 服务环境和备份密钥库；客户密钥由 `generate-webhook-secret` 生成，经安全渠道交付客户，并通过 `CMHUB_WEBHOOK_SIGNING_SECRET` 临时环境变量写入密文。先保持 worker 关闭完成联调：
 
@@ -188,7 +209,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 1. `pm2 describe cloud-api` 中的 `cwd`、入口文件、解释器、环境和重启策略。
 2. Nginx 实际 `proxy_pass`、域名、证书和当前 upstream 端口。
 3. `/www/wwwroot/cloud-api` 的代码来源、分支/提交、构建产物和本地改动。
-4. MySQL 实际列、索引、账号授权，以及 `001` 至 `006` 对应变更是否已经执行。
+4. MySQL 实际列、索引、账号授权，以及 `001` 至 `008` 对应变更是否已经执行。
 5. 当前 `.env` 的变量名是否与 `services/cloud-api/.env.example` 一致；只比较键名，不把密钥复制到日志或工单。
 6. 备份、健康检查、回滚提交和 PM2 回滚命令。
 

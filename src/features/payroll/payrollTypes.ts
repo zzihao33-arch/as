@@ -27,14 +27,3 @@ export interface PayrollEmployeeBase {
   attendanceDetails?: PayrollAttendanceDetail[];
   issues: PayrollIssue[];
 }
-
-export interface PayrollParseResult {
-  employees: PayrollEmployeeBase[];
-  weeks: PayrollWeekRange[];
-  periodLabel: string;
-  parsedRows: number;
-}
-
-export type PayrollWorkerResponse =
-  | { type: 'success'; result: PayrollParseResult }
-  | { type: 'error'; message: string };
