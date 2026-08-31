@@ -154,7 +154,9 @@ ALTER TABLE warehouse_sessions
   MODIFY COLUMN absolute_expires_at DATETIME(3) NOT NULL;
 
 ALTER TABLE print_attempts
-  DROP FOREIGN KEY fk_print_attempts_user,
+  DROP FOREIGN KEY fk_print_attempts_user;
+
+ALTER TABLE print_attempts
   MODIFY COLUMN user_id CHAR(36) NULL,
   ADD COLUMN actor_reference VARCHAR(64) NULL AFTER user_id,
   ADD CONSTRAINT fk_print_attempts_user FOREIGN KEY (user_id) REFERENCES warehouse_users(id) ON UPDATE RESTRICT ON DELETE SET NULL;
