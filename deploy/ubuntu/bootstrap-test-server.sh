@@ -44,6 +44,20 @@ chown "$DEPLOY_USER:$DEPLOY_USER" "$authorized_keys"
 forced_key="command=\"/usr/local/sbin/cmhub-test-deploy-command\",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding $DEPLOY_PUBLIC_KEY"
 grep -Fqx "$forced_key" "$authorized_keys" || printf '%s\n' "$forced_key" >> "$authorized_keys"
 
+# The public SSH port is used only by the forced GitHub Actions deploy key.
+# Keep administrative recovery on Tencent Cloud TAT instead of password SSH.
+install -d -o root -g root -m 0755 /etc/ssh/sshd_config.d
+sshd_drop_in=/etc/ssh/sshd_config.d/00-cmhub-test.conf
+printf '%s\n' \
+  'PasswordAuthentication no' \
+  'KbdInteractiveAuthentication no' \
+  'PermitRootLogin no' \
+  'PubkeyAuthentication yes' \
+  > "$sshd_drop_in"
+chmod 0644 "$sshd_drop_in"
+/usr/sbin/sshd -t
+systemctl reload ssh
+
 if [[ ! -f "$APP_DIR/services/cloud-api/.env" ]]; then
   install -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0600 \
     "$APP_DIR/services/cloud-api/.env.example" \
