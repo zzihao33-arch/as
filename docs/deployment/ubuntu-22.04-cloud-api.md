@@ -116,7 +116,7 @@ sudo mysql < /opt/cmhub-api/database/012_add_attendance_and_payroll.sql
 - `air_receipt_batches`、`air_receipt_evidence_assets`：多人共享的批量入库事实与入库照片。
 - `air_handover_batches`、`air_handover_evidence_assets`：多提单同车交仓及 POD/装车凭证。
 
-当前存储 Adapter 使用美国服务器私有磁盘，未来可在不改变业务接口的前提下切换到美国区对象存储。
+存储 Adapter 支持美国服务器私有磁盘与腾讯云 COS。共享测试/生产环境应使用私有 COS，开发环境可继续使用本地磁盘；两种后端不改变业务接口。
 
 ## 配置服务（模板）
 
@@ -150,7 +150,14 @@ REDIS_URL=redis://127.0.0.1:6379/0
 JSON_BODY_LIMIT=256kb
 INBOUND_BATCH_JSON_LIMIT=10mb
 LABEL_PDF_LIMIT=20mb
+LABEL_STORAGE_BACKEND=filesystem
 LABEL_STORAGE_ROOT=/var/lib/cmhub/labels
+# 切换 COS 时改为 LABEL_STORAGE_BACKEND=cos，并配置：
+# COS_BUCKET=<完整 BucketName-APPID>
+# COS_REGION=na-ashburn
+# COS_PREFIX=production
+# COS_SECRET_ID=<最小权限 CAM SecretId>
+# COS_SECRET_KEY=<最小权限 CAM SecretKey>
 WAREHOUSE_ALLOWED_ORIGINS=https://cmhubtool.com
 WAREHOUSE_SESSION_HOURS=8
 OUTBOUND_WEBHOOK_ENABLED=false
@@ -164,7 +171,7 @@ OUTBOUND_WEBHOOK_TIMEOUT_MS=10000
 OUTBOUND_WEBHOOK_MAX_ATTEMPTS=12
 ```
 
-`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。`INBOUND_BATCH_JSON_LIMIT=10mb` 仅用于已通过 API Key 与作用域校验的批量入口，以支持约 2,000 条物流映射；普通 JSON 接口继续受 `JSON_BODY_LIMIT=256kb` 限制。两者均不得无限放大。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。`LABEL_STORAGE_ROOT` 必须位于美国服务器的持久磁盘，并纳入独立备份；不要映射成 Nginx `root` 或 `alias`。
+`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。`INBOUND_BATCH_JSON_LIMIT=10mb` 仅用于已通过 API Key 与作用域校验的批量入口，以支持约 2,000 条物流映射；普通 JSON 接口继续受 `JSON_BODY_LIMIT=256kb` 限制。两者均不得无限放大。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。文件系统模式下，`LABEL_STORAGE_ROOT` 必须位于美国服务器持久磁盘且不得映射成 Nginx `root` 或 `alias`；COS 模式必须使用私有桶、美国区地域、独立环境前缀和最小权限 CAM 凭据。
 
 主密钥与每客户 HMAC 密钥是两类不同凭据。主密钥只存在于 CM-HUB 服务环境和备份密钥库；客户密钥由 `generate-webhook-secret` 生成，经安全渠道交付客户，并通过 `CMHUB_WEBHOOK_SIGNING_SECRET` 临时环境变量写入密文。先保持 worker 关闭完成联调：
 

@@ -43,6 +43,14 @@ function asBoolean(name: string, fallback: boolean): boolean {
   throw new Error(`${name} must be true or false`);
 }
 
+function asChoice<const T extends string>(name: string, choices: readonly T[], fallback: T): T {
+  const value = process.env[name]?.trim().toLowerCase() || fallback;
+  if (!choices.includes(value as T)) {
+    throw new Error(`${name} must be one of: ${choices.join(', ')}`);
+  }
+  return value as T;
+}
+
 function decodeMasterKey(name: string, value: string | undefined): Buffer | null {
   value = value?.trim();
   if (!value) return null;
@@ -101,9 +109,17 @@ function asOriginList(name: string, fallback: string[]): string[] {
 }
 
 const environment = process.env.NODE_ENV ?? 'development';
+const labelStorageBackend = asChoice('LABEL_STORAGE_BACKEND', ['filesystem', 'cos'] as const, 'filesystem');
 const configuredLabelStorageRoot = process.env.LABEL_STORAGE_ROOT?.trim();
-if (environment === 'production' && !configuredLabelStorageRoot) {
+if (environment === 'production' && labelStorageBackend === 'filesystem' && !configuredLabelStorageRoot) {
   throw new Error('Missing required environment variable: LABEL_STORAGE_ROOT');
+}
+const cosBucket = process.env.COS_BUCKET?.trim();
+const cosRegion = process.env.COS_REGION?.trim();
+const cosSecretId = process.env.COS_SECRET_ID?.trim();
+const cosSecretKey = process.env.COS_SECRET_KEY?.trim();
+if (labelStorageBackend === 'cos' && (!cosBucket || !cosRegion || !cosSecretId || !cosSecretKey)) {
+  throw new Error('COS storage requires COS_BUCKET, COS_REGION, COS_SECRET_ID, and COS_SECRET_KEY');
 }
 const outboundWebhookEnabled = asBoolean('OUTBOUND_WEBHOOK_ENABLED', false);
 const outboundWebhookKeyVersion = process.env.OUTBOUND_WEBHOOK_KEY_VERSION?.trim() || 'v1';
@@ -124,7 +140,18 @@ export const config = {
   jsonLimit: process.env.JSON_BODY_LIMIT ?? '256kb',
   inboundBatchJsonLimit: process.env.INBOUND_BATCH_JSON_LIMIT ?? '10mb',
   labelPdfLimit: process.env.LABEL_PDF_LIMIT ?? '20mb',
-  labelStorageRoot: configuredLabelStorageRoot || resolve(process.cwd(), 'data', 'labels'),
+  labelStorage: labelStorageBackend === 'cos' ? {
+    backend: 'cos' as const,
+    bucket: cosBucket!,
+    region: cosRegion!,
+    secretId: cosSecretId!,
+    secretKey: cosSecretKey!,
+    securityToken: process.env.COS_SECURITY_TOKEN?.trim() || undefined,
+    prefix: process.env.COS_PREFIX?.trim() || '',
+  } : {
+    backend: 'filesystem' as const,
+    root: configuredLabelStorageRoot || resolve(process.cwd(), 'data', 'labels'),
+  },
   mysql: {
     host: required('MYSQL_HOST'),
     port: asPort('MYSQL_PORT', 3306),

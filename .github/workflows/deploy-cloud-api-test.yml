@@ -1,0 +1,97 @@
+name: Deploy cloud API to test
+
+on:
+  push:
+    branches:
+      - staging
+    paths:
+      - "services/cloud-api/**"
+      - "database/**"
+      - "deploy/ubuntu/**"
+      - ".github/workflows/deploy-cloud-api-test.yml"
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Restricted test-server command"
+        required: true
+        default: probe
+        type: choice
+        options:
+          - probe
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-api-test
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Verify and deploy test API
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: test
+
+    steps:
+      - name: Check out the exact test revision
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/cloud-api/package-lock.json
+
+      - name: Verify cloud API
+        working-directory: services/cloud-api
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Configure authenticated SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.CMHUB_TEST_DEPLOY_HOST }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.CMHUB_TEST_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PORT: ${{ secrets.CMHUB_TEST_DEPLOY_PORT }}
+          DEPLOY_SSH_KEY_B64: ${{ secrets.CMHUB_TEST_DEPLOY_SSH_KEY }}
+          DEPLOY_USER: ${{ secrets.CMHUB_TEST_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Missing CMHUB_TEST_DEPLOY_HOST secret}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing CMHUB_TEST_DEPLOY_KNOWN_HOSTS secret}"
+          : "${DEPLOY_PORT:?Missing CMHUB_TEST_DEPLOY_PORT secret}"
+          : "${DEPLOY_SSH_KEY_B64:?Missing CMHUB_TEST_DEPLOY_SSH_KEY secret}"
+          : "${DEPLOY_USER:?Missing CMHUB_TEST_DEPLOY_USER secret}"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s' "$DEPLOY_SSH_KEY_B64" | base64 --decode > "$HOME/.ssh/cmhub_test_deploy"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/cmhub_test_deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Run restricted test deployment command
+        env:
+          DEPLOY_HOST: ${{ secrets.CMHUB_TEST_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.CMHUB_TEST_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.CMHUB_TEST_DEPLOY_USER }}
+          REQUESTED_COMMAND: ${{ inputs.command }}
+        run: |
+          set -euo pipefail
+          command="${REQUESTED_COMMAND:-probe}"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then command="deploy"; fi
+          ssh -i "$HOME/.ssh/cmhub_test_deploy" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$DEPLOY_USER@$DEPLOY_HOST" "$command"
+
+      - name: Verify public test health
+        if: ${{ github.event_name == 'push' || inputs.command == 'deploy' }}
+        run: |
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error https://api-test.cmhubtool.com/healthz; then exit 0; fi
+            sleep 3
+          done
+          exit 1

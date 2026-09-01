@@ -6,7 +6,7 @@ import { closeConnections, mysql, redis } from './db.js';
 import { ApiError, normalizeApiError } from './errors.js';
 import { createLabelAssetModule } from './labelAssets.js';
 import { validateLabelPdf } from './labelPdf.js';
-import { createFilesystemLabelStorage } from './labelStorage.js';
+import { createCosLabelStorage, createFilesystemLabelStorage } from './labelStorage.js';
 import { createShipmentIngestor } from './shipmentIngest.js';
 import { createInboundBatchIngestor } from './inboundBatchIngest.js';
 import { createSharedWarehouseWork } from './sharedWarehouseWork.js';
@@ -53,7 +53,9 @@ function text(value: unknown, field: string, maxLength = 128, required = false):
 
 const shipmentIngestor = createShipmentIngestor({ mysql, redis });
 const inboundBatchIngestor = createInboundBatchIngestor({ mysql, redis });
-const labelStorage = createFilesystemLabelStorage(config.labelStorageRoot);
+const labelStorage = config.labelStorage.backend === 'cos'
+  ? createCosLabelStorage(config.labelStorage)
+  : createFilesystemLabelStorage(config.labelStorage.root);
 const labelAssets = createLabelAssetModule({
   mysql,
   storage: labelStorage,

@@ -1,10 +1,12 @@
-import { constants, createReadStream, type ReadStream } from 'node:fs';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { constants, createReadStream } from 'node:fs';
 import { access, link, mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { type Readable } from 'node:stream';
+import COS from 'cos-nodejs-sdk-v5';
 
 export type LabelStorageObject = {
-  stream: ReadStream;
+  stream: Readable;
   byteSize: number;
 };
 
@@ -29,6 +31,55 @@ function assertStorageKey(storageKey: string): void {
     throw new Error('Invalid private label storage key.');
   }
 }
+
+function normalizedPrefix(prefix: string): string {
+  const result = prefix.replace(/^\/+|\/+$/g, '');
+  if (result) assertStorageKey(result);
+  return result;
+}
+
+function joinedObjectKey(prefix: string, storageKey: string): string {
+  assertStorageKey(storageKey);
+  const normalized = normalizedPrefix(prefix);
+  return normalized ? `${normalized}/${storageKey}` : storageKey;
+}
+
+function header(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry?.[1] === undefined ? undefined : String(entry[1]);
+}
+
+function isMissingObject(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { statusCode?: unknown; code?: unknown };
+  return candidate.statusCode === 404 || candidate.code === 'NoSuchKey' || candidate.code === 'NotFound';
+}
+
+export type CosLabelStorageClient = {
+  headBucket(input: { Bucket: string; Region: string }): Promise<unknown>;
+  headObject(input: { Bucket: string; Region: string; Key: string }): Promise<{ headers?: Record<string, unknown> }>;
+  putObject(input: {
+    Bucket: string;
+    Region: string;
+    Key: string;
+    Body: Buffer;
+    ContentLength: number;
+    ContentType: string;
+    ACL: 'private';
+    'x-cos-meta-sha256': string;
+  }): Promise<unknown>;
+  getObjectStream(input: { Bucket: string; Region: string; Key: string }): Readable;
+  deleteObject(input: { Bucket: string; Region: string; Key: string }): Promise<unknown>;
+};
+
+export type CosLabelStorageOptions = {
+  bucket: string;
+  region: string;
+  secretId: string;
+  secretKey: string;
+  securityToken?: string;
+  prefix?: string;
+};
 
 function resolveStoragePath(root: string, storageKey: string): string {
   assertStorageKey(storageKey);
@@ -84,6 +135,68 @@ export function createFilesystemLabelStorage(rootDirectory: string): LabelStorag
       const target = resolveStoragePath(root, storageKey);
       await unlink(target).catch(error => {
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      });
+    },
+  };
+}
+
+export function createCosLabelStorage(
+  options: CosLabelStorageOptions,
+  injectedClient?: CosLabelStorageClient,
+): LabelStorage {
+  const client = injectedClient ?? new COS({
+    SecretId: options.secretId,
+    SecretKey: options.secretKey,
+    SecurityToken: options.securityToken,
+  }) as unknown as CosLabelStorageClient;
+  const location = { Bucket: options.bucket, Region: options.region };
+  const prefix = normalizedPrefix(options.prefix ?? '');
+
+  return {
+    async healthCheck() {
+      await client.headBucket(location);
+    },
+
+    async put(storageKey, content) {
+      const Key = joinedObjectKey(prefix, storageKey);
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      try {
+        const existing = await client.headObject({ ...location, Key });
+        const existingSha256 = header(existing.headers, 'x-cos-meta-sha256');
+        const existingLength = Number(header(existing.headers, 'content-length'));
+        if (existingSha256 !== sha256 || existingLength !== content.length) {
+          throw new Error('Existing content-addressed label does not match its storage key.');
+        }
+        return;
+      } catch (error) {
+        if (!isMissingObject(error)) throw error;
+      }
+
+      await client.putObject({
+        ...location,
+        Key,
+        Body: content,
+        ContentLength: content.length,
+        ContentType: 'application/octet-stream',
+        ACL: 'private',
+        'x-cos-meta-sha256': sha256,
+      });
+    },
+
+    async open(storageKey) {
+      const Key = joinedObjectKey(prefix, storageKey);
+      const metadata = await client.headObject({ ...location, Key });
+      const byteSize = Number(header(metadata.headers, 'content-length'));
+      if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+        throw new Error('COS object returned an invalid content length.');
+      }
+      return { stream: client.getObjectStream({ ...location, Key }), byteSize };
+    },
+
+    async remove(storageKey) {
+      const Key = joinedObjectKey(prefix, storageKey);
+      await client.deleteObject({ ...location, Key }).catch(error => {
+        if (!isMissingObject(error)) throw error;
       });
     },
   };

@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
-const outputDirectory = mkdtempSync(join(tmpdir(), 'cmhub-cloud-api-tests-'));
+const testCacheDirectory = join(packageDirectory, 'node_modules', '.cache');
+mkdirSync(testCacheDirectory, { recursive: true });
+const outputDirectory = mkdtempSync(join(testCacheDirectory, 'cmhub-cloud-api-tests-'));
 const tscPath = join(packageDirectory, 'node_modules', 'typescript', 'bin', 'tsc');
 const testConfigPath = join(packageDirectory, 'tsconfig.test.json');
 
