@@ -74,18 +74,70 @@ jobs:
 
       - name: Run restricted test deployment command
         env:
+          COS_SECRET_ID: ${{ secrets.CMHUB_TEST_COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.CMHUB_TEST_COS_SECRET_KEY }}
           DEPLOY_HOST: ${{ secrets.CMHUB_TEST_DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.CMHUB_TEST_DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.CMHUB_TEST_DEPLOY_USER }}
+          MYSQL_PASSWORD: ${{ secrets.CMHUB_TEST_MYSQL_PASSWORD }}
           REQUESTED_COMMAND: ${{ inputs.command }}
         run: |
           set -euo pipefail
           command="${REQUESTED_COMMAND:-probe}"
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then command="deploy"; fi
-          ssh -i "$HOME/.ssh/cmhub_test_deploy" -p "$DEPLOY_PORT" \
-            -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            "$DEPLOY_USER@$DEPLOY_HOST" "$command"
+          ssh_args=(
+            -i "$HOME/.ssh/cmhub_test_deploy"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            "$DEPLOY_USER@$DEPLOY_HOST"
+            "$command"
+          )
+          if [[ "$command" == "deploy" ]]; then
+            : "${MYSQL_PASSWORD:?Missing CMHUB_TEST_MYSQL_PASSWORD secret}"
+            : "${COS_SECRET_ID:?Missing CMHUB_TEST_COS_SECRET_ID secret}"
+            : "${COS_SECRET_KEY:?Missing CMHUB_TEST_COS_SECRET_KEY secret}"
+            if [[ "$MYSQL_PASSWORD$COS_SECRET_ID$COS_SECRET_KEY" == *$'\n'* ]]; then
+              echo "Protected test values must not contain newlines." >&2
+              exit 1
+            fi
+            {
+              printf '%s\n' \
+                'NODE_ENV=production' \
+                'HOST=127.0.0.1' \
+                'PORT=8080' \
+                'MYSQL_HOST=10.200.0.10' \
+                'MYSQL_PORT=3306' \
+                'MYSQL_DATABASE=tyg_integration_test' \
+                'MYSQL_USER=tyg_api'
+              node -e "process.stdout.write('MYSQL_PASSWORD=' + JSON.stringify(process.env.MYSQL_PASSWORD) + '\\n')"
+              printf '%s\n' \
+                'MYSQL_CONNECTION_LIMIT=10' \
+                'REDIS_URL=redis://127.0.0.1:6379/0' \
+                'JSON_BODY_LIMIT=256kb' \
+                'INBOUND_BATCH_JSON_LIMIT=10mb' \
+                'LABEL_PDF_LIMIT=20mb' \
+                'LABEL_STORAGE_BACKEND=cos' \
+                'COS_BUCKET=cmhub-labels-prod-1476409815' \
+                'COS_REGION=na-ashburn' \
+                'COS_PREFIX=test'
+              node -e "process.stdout.write('COS_SECRET_ID=' + JSON.stringify(process.env.COS_SECRET_ID) + '\\n')"
+              node -e "process.stdout.write('COS_SECRET_KEY=' + JSON.stringify(process.env.COS_SECRET_KEY) + '\\n')"
+              printf '%s\n' \
+                'WAREHOUSE_ALLOWED_ORIGINS=https://test.cmhubtool.com' \
+                'WAREHOUSE_SESSION_HOURS=8' \
+                'OUTBOUND_WEBHOOK_ENABLED=false' \
+                'OUTBOUND_WEBHOOK_KEY_VERSION=v1' \
+                'OUTBOUND_WEBHOOK_POLL_INTERVAL_MS=5000' \
+                'OUTBOUND_WEBHOOK_BATCH_SIZE=20' \
+                'OUTBOUND_WEBHOOK_LEASE_SECONDS=60' \
+                'OUTBOUND_WEBHOOK_TIMEOUT_MS=10000' \
+                'OUTBOUND_WEBHOOK_MAX_ATTEMPTS=12'
+            } | ssh "${ssh_args[@]}"
+          else
+            ssh "${ssh_args[@]}"
+          fi
 
       - name: Verify public test health
         if: ${{ github.event_name == 'push' || inputs.command == 'deploy' }}

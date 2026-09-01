@@ -6,6 +6,52 @@ BRANCH="${BRANCH:-staging}"
 REPO_URL="${REPO_URL:-https://github.com/zzihao33-arch/as.git}"
 ENV_FILE="$APP_DIR/services/cloud-api/.env"
 
+install_config_from_stdin() {
+  local next_file="$ENV_FILE.next"
+  local max_bytes=16384
+  local received_bytes
+
+  umask 077
+  head -c "$((max_bytes + 1))" > "$next_file"
+  received_bytes="$(wc -c < "$next_file")"
+  if [[ "$received_bytes" -eq 0 ]]; then
+    rm -f "$next_file"
+    return
+  fi
+  if [[ "$received_bytes" -gt "$max_bytes" ]]; then
+    rm -f "$next_file"
+    echo "Refusing oversized test environment input." >&2
+    exit 1
+  fi
+  for required_line in \
+    'NODE_ENV=production' \
+    'MYSQL_HOST=10.200.0.10' \
+    'MYSQL_DATABASE=tyg_integration_test' \
+    'MYSQL_USER=tyg_api' \
+    'LABEL_STORAGE_BACKEND=cos' \
+    'COS_BUCKET=cmhub-labels-prod-1476409815' \
+    'COS_REGION=na-ashburn' \
+    'COS_PREFIX=test' \
+    'WAREHOUSE_ALLOWED_ORIGINS=https://test.cmhubtool.com'; do
+    if ! grep -Fqx "$required_line" "$next_file"; then
+      rm -f "$next_file"
+      echo "Refusing test environment input missing: $required_line" >&2
+      exit 1
+    fi
+  done
+  for required_name in MYSQL_PASSWORD COS_SECRET_ID COS_SECRET_KEY; do
+    if ! grep -Eq "^${required_name}=.+$" "$next_file"; then
+      rm -f "$next_file"
+      echo "Refusing test environment input missing a protected value: $required_name" >&2
+      exit 1
+    fi
+  done
+  chmod 0600 "$next_file"
+  mv -f "$next_file" "$ENV_FILE"
+}
+
+install_config_from_stdin
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing protected test environment file: $ENV_FILE" >&2
   exit 1

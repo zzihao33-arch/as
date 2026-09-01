@@ -17,7 +17,7 @@ Never point a test deployment at the production database or an unprefixed produc
 
 Generate a dedicated Ed25519 key for GitHub Actions. Put only the public key into `DEPLOY_PUBLIC_KEY`, then execute `deploy/ubuntu/bootstrap-test-server.sh` as root through the Tencent Cloud console. The script installs Node.js 22, PM2, Nginx, Redis, Certbot, the restricted SSH command, and the test checkout.
 
-Populate `/opt/cmhub-api-test/services/cloud-api/.env` with mode `0600`. Test uses `NODE_ENV=production` so Secure cookies and production safety checks remain active. Required differences from production are:
+The deployment workflow writes `/opt/cmhub-api-test/services/cloud-api/.env` atomically with mode `0600` from the protected GitHub `test` environment. Do not edit or copy this file by hand. Test uses `NODE_ENV=production` so Secure cookies and production safety checks remain active. Required differences from production are:
 
 ```dotenv
 MYSQL_DATABASE=tyg_integration_test
@@ -40,8 +40,11 @@ Create GitHub environment `test` and configure:
 - `CMHUB_TEST_DEPLOY_USER`: `cmhub`
 - `CMHUB_TEST_DEPLOY_SSH_KEY`: base64 of the dedicated private key
 - `CMHUB_TEST_DEPLOY_KNOWN_HOSTS`: pinned `ssh-keyscan` result after independently verifying the host fingerprint
+- `CMHUB_TEST_MYSQL_PASSWORD`: password for `tyg_api@10.200.0.6`
+- `CMHUB_TEST_COS_SECRET_ID`: least-privileged CAM credential for the test COS prefix
+- `CMHUB_TEST_COS_SECRET_KEY`: corresponding CAM secret key
 
-Pushes to `staging` run verification, restricted SSH deployment, migration, PM2 reload, local health check, and public HTTPS health check. Production workflow and secrets are not reused.
+Pushes to `staging` run verification, transfer the protected test configuration over authenticated SSH without logging it, perform the restricted deployment and migration, reload PM2, and run local plus public HTTPS health checks. Production workflow and secrets are not reused.
 
 ## DNS and TLS
 
