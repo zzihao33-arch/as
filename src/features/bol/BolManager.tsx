@@ -413,6 +413,32 @@ function loadBolTemplateImage() {
   return loadImageFromSource(bolTemplateUrl, 'BOL 模板加载失败，请刷新后重试');
 }
 
+function drawFallbackBolTemplate(context: CanvasRenderingContext2D) {
+  context.save();
+  context.fillStyle = BOL_OUTPUT_COLORS.paper;
+  context.fillRect(0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
+  context.strokeStyle = '#cbd5e1';
+  context.lineWidth = 1;
+  context.strokeRect(39, 40, 534, 712);
+  context.fillStyle = BOL_OUTPUT_COLORS.ink;
+  context.font = '700 20px Arial, sans-serif';
+  context.fillText('CM-HUB', 57, 76);
+  context.font = '600 14px Arial, sans-serif';
+  context.fillText('BILL OF LADING', 238, 76);
+  context.font = '400 8px Arial, sans-serif';
+  context.fillStyle = '#475569';
+  context.fillText('Warehouse handover document', 238, 92);
+  context.beginPath();
+  context.moveTo(39, 103);
+  context.lineTo(573, 103);
+  context.stroke();
+  context.fillStyle = BOL_OUTPUT_COLORS.ink;
+  context.font = '600 9px Arial, sans-serif';
+  context.fillText('BOL NUMBER', 57, 246);
+  context.fillText('PICKUP DATE', 452, 704);
+  context.restore();
+}
+
 function drawCellCenteredText(
   context: CanvasRenderingContext2D,
   value: string,
@@ -568,7 +594,7 @@ async function renderBolOutputCanvas(form: BolForm, scale = BOL_OUTPUT_SCALE) {
     ]);
   }
 
-  const templateImage = await loadBolTemplateImage();
+  const templateImage = await loadBolTemplateImage().catch(() => null);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(BOL_TEMPLATE_WIDTH * scale);
   canvas.height = Math.round(BOL_TEMPLATE_HEIGHT * scale);
@@ -582,12 +608,15 @@ async function renderBolOutputCanvas(form: BolForm, scale = BOL_OUTPUT_SCALE) {
   context.scale(canvas.width / BOL_TEMPLATE_WIDTH, canvas.height / BOL_TEMPLATE_HEIGHT);
   context.fillStyle = BOL_OUTPUT_COLORS.paper;
   context.fillRect(0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
-  context.drawImage(templateImage, 0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
-
-  context.fillStyle = BOL_OUTPUT_COLORS.paper;
-  figmaTemplateStaticMasks.forEach(mask => {
-    context.fillRect(mask.x, mask.y, mask.width, mask.height);
-  });
+  if (templateImage) {
+    context.drawImage(templateImage, 0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
+    context.fillStyle = BOL_OUTPUT_COLORS.paper;
+    figmaTemplateStaticMasks.forEach(mask => {
+      context.fillRect(mask.x, mask.y, mask.width, mask.height);
+    });
+  } else {
+    drawFallbackBolTemplate(context);
+  }
 
   context.textBaseline = 'top';
   context.fillStyle = BOL_OUTPUT_COLORS.ink;
@@ -626,17 +655,22 @@ function BolDocument({
   printable: boolean;
 }) {
   const [documentImage, setDocumentImage] = useState('');
+  const [previewState, setPreviewState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
 
   useEffect(() => {
     let cancelled = false;
+    setPreviewState('loading');
+    setDocumentImage('');
 
     void renderBolOutputCanvas(form, 2).then(canvas => {
       if (!cancelled) {
         setDocumentImage(canvas.toDataURL('image/png'));
+        setPreviewState('ready');
       }
     }).catch(() => {
       if (!cancelled) {
         setDocumentImage('');
+        setPreviewState('unavailable');
       }
     });
 
@@ -649,17 +683,25 @@ function BolDocument({
     <div className={printable ? 'bol-print-target' : ''}>
       <div
         className="bol-letter-page relative isolate mx-auto h-[11in] min-h-[11in] w-[8.5in] overflow-hidden"
+        aria-busy={previewState === 'loading'}
         style={{
           backgroundColor: 'var(--cmhub-document-paper)',
           color: 'var(--cmhub-document-ink)'
         }}
       >
-        {documentImage && (
+        {documentImage ? (
           <img
             src={documentImage}
             alt="BOL 预览"
             className="absolute inset-0 h-full w-full select-none object-fill"
+            onError={() => { setDocumentImage(''); setPreviewState('unavailable'); }}
           />
+        ) : (
+          <div className="cmhub-bol-preview-state" role="status">
+            <FileText className="w-9 h-9" aria-hidden="true" />
+            <strong>{previewState === 'loading' ? '正在生成凭证预览' : '凭证预览暂不可用'}</strong>
+            <span>{previewState === 'loading' ? '正在恢复模板与字段内容' : '请刷新后重试；导出时会自动使用备用版式。'}</span>
+          </div>
         )}
       </div>
     </div>

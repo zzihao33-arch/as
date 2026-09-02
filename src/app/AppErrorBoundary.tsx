@@ -39,10 +39,10 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 
   private retryCurrentPage = () => {
-    this.setState(({ retryKey }) => ({
-      error: null,
-      retryKey: retryKey + 1,
-    }));
+    // React.lazy caches a rejected import promise. A local remount therefore
+    // cannot recover from a stale deployment chunk; a reload preserves the URL
+    // and requests the current asset manifest before mounting the workspace.
+    window.location.reload();
   };
 
   public render() {

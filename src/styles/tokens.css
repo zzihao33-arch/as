@@ -1,91 +1,261 @@
+/* CM-HUB Design System · Workbench SaaS · canonical token source */
 :root {
   color-scheme: light;
 
-  --cmhub-font-sans: "Geist", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --cmhub-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-  --cmhub-canvas-mist: #f8fafc;
-  --cmhub-pure-surface: #ffffff;
-  --cmhub-charcoal-ink: #172033;
-  --cmhub-slate-text: #475569;
-  --cmhub-muted-text: #64748b;
-  --cmhub-whisper-border: #e2e8f0;
-  --cmhub-soft-blue: #eff6ff;
-  --cmhub-brand-blue: #2563eb;
-  --cmhub-brand-blue-strong: #1d4ed8;
-  --cmhub-success-green: #16a34a;
-  --cmhub-warning-amber: #d97706;
-  --cmhub-danger-red: #dc2626;
+  /* Primitive — cool neutral and a single operational blue accent. */
+  --cmhub-neutral-0: oklch(99.6% 0.003 260);
+  --cmhub-neutral-25: oklch(98.7% 0.005 260);
+  --cmhub-neutral-50: oklch(97.2% 0.007 260);
+  --cmhub-neutral-100: oklch(94.8% 0.01 260);
+  --cmhub-neutral-200: oklch(90.7% 0.013 260);
+  --cmhub-neutral-300: oklch(84.6% 0.016 260);
+  --cmhub-neutral-400: oklch(71% 0.019 260);
+  --cmhub-neutral-500: oklch(55% 0.022 260);
+  --cmhub-neutral-600: oklch(42% 0.025 260);
+  --cmhub-neutral-700: oklch(32% 0.027 260);
+  --cmhub-neutral-800: oklch(24% 0.024 260);
+  --cmhub-neutral-900: oklch(18% 0.02 260);
+  --cmhub-neutral-950: oklch(13% 0.016 260);
 
-  --cmhub-primary: var(--primary-6);
-  --cmhub-primary-hover: var(--primary-7);
-  --cmhub-primary-subtle: var(--color-primary-light-1);
-  --cmhub-canvas: var(--color-bg-2);
-  --cmhub-surface: var(--color-bg-1);
-  --cmhub-surface-raised: var(--color-bg-3);
-  --cmhub-surface-hover: var(--color-fill-2);
-  --cmhub-line: var(--color-border-2);
-  --cmhub-line-strong: var(--color-border-3);
-  --cmhub-text: var(--color-text-1);
-  --cmhub-text-secondary: var(--color-text-2);
-  --cmhub-text-muted: var(--color-text-3);
-  --cmhub-danger: var(--danger-6);
-  --cmhub-success: var(--success-6);
-  --cmhub-warning: var(--warning-6);
-  --cmhub-document-paper: var(--color-bg-white);
-  --cmhub-document-ink: var(--color-neutral-10);
-  --cmhub-shadow-elevated: 0 14px 36px color-mix(in srgb, var(--color-text-1) 18%, transparent);
-  --cmhub-shadow-drawer: 12px 0 32px color-mix(in srgb, var(--color-text-1) 24%, transparent);
-  --cmhub-radius-xl: 16px;
-  --cmhub-radius-lg: 12px;
-  --cmhub-radius-md: 8px;
-  --cmhub-radius-sm: 6px;
-  --cmhub-space-1: 4px;
-  --cmhub-space-2: 8px;
-  --cmhub-space-3: 12px;
-  --cmhub-space-4: 16px;
-  --cmhub-space-5: 20px;
-  --cmhub-space-6: 24px;
-  --cmhub-space-8: 32px;
-  --duration-micro: 80ms;
-  --duration-quick: 150ms;
-  --duration-fast: 250ms;
-  --duration-medium: 350ms;
-  --duration-slow: 400ms;
-  --duration-very-slow: 500ms;
-  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: ease-in-out;
+  --cmhub-blue-50: oklch(97% 0.018 264);
+  --cmhub-blue-100: oklch(93.2% 0.047 264);
+  --cmhub-blue-200: oklch(86.2% 0.096 264);
+  --cmhub-blue-300: oklch(76.2% 0.145 264);
+  --cmhub-blue-400: oklch(65.1% 0.184 264);
+  --cmhub-blue-500: oklch(56.7% 0.207 264);
+  --cmhub-blue-600: oklch(51.2% 0.202 264);
+  --cmhub-blue-700: oklch(45.3% 0.18 264);
+  --cmhub-blue-800: oklch(38.7% 0.146 264);
+
+  --cmhub-green-50: oklch(96.5% 0.022 160);
+  --cmhub-green-600: oklch(47.5% 0.112 160);
+  --cmhub-amber-50: oklch(97% 0.025 78);
+  --cmhub-amber-700: oklch(46% 0.105 78);
+  --cmhub-red-50: oklch(96.4% 0.021 25);
+  --cmhub-red-600: oklch(48.5% 0.165 25);
+
+  --cmhub-font-body: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --cmhub-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --cmhub-font-sans: var(--cmhub-font-body);
+  --cmhub-font-size-xs: 0.75rem;
+  --cmhub-font-size-sm: 0.8125rem;
+  --cmhub-font-size-md: 0.875rem;
+  --cmhub-font-size-lg: 1rem;
+  --cmhub-font-size-xl: 1.125rem;
+  --cmhub-font-size-2xl: 1.25rem;
+  --cmhub-font-size-3xl: clamp(1.625rem, 1.5vw + 1.125rem, 2rem);
+  --cmhub-line-height-tight: 1.2;
+  --cmhub-line-height-normal: 1.5;
+  --cmhub-line-height-relaxed: 1.65;
+  --cmhub-font-weight-regular: 400;
+  --cmhub-font-weight-medium: 500;
+  --cmhub-font-weight-semibold: 600;
+  --cmhub-font-weight-strong: 700;
+
+  --cmhub-space-0: 0;
+  --cmhub-space-1: 0.25rem;
+  --cmhub-space-2: 0.5rem;
+  --cmhub-space-3: 0.75rem;
+  --cmhub-space-4: 1rem;
+  --cmhub-space-5: 1.25rem;
+  --cmhub-space-6: 1.5rem;
+  --cmhub-space-8: 2rem;
+  --cmhub-space-10: 2.5rem;
+  --cmhub-space-12: 3rem;
+  --cmhub-space-16: 4rem;
+  --cmhub-space-20: 5rem;
+
+  --cmhub-radius-sm: 0.5rem;
+  --cmhub-radius-md: 0.625rem;
+  --cmhub-radius-lg: 0.875rem;
+  --cmhub-radius-xl: 1rem;
+  --cmhub-radius-pill: 999px;
+  --cmhub-shadow-whisper: 0 1px 2px oklch(20% 0.02 260 / 5%);
+  --cmhub-shadow-elevated: 0 10px 28px oklch(20% 0.02 260 / 8%);
+  --cmhub-shadow-drawer: -12px 0 32px oklch(20% 0.02 260 / 12%);
+
+  --cmhub-duration-micro: 120ms;
+  --cmhub-duration-short: 180ms;
+  --cmhub-duration-standard: 220ms;
+  --cmhub-duration-long: 420ms;
+  --cmhub-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --cmhub-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --cmhub-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Semantic — the layer pages and themes consume. */
+  --cmhub-surface-canvas: var(--cmhub-neutral-50);
+  --cmhub-surface-base: var(--cmhub-neutral-0);
+  --cmhub-surface-raised: var(--cmhub-neutral-0);
+  --cmhub-surface-sunken: var(--cmhub-neutral-100);
+  --cmhub-surface-hover: var(--cmhub-neutral-100);
+  --cmhub-surface-selected: var(--cmhub-blue-50);
+  --cmhub-surface-inverse: var(--cmhub-neutral-900);
+  --cmhub-text-primary: var(--cmhub-neutral-900);
+  --cmhub-text-secondary: var(--cmhub-neutral-600);
+  --cmhub-text-tertiary: var(--cmhub-neutral-500);
+  --cmhub-text-disabled: var(--cmhub-neutral-400);
+  --cmhub-text-on-accent: var(--cmhub-neutral-0);
+  --cmhub-text-on-inverse: var(--cmhub-neutral-25);
+  --cmhub-line-subtle: var(--cmhub-neutral-200);
+  --cmhub-line-strong: var(--cmhub-neutral-300);
+  --cmhub-line-focus: var(--cmhub-blue-600);
+  --cmhub-interactive-primary: var(--cmhub-blue-600);
+  --cmhub-interactive-primary-hover: var(--cmhub-blue-700);
+  --cmhub-interactive-primary-active: var(--cmhub-blue-800);
+  --cmhub-interactive-secondary-hover: var(--cmhub-blue-50);
+  --cmhub-success: var(--cmhub-green-600);
+  --cmhub-success-subtle: var(--cmhub-green-50);
+  --cmhub-warning: var(--cmhub-amber-700);
+  --cmhub-warning-subtle: var(--cmhub-amber-50);
+  --cmhub-danger: var(--cmhub-red-600);
+  --cmhub-danger-subtle: var(--cmhub-red-50);
+  --cmhub-focus-ring: var(--cmhub-blue-600);
+  --cmhub-focus-offset: var(--cmhub-surface-base);
+  --cmhub-opacity-disabled: 0.55;
+
+  --cmhub-space-component-xs: var(--cmhub-space-2);
+  --cmhub-space-component-sm: var(--cmhub-space-3);
+  --cmhub-space-component: var(--cmhub-space-4);
+  --cmhub-space-component-lg: var(--cmhub-space-6);
+  --cmhub-space-section: var(--cmhub-space-8);
+  --cmhub-space-page-block: var(--cmhub-space-10);
+  --cmhub-page-gutter: clamp(var(--cmhub-space-4), 3vw, 2.125rem);
+
+  /* Component — a stable contract for the phase-three page migration. */
+  --cmhub-control-height: 2.75rem;
+  --cmhub-control-height-compact: 2.25rem;
+  --cmhub-control-height-large: 3.25rem;
+  --cmhub-control-icon-hit-area: 2.75rem;
+  --cmhub-control-radius: var(--cmhub-radius-md);
+  --cmhub-control-padding-inline: var(--cmhub-space-4);
+  --cmhub-button-bg: var(--cmhub-interactive-primary);
+  --cmhub-button-bg-hover: var(--cmhub-interactive-primary-hover);
+  --cmhub-button-bg-active: var(--cmhub-interactive-primary-active);
+  --cmhub-button-fg: var(--cmhub-text-on-accent);
+  --cmhub-button-secondary-bg: var(--cmhub-surface-base);
+  --cmhub-button-secondary-fg: var(--cmhub-text-secondary);
+  --cmhub-button-secondary-hover-bg: var(--cmhub-surface-selected);
+  --cmhub-button-secondary-hover-fg: var(--cmhub-interactive-primary);
+  --cmhub-input-bg: var(--cmhub-surface-base);
+  --cmhub-input-fg: var(--cmhub-text-primary);
+  --cmhub-input-placeholder: var(--cmhub-text-tertiary);
+  --cmhub-input-border: var(--cmhub-line-strong);
+  --cmhub-input-focus-border: var(--cmhub-line-focus);
+  --cmhub-panel-bg: var(--cmhub-surface-base);
+  --cmhub-panel-fg: var(--cmhub-text-primary);
+  --cmhub-panel-border: var(--cmhub-line-subtle);
+  --cmhub-panel-padding: var(--cmhub-space-6);
+  --cmhub-panel-padding-compact: var(--cmhub-space-4);
+  --cmhub-panel-radius: var(--cmhub-radius-lg);
+  --cmhub-table-header-bg: var(--cmhub-surface-sunken);
+  --cmhub-table-header-fg: var(--cmhub-text-tertiary);
+  --cmhub-table-row-hover-bg: var(--cmhub-surface-selected);
+  --cmhub-table-row-height: 3.75rem;
+  --cmhub-table-cell-padding-inline: var(--cmhub-space-4);
+  --cmhub-table-cell-padding-block: var(--cmhub-space-3);
+  --cmhub-layout-sidebar-width: 15.75rem;
+  --cmhub-layout-topbar-height: 4rem;
+  --cmhub-layout-page-max: 90rem;
+  --cmhub-z-base: 1;
+  --cmhub-z-raised: 10;
+  --cmhub-z-dropdown: 100;
+  --cmhub-z-sticky: 200;
+  --cmhub-z-modal: 400;
+  --cmhub-z-toast: 500;
+  --cmhub-z-tooltip: 600;
+
+  /* Compatibility aliases keep existing business components stable while their
+     page-level CSS moves to semantic names in phase three. */
+  --cmhub-canvas-mist: var(--cmhub-surface-canvas);
+  --cmhub-pure-surface: var(--cmhub-surface-base);
+  --cmhub-charcoal-ink: var(--cmhub-text-primary);
+  --cmhub-slate-text: var(--cmhub-text-secondary);
+  --cmhub-muted-text: var(--cmhub-text-tertiary);
+  --cmhub-whisper-border: var(--cmhub-line-subtle);
+  --cmhub-soft-blue: var(--cmhub-surface-selected);
+  --cmhub-brand-blue: var(--cmhub-interactive-primary);
+  --cmhub-brand-blue-strong: var(--cmhub-interactive-primary-hover);
+  --cmhub-success-green: var(--cmhub-success);
+  --cmhub-warning-amber: var(--cmhub-warning);
+  --cmhub-danger-red: var(--cmhub-danger);
+  --cmhub-primary: var(--cmhub-interactive-primary);
+  --cmhub-primary-hover: var(--cmhub-interactive-primary-hover);
+  --cmhub-primary-subtle: var(--cmhub-surface-selected);
+  --cmhub-canvas: var(--cmhub-surface-canvas);
+  --cmhub-surface: var(--cmhub-surface-base);
+  --cmhub-line: var(--cmhub-line-subtle);
+  --cmhub-text: var(--cmhub-text-primary);
+  --cmhub-text-muted: var(--cmhub-text-tertiary);
+  --cmhub-document-paper: var(--cmhub-neutral-0);
+  --cmhub-document-ink: var(--cmhub-neutral-900);
+  --cmhub-document-timestamp: var(--cmhub-neutral-500);
+  --duration-micro: var(--cmhub-duration-micro);
+  --duration-quick: var(--cmhub-duration-short);
+  --duration-fast: var(--cmhub-duration-standard);
+  --duration-medium: var(--cmhub-duration-long);
+  --duration-slow: var(--cmhub-duration-long);
+  --duration-very-slow: var(--cmhub-duration-long);
+  --ease-smooth-out: var(--cmhub-ease-out);
+  --ease-in-out: var(--cmhub-ease-in-out);
   --ease-linear: linear;
-  --distance-micro: 4px;
+  --distance-micro: 0.25rem;
   --scale-large: 0.96;
   --scale-small: 0.98;
   --blur-small: 2px;
-  --acc-expand: 250ms;
-  --acc-collapse: 250ms;
-  --acc-chevron: 250ms;
-  --acc-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tabs-dur: 250ms;
-  --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tabs-text-muted: var(--color-text-2);
-  --tabs-text-active: var(--color-text-1);
-  --tabs-bar-bg: var(--color-fill-2);
-  --tabs-pill-bg: var(--color-bg-1);
-}
-
-:root[data-theme='light'] {
-  color-scheme: light;
+  --acc-expand: var(--cmhub-duration-standard);
+  --acc-collapse: var(--cmhub-duration-standard);
+  --acc-chevron: var(--cmhub-duration-standard);
+  --acc-ease: var(--cmhub-ease-out);
+  --tabs-dur: var(--cmhub-duration-standard);
+  --tabs-ease: var(--cmhub-ease-in-out);
+  --tabs-text-muted: var(--cmhub-text-secondary);
+  --tabs-text-active: var(--cmhub-text-primary);
+  --tabs-bar-bg: var(--cmhub-surface-sunken);
+  --tabs-pill-bg: var(--cmhub-surface-base);
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
+  --cmhub-surface-canvas: oklch(14.5% 0.012 260);
+  --cmhub-surface-base: oklch(18.2% 0.014 260);
+  --cmhub-surface-raised: oklch(22% 0.015 260);
+  --cmhub-surface-sunken: oklch(16.2% 0.013 260);
+  --cmhub-surface-hover: oklch(25.5% 0.017 260);
+  --cmhub-surface-selected: oklch(23% 0.055 264);
+  --cmhub-surface-inverse: var(--cmhub-neutral-25);
+  --cmhub-text-primary: oklch(94.5% 0.006 260);
+  --cmhub-text-secondary: oklch(78% 0.014 260);
+  --cmhub-text-tertiary: oklch(69% 0.016 260);
+  --cmhub-text-disabled: oklch(52% 0.017 260);
+  --cmhub-text-on-accent: oklch(18% 0.02 260);
+  --cmhub-text-on-inverse: var(--cmhub-neutral-900);
+  --cmhub-line-subtle: oklch(29% 0.016 260);
+  --cmhub-line-strong: oklch(37% 0.018 260);
+  --cmhub-line-focus: oklch(76% 0.15 264);
+  --cmhub-interactive-primary: oklch(72% 0.16 264);
+  --cmhub-interactive-primary-hover: oklch(78% 0.145 264);
+  --cmhub-interactive-primary-active: oklch(66% 0.165 264);
+  --cmhub-interactive-secondary-hover: oklch(24% 0.04 264);
+  --cmhub-success: oklch(71% 0.105 160);
+  --cmhub-success-subtle: oklch(23% 0.04 160);
+  --cmhub-warning: oklch(78% 0.12 78);
+  --cmhub-warning-subtle: oklch(25% 0.04 78);
+  --cmhub-danger: oklch(70% 0.15 25);
+  --cmhub-danger-subtle: oklch(24% 0.045 25);
+  --cmhub-focus-ring: oklch(80% 0.13 264);
+  --cmhub-focus-offset: var(--cmhub-surface-base);
+  --cmhub-shadow-whisper: 0 1px 2px oklch(2% 0.01 260 / 28%);
+  --cmhub-shadow-elevated: 0 12px 32px oklch(2% 0.01 260 / 32%);
+  --cmhub-shadow-drawer: -12px 0 32px oklch(2% 0.01 260 / 38%);
+
+  /* Print artifacts stay opaque and legible regardless of app theme. */
+  --cmhub-document-paper: var(--cmhub-neutral-0);
+  --cmhub-document-ink: var(--cmhub-neutral-900);
+  --cmhub-document-timestamp: var(--cmhub-neutral-500);
 }
 
-/* Arco publishes its palette variables on body. Rebind print-document tokens
-   there so the BOL masks stay opaque in both application themes. */
-body {
-  --cmhub-document-paper: var(--color-white);
-  --cmhub-document-ink: var(--color-black);
-  /* Exact neutral-grey timestamp ink from the approved Figma BOL template. */
-  --cmhub-document-timestamp: rgb(191 191 191);
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {

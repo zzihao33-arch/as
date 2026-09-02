@@ -7,13 +7,17 @@ import {
   submitAttendancePunch,
   type AttendancePunchContext,
 } from '../session/warehouseApi';
+import { ATTENDANCE_TIME_ZONE, attendanceElapsedMinutes, attendanceWorkDate, isOpenAttendanceWithin } from './attendanceTime';
 
 type PositionSnapshot = { latitude: number; longitude: number; accuracy: number };
 type GestureType = 'BLINK' | 'MOUTH_OPEN';
-const ATTENDANCE_TIME_ZONE = 'America/New_York';
 
-const mobileBrowser = () => /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)
-  || (navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches);
+const mobileBrowser = () => {
+  const coarsePointer = typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+  return /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && coarsePointer);
+};
 
 const requestPosition = () => new Promise<PositionSnapshot>((resolve, reject) => {
   if (!navigator.geolocation) {
@@ -85,6 +89,7 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
   const warehouseSession = useWarehouseSession();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const loadedWorkDateRef = useRef(attendanceWorkDate());
   const [context, setContext] = useState<AttendancePunchContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [cameraState, setCameraState] = useState<'LOADING' | 'READY' | 'ERROR'>('LOADING');
@@ -117,6 +122,13 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const currentWorkDate = attendanceWorkDate(now);
+  useEffect(() => {
+    if (!currentWorkDate || currentWorkDate === loadedWorkDateRef.current) return;
+    loadedWorkDateRef.current = currentWorkDate;
+    void loadContext();
+  }, [currentWorkDate, loadContext]);
 
   useEffect(() => {
     let active = true;
@@ -175,14 +187,23 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
 
   useEffect(() => { void refreshPosition().catch(() => undefined); }, [refreshPosition]);
 
-  const punchType = !context?.todayResult?.clockInAt ? 'IN' : !context.todayResult.clockOutAt ? 'OUT' : null;
+  const returnedResult = context?.todayResult ?? null;
+  const returnedResultWorkDate = returnedResult?.clockInAt ? attendanceWorkDate(returnedResult.clockInAt) : returnedResult?.workDate;
+  const openShiftIsEligible = returnedResult?.status === 'OPEN'
+    && isOpenAttendanceWithin(returnedResult.clockInAt, now);
+  const activeResult = returnedResult
+    && (openShiftIsEligible || returnedResultWorkDate === currentWorkDate)
+    ? returnedResult
+    : null;
+  const expiredOpenShift = returnedResult?.status === 'OPEN' && !openShiftIsEligible;
+  const crossDayShift = Boolean(openShiftIsEligible && returnedResultWorkDate !== currentWorkDate);
+  const punchType = !activeResult?.clockInAt ? 'IN' : !activeResult.clockOutAt ? 'OUT' : null;
   const gestureLabel = gesture === 'BLINK' ? '眨眼一次' : '张嘴一次';
   const clockText = now.toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   const dateText = now.toLocaleDateString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
-  const workedMinutes = context?.todayResult?.clockInAt
-    ? Math.max(0, Math.round(((context.todayResult.clockOutAt ? new Date(context.todayResult.clockOutAt) : now).getTime() - new Date(context.todayResult.clockInAt).getTime()) / 60_000))
-    : 0;
-  const workedHoursText = `${Math.floor(workedMinutes / 60)}小时${String(workedMinutes % 60).padStart(2, '0')}分`;
+  const calculatedWorkedMinutes = attendanceElapsedMinutes(activeResult?.clockInAt ?? null, activeResult?.clockOutAt ?? null, now);
+  const workedMinutes = Math.max(activeResult?.grossMinutes ?? 0, calculatedWorkedMinutes);
+  const workedHoursText = `${Math.floor(workedMinutes / 60)} 小时 ${String(workedMinutes % 60).padStart(2, '0')} 分`;
 
   const verifyGesture = async () => {
     const video = videoRef.current;
@@ -305,15 +326,26 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
           <div><small>当前时间</small><strong>{clockText}</strong></div><i />
           <div><small>日期</small><strong>{dateText}</strong></div>
         </Card>
-        <Card title="今日进度" className="cmhub-attendance-today-card">
+        <Card
+          title={crossDayShift ? '跨日班次' : '今日进度'}
+          extra={crossDayShift ? <Tag className="cmhub-attendance-shift-chip" color="orange">从 {returnedResultWorkDate} 延续</Tag> : undefined}
+          className="cmhub-attendance-today-card"
+        >
           <div className="cmhub-attendance-punch-state">
-            <div><span>上班</span><strong>{context?.todayResult?.clockInAt ? new Date(context.todayResult.clockInAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
-            <div className="cmhub-attendance-state-line"><Progress percent={context?.todayResult?.clockOutAt ? 100 : context?.todayResult?.clockInAt ? 50 : 0} showText={false} /></div>
-            <div><span>下班</span><strong>{context?.todayResult?.clockOutAt ? new Date(context.todayResult.clockOutAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
+            <div><span>上班</span><strong>{activeResult?.clockInAt ? new Date(activeResult.clockInAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
+            <div className="cmhub-attendance-state-line"><Progress percent={activeResult?.clockOutAt ? 100 : activeResult?.clockInAt ? 50 : 0} showText={false} /></div>
+            <div><span>下班</span><strong>{activeResult?.clockOutAt ? new Date(activeResult.clockOutAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
           </div>
           <div className="cmhub-attendance-working-hours"><span><small>已工作</small><strong>{workedHoursText}</strong></span><Progress percent={Math.min(100, Math.round(workedMinutes / 480 * 100))} showText={false} /><small>目标 8 小时</small></div>
         </Card>
         <div className="cmhub-attendance-submit-card">
+          {expiredOpenShift && (
+            <Alert
+              className="cmhub-attendance-expired-shift"
+              type="warning"
+              content="上一班次已超过 18 小时，不能直接补下班卡；请在“异常申诉”中提交修正。当前工作日可正常开始新班次。"
+            />
+          )}
           {punchType ? (
             <Button
               type="primary"

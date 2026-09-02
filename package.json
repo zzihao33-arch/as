@@ -6,15 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts",
+    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts tests/attendanceTime.test.ts",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "preview": "vite preview"
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.16",
     "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@gsap/react": "^2.1.2",
     "clsx": "^2.1.1",
     "fflate": "^0.8.3",
+    "gsap": "^3.15.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.378.0",
     "qz-tray": "^2.2.6",

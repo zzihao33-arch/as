@@ -25,7 +25,7 @@ export type AttendanceDailyCalculation = {
 
 export type PayrollDailyInput = {
   workDate: string;
-  netMinutes: number;
+  grossMinutes: number;
   status: string;
 };
 
@@ -136,7 +136,7 @@ export function calculatePayrollRow(input: PayrollCalculationInput): PayrollCalc
       continue;
     }
     const week = mondayOf(day.workDate);
-    weekly.set(week, (weekly.get(week) ?? 0) + Math.max(0, Math.round(day.netMinutes)));
+    weekly.set(week, (weekly.get(week) ?? 0) + Math.max(0, Math.round(day.grossMinutes)));
   }
   let regularMinutes = 0;
   let overtimeMinutes = 0;

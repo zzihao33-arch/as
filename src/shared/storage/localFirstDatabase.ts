@@ -1,14 +1,14 @@
-export type LocalFirstStore = 'intercepts' | 'bolRecords' | 'printLogs' | 'payrollDrafts' | 'employeeRates' | 'cloudShipments' | 'cloudLabels' | 'cloudSync' | 'cloudPrintOutbox' | 'sharedPrintOutbox';
+export type LocalFirstStore = 'intercepts' | 'bolRecords' | 'printLogs' | 'payrollDrafts' | 'employeeRates' | 'cloudShipments' | 'cloudLabels' | 'cloudSync' | 'cloudPrintOutbox' | 'sharedPrintOutbox' | 'airEvidence';
 
 const DATABASE_NAME = 'cmhub-local-first-v1';
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 
 const openDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 
   request.onupgradeneeded = () => {
     const database = request.result;
-    (['intercepts', 'bolRecords', 'printLogs', 'payrollDrafts', 'employeeRates', 'cloudShipments', 'cloudLabels', 'cloudSync', 'cloudPrintOutbox', 'sharedPrintOutbox'] as const).forEach((storeName) => {
+    (['intercepts', 'bolRecords', 'printLogs', 'payrollDrafts', 'employeeRates', 'cloudShipments', 'cloudLabels', 'cloudSync', 'cloudPrintOutbox', 'sharedPrintOutbox', 'airEvidence'] as const).forEach((storeName) => {
       if (!database.objectStoreNames.contains(storeName)) {
         database.createObjectStore(storeName);
       }

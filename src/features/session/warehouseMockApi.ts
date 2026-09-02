@@ -15,6 +15,8 @@ import {
   type WarehouseRoleView,
   type WarehouseSessionView,
 } from './warehouseApi';
+import { deleteLocalFirstValue, readLocalFirstValue, writeLocalFirstValue } from '../../shared/storage/localFirstDatabase';
+import { attendanceElapsedMinutes, attendanceWorkDate, isOpenAttendanceWithin } from '../attendance/attendanceTime';
 
 const STORAGE_KEY = 'cmhub-dev-mock-api-v1';
 const ADMIN_USER_ID = '10000000-0000-4000-8000-000000000001';
@@ -125,6 +127,15 @@ function now() {
   return new Date().toISOString();
 }
 
+function findOpenAttendanceShift(state: MockState, timestamp: string) {
+  const currentTime = new Date(timestamp);
+  return state.attendanceDaily
+    .filter(item => item.userId === ADMIN_USER_ID
+      && item.status === 'OPEN'
+      && isOpenAttendanceWithin(item.clockInAt, currentTime))
+    .sort((left, right) => String(right.clockInAt).localeCompare(String(left.clockInAt)))[0] ?? null;
+}
+
 function initialState(): MockState {
   const createdAt = now();
   const membership = (roleId: string, roleName: string, employeeNo: string) => ({
@@ -172,12 +183,20 @@ function readState(): MockState {
       receiptEvidence: order.receiptEvidence ?? [],
       handoverEvidence: order.handoverEvidence ?? [],
     }));
+    const attendanceDaily = (parsed.attendanceDaily ?? []).map(result => {
+      const normalizedWorkDate = result.clockInAt
+        ? attendanceWorkDate(result.clockInAt)
+        : result.workDate;
+      return normalizedWorkDate && normalizedWorkDate !== result.workDate
+        ? { ...result, workDate: normalizedWorkDate }
+        : result;
+    });
     return {
       ...fallback,
       ...parsed,
       airPickups,
       airHandoverBatches: parsed.airHandoverBatches ?? [],
-      attendanceDaily: parsed.attendanceDaily ?? [],
+      attendanceDaily,
       attendanceAppeals: parsed.attendanceAppeals ?? [],
       attendanceLocations: parsed.attendanceLocations ?? [],
       attendanceShiftRules: parsed.attendanceShiftRules ?? [],
@@ -260,7 +279,7 @@ function mockPayroll(state: MockState, from: string, to: string, persist = false
     const issues: string[] = [];
     days.forEach(day => {
       if (day.status !== 'COMPLETE') issues.push(`${day.workDate} 考勤状态为 ${day.status}`);
-      else weekly.set(mockMonday(day.workDate), (weekly.get(mockMonday(day.workDate)) ?? 0) + day.netMinutes);
+      else weekly.set(mockMonday(day.workDate), (weekly.get(mockMonday(day.workDate)) ?? 0) + day.grossMinutes);
     });
     let regularMinutes = 0; let overtimeMinutes = 0;
     const weeklyMinutes = Array.from(weekly.entries()).map(([week, minutes]) => {
@@ -290,12 +309,12 @@ function mockPayroll(state: MockState, from: string, to: string, persist = false
       totalPay: regularPay === null || overtimePay === null ? null : mockMoney(regularPay + overtimePay + adjustment.bonus + fuelAllowance),
       issues,
       weeklyMinutes,
-      days: days.map(day => ({ workDate: day.workDate, netMinutes: day.netMinutes, status: day.status })),
+      days: days.map(day => ({ workDate: day.workDate, grossMinutes: day.grossMinutes, status: day.status })),
     };
   });
   return {
     from, to, rows, runId: persist ? crypto.randomUUID() : null,
-    rule: { lunchDeductionMinutes: 60, weeklyRegularMinutes: 2_400, overtimeMultiplier: 1.5, fuelAllowancePerDay: 19.5 },
+    rule: { lunchDeductionMinutes: 0, weeklyRegularMinutes: 2_400, overtimeMultiplier: 1.5, fuelAllowancePerDay: 19.5 },
   };
 }
 
@@ -472,6 +491,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
     if (!batch) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除。');
     batch.evidence = batch.evidence.filter(asset => asset.id !== assetId);
     evidenceFiles.delete(assetId);
+    await deleteLocalFirstValue('airEvidence', assetId).catch(() => undefined);
     const evidenceStatus = mockEvidenceStatus(batch);
     state.airPickups.filter(order => order.handoverBatchId === batch.id).forEach(order => {
       order.evidenceStatus = evidenceStatus; order.version += 1; order.updatedAt = now();
@@ -481,13 +501,16 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   }
 
   if (pathname === '/warehouse/v1/attendance/context' && method === 'GET') {
-    const today = new Date().toISOString().slice(0, 10);
+    const timestamp = now();
+    const today = attendanceWorkDate(timestamp);
+    const todayResult = state.attendanceDaily.find(item => item.userId === ADMIN_USER_ID && item.workDate === today) ?? null;
+    const openShift = findOpenAttendanceShift(state, timestamp);
     return { data: {
       employeeName: '本地测试管理员', employeeNo: 'ADMIN-001', today,
       locations: state.attendanceLocations.filter(item => item.status === 'ACTIVE'),
       shiftRule: state.attendanceShiftRules.find(item => item.status === 'ACTIVE') ?? null,
-      todayResult: state.attendanceDaily.find(item => item.userId === ADMIN_USER_ID && item.workDate === today) ?? null,
-      serverTime: now(),
+      todayResult: openShift ?? todayResult,
+      serverTime: timestamp,
     } } as T;
   }
 
@@ -776,8 +799,9 @@ export async function mockSubmitAttendancePunch(input: {
   await new Promise(resolve => window.setTimeout(resolve, 180));
   const state = readState();
   const timestamp = now();
-  const today = timestamp.slice(0, 10);
+  const today = attendanceWorkDate(timestamp);
   const existing = state.attendanceDaily.find(item => item.userId === ADMIN_USER_ID && item.workDate === today);
+  const openShift = findOpenAttendanceShift(state, timestamp);
   if (!input.gesturePassed || input.gestureScore < 0.005) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
       reasonCode: 'GESTURE_NOT_VERIFIED', message: '动作验证未通过，请重试或提交例外申请。', serverTime: timestamp } };
@@ -786,11 +810,15 @@ export async function mockSubmitAttendancePunch(input: {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
       reasonCode: 'LOCATION_REQUIRED', message: '手机打卡需要有效的浏览器位置。', serverTime: timestamp } };
   }
+  if (input.punchType === 'IN' && openShift) {
+    return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'REJECTED',
+      reasonCode: 'OPEN_SHIFT_EXISTS', message: '仍有18小时内的上班记录，请先完成下班打卡。', serverTime: timestamp } };
+  }
   if (input.punchType === 'IN' && existing) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'REJECTED',
       reasonCode: 'CLOCK_IN_ALREADY_EXISTS', message: '今天已经存在上班打卡。', serverTime: timestamp } };
   }
-  if (input.punchType === 'OUT' && (!existing || existing.status !== 'OPEN' || !existing.clockInAt)) {
+  if (input.punchType === 'OUT' && !openShift) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
       reasonCode: 'OPEN_SHIFT_NOT_FOUND', message: '未找到18小时内的上班打卡。', serverTime: timestamp } };
   }
@@ -804,8 +832,8 @@ export async function mockSubmitAttendancePunch(input: {
     };
     state.attendanceDaily.push(daily);
   } else {
-    daily = existing!;
-    const grossMinutes = Math.max(1, Math.round((new Date(timestamp).getTime() - new Date(daily.clockInAt!).getTime()) / 60_000));
+    daily = openShift!;
+    const grossMinutes = attendanceElapsedMinutes(daily.clockInAt, timestamp);
     daily.clockOutAt = timestamp; daily.grossMinutes = grossMinutes; daily.netMinutes = Math.max(0, grossMinutes - 60);
     daily.status = 'COMPLETE'; daily.version += 1; daily.updatedAt = timestamp;
   }
@@ -845,6 +873,7 @@ export async function mockUploadAirHandoverEvidence(batchId: string, input: {
     byteSize: input.file.size, width: 800, height: 600, qualityWarnings: input.qualityWarnings ?? [],
     qualityOverride: Boolean(input.qualityOverride), downloadPath: `/warehouse/v1/air-evidence-assets/${id}/content`, createdAt };
   batch.evidence.push(asset); evidenceFiles.set(id, input.file);
+  await writeLocalFirstValue('airEvidence', id, input.file).catch(() => undefined);
   const evidenceStatus = mockEvidenceStatus(batch);
   state.airPickups.filter(order => order.handoverBatchId === batch.id).forEach(order => {
     order.evidenceStatus = evidenceStatus; order.version += 1; order.updatedAt = createdAt;
@@ -871,6 +900,7 @@ export async function mockUploadAirReceiptEvidence(batchId: string, input: {
     qualityOverride: Boolean(input.qualityOverride),
     downloadPath: `/warehouse/v1/air-receipt-evidence-assets/${id}/content`, createdAt };
   evidenceFiles.set(id, input.file);
+  await writeLocalFirstValue('airEvidence', id, input.file).catch(() => undefined);
   orders.forEach(order => {
     order.receiptEvidence = [...existing, asset];
     order.events.unshift(mockAirEvent('RECEIPT_EVIDENCE_ADDED', null, [asset]));
@@ -882,8 +912,9 @@ export async function mockUploadAirReceiptEvidence(batchId: string, input: {
 
 export async function mockDownloadAirEvidence(downloadPath: string): Promise<Blob> {
   const assetId = downloadPath.split('/').at(-2) ?? '';
-  const blob = evidenceFiles.get(assetId);
-  if (!blob) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '本地 Mock 重载后需要重新选择该凭证图片。');
+  const blob = evidenceFiles.get(assetId) ?? await readLocalFirstValue<Blob>('airEvidence', assetId).catch(() => null);
+  if (!blob) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证文件不可用，请重新上传后再预览。');
+  evidenceFiles.set(assetId, blob);
   return blob;
 }
 

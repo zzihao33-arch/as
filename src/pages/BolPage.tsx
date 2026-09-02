@@ -5,7 +5,7 @@ import { AirPickupModuleHeader } from '../features/airPickup/AirPickupModuleHead
 export default function BolPage() {
   return (
     <section className="cmhub-page cmhub-air-page" aria-labelledby="air-management-title">
-      <AirPickupModuleHeader />
+      <AirPickupModuleHeader showBackToPickups />
       <Card className="cmhub-module-frame">
         <BolManager />
       </Card>

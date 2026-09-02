@@ -8,7 +8,6 @@ import { validateAirEvidenceImage } from './airPickupOperations.js';
 import {
   ATTENDANCE_TIME_ZONE,
   FUEL_ALLOWANCE_PER_DAY,
-  LUNCH_DEDUCTION_MINUTES,
   OVERTIME_MULTIPLIER,
   WEEKLY_REGULAR_MINUTES,
   calculateDailyAttendance,
@@ -805,7 +804,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
       );
       const references = [...new Set(dailyRows.map(row => row.employee_reference))];
       if (references.length === 0) return { ...dates, rows: [], runId: null,
-        rule: { lunchDeductionMinutes: LUNCH_DEDUCTION_MINUTES, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
+        rule: { lunchDeductionMinutes: 0, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
           overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY } };
       const placeholders = references.map(() => '?').join(',');
       const [profiles] = await mysql.execute<(RowDataPacket & { employee_reference: string; user_id: string | null; hourly_rate: number | string })[]>(
@@ -830,11 +829,11 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
           employeeReference: reference, employeeName: days[0].employee_name_snapshot,
           employeeNo: days[0].employee_no_snapshot, hourlyRate: profile ? Number(profile.hourly_rate) : null,
           bonus: adjustment ? Number(adjustment.bonus) : 0, fuelDays: adjustment?.fuel_days ?? 0,
-          days: days.map(day => ({ workDate: sqlDate(day.work_date), netMinutes: day.net_minutes, status: day.result_status })),
+          days: days.map(day => ({ workDate: sqlDate(day.work_date), grossMinutes: day.gross_minutes, status: day.result_status })),
         }) };
       });
       let runId: string | null = null;
-      const rule = { lunchDeductionMinutes: LUNCH_DEDUCTION_MINUTES, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
+      const rule = { lunchDeductionMinutes: 0, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
         overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY };
       if (persist) {
         const blocked = rows.find(row => row.totalPay === null);

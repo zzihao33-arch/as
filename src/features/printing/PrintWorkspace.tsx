@@ -18,6 +18,7 @@ import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCi
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLocation } from 'react-router-dom';
+import { useWorkbenchMotion } from '../motion/useWorkbenchMotion';
 import { unzip } from 'fflate';
 import QzSetupGuide from '../settings/QzSetupGuide';
 import InterceptAlertOverlay from '../intercepts/InterceptAlertOverlay';
@@ -36,7 +37,7 @@ import {
   type PdfSearchIndex
 } from './printMatching';
 import { paginatePrintLogs } from './printLogPagination';
-import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome } from './printingTypes';
+import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome, type ScanFeedbackState } from './printingTypes';
 import { readCloudLabelFile, useWarehousePrintLibrary, type CloudPrintTarget } from './warehousePrintLibrary';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
@@ -232,6 +233,68 @@ interface ActiveAudio {
   timerId: number;
 }
 
+interface ScanCommandInputProps {
+  feedback: ScanFeedbackState;
+  isPreparing: boolean;
+  onCandidate: (value: string) => boolean;
+  onSubmit: (value: string) => void;
+  onWarmAudio?: () => void;
+}
+
+function ScanCommandInput({ feedback, isPreparing, onCandidate, onSubmit, onWarmAudio }: ScanCommandInputProps) {
+  const [value, setValue] = useState('');
+
+  const updateValue = (nextValue: string) => {
+    if (onCandidate(nextValue)) {
+      setValue('');
+      return;
+    }
+    setValue(nextValue);
+  };
+
+  const submit = () => {
+    const scannedValue = value.trim();
+    if (!scannedValue) return;
+    setValue('');
+    onSubmit(scannedValue);
+  };
+
+  return <>
+    <div className="cmhub-scan-stage">
+      <div className="cmhub-scan-field">
+        <div className="cmhub-scan-field-label">
+          <label id="cmhub-scan-input-label" htmlFor="cmhub-scan-input">扫描或输入单号</label>
+        </div>
+        <ArcoInput
+          value={value}
+          onChange={updateValue}
+          onFocus={onWarmAudio}
+          onPressEnter={submit}
+          id="cmhub-scan-input"
+          placeholder={isPreparing ? '正在准备本机数据…' : '等待扫码或输入单号…'}
+          size="large"
+          disabled={isPreparing}
+          className={cn('cmhub-scan-input', feedback === 'error' && 'is-error')}
+          aria-labelledby="cmhub-scan-input-label"
+          prefix={<Scan size={20} aria-hidden="true" />}
+          suffix={<kbd className="cmhub-scan-enter-key">Enter</kbd>}
+        />
+      </div>
+      <div className="cmhub-scan-field-meta">
+        <span>扫码自动提交</span>
+        <span>面单自动匹配</span>
+        <span>拦截即时校验</span>
+      </div>
+    </div>
+    <div className="cmhub-scan-entry-actions" role="group" aria-label="扫码打印操作">
+      <ArcoButton type="primary" disabled={isPreparing || !value.trim()} onClick={submit}>
+        <Printer size={16} aria-hidden="true" />
+        <span>打印</span>
+      </ArcoButton>
+    </div>
+  </>;
+}
+
 export default function App() {
   const location = useLocation();
   const warehouseSession = useWarehouseSession();
@@ -241,7 +304,6 @@ export default function App() {
   const sharedAudit = useSharedWorkPrintAudit(workstation?.id);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pdfFiles, setPdfFiles] = useState<Record<string, File>>({});
-  const [scanInput, setScanInput] = useState('');
   const { logs, lastLogId, addLog: appendLog, clearLogsByType } = usePrintLogs();
   const { scanFeedback, announceScanFeedback } = useScanFeedback();
   const {
@@ -256,10 +318,10 @@ export default function App() {
   const {
     findRule: findInterceptRule,
     storageStatus: interceptStorageStatus,
-    lastSyncedAt: interceptLastSyncedAt,
     sync: syncInterceptRules,
   } = useInterceptRules();
   const [activeTab, setActiveTab] = useState<PrintLogTab>('print');
+  const motionScopeRef = useRef<HTMLDivElement>(null);
   const [logPage, setLogPage] = useState(1);
   const logQuery = useMemo(
     () => paginatePrintLogs(logs, activeTab, logPage, LOGS_PER_PAGE),
@@ -938,25 +1000,6 @@ export default function App() {
   }, [totalLogPages]);
 
   useEffect(() => {
-    const unlockAudio = () => {
-      if (!audioEnabled) return;
-      void getAudioContext().then(context => {
-        if (context.state === 'suspended') {
-          return context.resume();
-        }
-      }).catch(() => undefined);
-    };
-
-    window.addEventListener('pointerdown', unlockAudio, { once: true });
-    window.addEventListener('keydown', unlockAudio, { once: true });
-
-    return () => {
-      window.removeEventListener('pointerdown', unlockAudio);
-      window.removeEventListener('keydown', unlockAudio);
-    };
-  }, [audioEnabled]);
-
-  useEffect(() => {
     if (!isPrinterDropdownOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
@@ -1050,34 +1093,62 @@ export default function App() {
     return () => window.cancelAnimationFrame(frameId);
   }, [location.hash]);
 
-  const getAudioContext = useCallback(async () => {
+  const ensureAudioContext = useCallback(() => {
     const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) {
       throw new Error('当前浏览器不支持音效播放');
     }
 
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new AudioContextClass();
-    }
-
-    if (audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
+      audioContextRef.current = new AudioContextClass({ latencyHint: 'interactive' });
     }
 
     return audioContextRef.current;
   }, []);
 
+  const getAudioContext = useCallback(async () => {
+    const context = ensureAudioContext();
+
+    if (context.state === 'suspended') {
+      await context.resume();
+    }
+
+    return context;
+  }, [ensureAudioContext]);
+
   useEffect(() => {
     const unlockAudio = () => {
+      if (!audioEnabled) return;
       void getAudioContext().catch(() => undefined);
     };
 
-    // Create the lightweight Web Audio graph early, then resume it on the
-    // first deliberate gesture so Chrome does not lose the first scan tone.
-    void getAudioContext().catch(() => undefined);
+    // Warm the lightweight context only after the first paint. Resuming still
+    // happens inside a deliberate gesture, so the first scan tone is immediate
+    // without competing with workspace/session restoration during navigation.
+    const idleWindow = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const warmAudio = () => {
+      if (!audioEnabled || audioContextRef.current) return;
+      try {
+        ensureAudioContext();
+      } catch {
+        // Audio support is reported only when the user explicitly previews it.
+      }
+    };
+    const idleHandle = idleWindow.requestIdleCallback?.(warmAudio, { timeout: 1_500 });
+    const timerHandle = idleHandle === undefined ? window.setTimeout(warmAudio, 500) : undefined;
+
     window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
-    return () => window.removeEventListener('pointerdown', unlockAudio);
-  }, [getAudioContext]);
+    window.addEventListener('keydown', unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+      if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+      if (timerHandle !== undefined) window.clearTimeout(timerHandle);
+    };
+  }, [audioEnabled, ensureAudioContext, getAudioContext]);
 
   const stopActiveAudio = () => {
     if (!activeAudioRef.current) return false;
@@ -1944,26 +2015,19 @@ export default function App() {
     stopActiveAudio();
     interceptScanLockRef.current = null;
     setInterceptedScan(null);
-    setScanInput('');
   };
 
-  const handleScanInputChange = (nextValue: string) => {
-    setScanInput(nextValue);
-
+  const handleScanCandidate = (nextValue: string) => {
     // Barcode scanners normally submit Enter. For manual typing or scanners
     // without a suffix key, an exact intercept hit must still halt immediately.
     const interceptedRule = findInterceptRule(nextValue);
-    if (!interceptedRule) return;
+    if (!interceptedRule) return false;
 
-    setScanInput('');
     processScan(nextValue, false);
+    return true;
   };
 
-  const submitScanInput = () => {
-    const scannedValue = scanInput;
-    if (!scannedValue.trim()) return;
-
-    setScanInput('');
+  const submitScanInput = (scannedValue: string) => {
     processScan(scannedValue, false);
   };
 
@@ -2036,9 +2100,23 @@ export default function App() {
   const scanFeedbackCopy = SCAN_FEEDBACK_COPY[scanFeedback];
   const isWorkspacePreparing = uploadCacheStatus === 'restoring' || interceptStorageStatus === 'loading';
   const scanStatusCopy = isWorkspacePreparing ? '正在准备本机数据' : scanFeedbackCopy;
+  const qzReadiness = qzConnectionHealth === 'healthy' ? '已连接' : qzConnectionHealth === 'offline' ? '需处理' : '检测中';
+  const libraryReadiness = cloudLibrary.status === 'ready' ? '已同步' : cloudLibrary.status === 'error' ? '需同步' : '准备中';
+
+  useEffect(() => {
+    if (isWorkspacePreparing || interceptedScan || duplicateInfo?.show) return;
+
+    const focusTimer = window.setTimeout(() => {
+      document.getElementById('cmhub-scan-input')?.focus();
+    }, 0);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [duplicateInfo?.show, interceptedScan, isWorkspacePreparing, latestPrintLog?.id]);
+
+  useWorkbenchMotion(motionScopeRef, { tabKey: activeTab });
 
   return (
-    <div className="cmhub-operating-workspace">
+    <div ref={motionScopeRef} className="cmhub-operating-workspace">
       <div className="cmhub-operating-stack">
         {interceptedScan && (
           <InterceptAlertOverlay
@@ -2070,110 +2148,70 @@ export default function App() {
           </ArcoModal>
         )}
 
-        {/* Header */}
-        <ArcoCard className="cmhub-operating-card cmhub-operating-overview" bordered>
-        <header className="cmhub-operating-header">
-          <div className="cmhub-operating-title">
-            <div>
-              <Typography.Title heading={3}>扫码打单工作台</Typography.Title>
-              <p>连续扫描后自动匹配面单，并发送至当前电脑的打印机。</p>
-            </div>
-          </div>
+        {(qzConnectionHealth === 'offline' || cloudLibrary.status === 'error' || interceptStorageStatus === 'corrupted' || interceptStorageStatus === 'unavailable' || (uploadCacheStatus === 'unavailable' && uploadCacheMessage) || (canEnableEmergencyOffline && emergencyOfflineEnabled)) && (
+          <aside className="cmhub-scan-notice-dock" aria-label="扫码打单系统提醒" aria-live="polite">
+            {qzConnectionHealth === 'offline' && (
+              <ArcoAlert
+                type="warning"
+                showIcon
+                content="QZ Tray 连接已中断，正在自动重连。请确认它仍在当前电脑运行。"
+              />
+            )}
 
-          <div className="cmhub-operating-header-actions">
-            <div className="cmhub-header-metrics">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-text-primary">{stats.excelCount}</div>
-                <div className="text-xs text-text-secondary uppercase font-semibold">Excel 条目</div>
-              </div>
-              <div className="text-center border-x px-6 border-white/10">
-                <div className="text-2xl font-bold text-text-primary">{(stats.pdfCount + cloudLibrary.count).toLocaleString()}</div>
-                <div className="text-xs text-text-secondary uppercase font-semibold">可打印面单</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-text-primary">{stats.printedCount}</div>
-                <div className="text-xs text-text-secondary uppercase font-semibold">已提交打印</div>
-              </div>
-            </div>
+            {cloudLibrary.status === 'error' && (
+              <ArcoAlert
+                type="warning"
+                showIcon
+                content={`云端同步未完成：${cloudLibrary.message}`}
+                action={<ArcoButton size="small" onClick={() => void cloudLibrary.sync()}>重新同步</ArcoButton>}
+              />
+            )}
 
-            <div className="cmhub-header-utilities" role="toolbar" aria-label="扫码打单快捷操作">
-              <span className="cmhub-header-utilities-label">快捷操作</span>
-              <Tooltip content="QZ Tray 教程与新电脑配置">
-                <ArcoButton
-                  type="text"
-                  size="large"
-                  aria-label="打开 QZ Tray 教程与新电脑配置"
-                  icon={<PlugZap size={20} />}
-                  onClick={() => setIsQzGuideOpen(true)}
-                ><span>QZ 配置</span></ArcoButton>
-              </Tooltip>
-              {canViewIntercepts && <Tooltip content="拦截名单管理">
-                <ArcoButton
-                  type="text"
-                  size="large"
-                  aria-label="打开拦截名单管理"
-                  icon={<ShieldAlert size={20} />}
-                  onClick={() => setIsInterceptManagerOpen(true)}
-                ><span>拦截名单</span></ArcoButton>
-              </Tooltip>}
-              {canCreateSharedBatch && <Tooltip content="导入 Excel 映射与 PDF 面单">
-                <ArcoButton
-                  type="text"
-                  size="large"
-                  aria-label="打开数据导入"
-                  icon={<FileSpreadsheet size={20} />}
-                  onClick={openDataImport}
-                ><span>数据导入</span></ArcoButton>
-              </Tooltip>}
-              <Tooltip content="系统设置">
-                <ArcoButton
-                  type="text"
-                  size="large"
-                  aria-label="打开系统设置"
-                  icon={<Settings size={20} />}
-                  onClick={() => openSettings('printer')}
-                ><span>打印与音效</span></ArcoButton>
-              </Tooltip>
-            </div>
-          </div>
-        </header>
-        </ArcoCard>
+            {interceptStorageStatus === 'corrupted' && (
+              <ArcoAlert
+                type="warning"
+                showIcon
+                content="拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。"
+              />
+            )}
 
-        {qzConnectionHealth === 'offline' && (
-          <ArcoAlert
-            type="warning"
-            showIcon
-            content="QZ Tray 连接已中断，系统正在每 5 秒自动尝试重连；请确认 QZ Tray 正在当前电脑运行。"
-          />
-        )}
+            {interceptStorageStatus === 'unavailable' && (
+              <ArcoAlert
+                type="warning"
+                showIcon
+                content="拦截名单无法保存到本机缓存，本次会话关闭后将失效。"
+              />
+            )}
 
-        {cloudLibrary.status === 'error' && (
-          <ArcoAlert
-            type="warning"
-            showIcon
-            content={`云端同步未完成：${cloudLibrary.message}`}
-            action={<ArcoButton size="small" onClick={() => void cloudLibrary.sync()}>重新同步</ArcoButton>}
-          />
-        )}
+            {uploadCacheStatus === 'unavailable' && uploadCacheMessage && (
+              <ArcoAlert type="warning" showIcon content={`会话文件缓存不可用：${uploadCacheMessage}`} />
+            )}
 
-        {interceptStorageStatus === 'corrupted' && (
-          <ArcoAlert
-            type="warning"
-            showIcon
-            content="拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。"
-          />
-        )}
-
-        {interceptStorageStatus === 'unavailable' && (
-          <ArcoAlert
-            type="warning"
-            showIcon
-            content="拦截名单无法保存到本机缓存，本次会话关闭后将失效。"
-          />
-        )}
-
-        {uploadCacheStatus === 'unavailable' && uploadCacheMessage && (
-          <ArcoAlert type="warning" showIcon content={`会话文件缓存不可用：${uploadCacheMessage}`} />
+            {canEnableEmergencyOffline && emergencyOfflineEnabled && (
+              <ArcoAlert
+                className="cmhub-emergency-mode-alert"
+                type="warning"
+                showIcon
+                content={`单机应急模式已开启：使用本机已验证数据，待回传 ${cloudAudit.pendingCount + sharedAudit.pendingCount} 条。`}
+                action={(
+                  <ArcoSpace>
+                    <ArcoButton onClick={() => {
+                      void Promise.all([
+                        syncInterceptRules(),
+                        cloudLibrary.sync(),
+                        cloudAudit.flushPending(),
+                        sharedAudit.flushPending(),
+                      ]);
+                    }}>恢复连接</ArcoButton>
+                    <ArcoButton
+                      status="danger"
+                      onClick={() => setEmergencyOfflineEnabled(enabled => !enabled)}
+                    >关闭应急模式</ArcoButton>
+                  </ArcoSpace>
+                )}
+              />
+            )}
+          </aside>
         )}
 
         <Drawer
@@ -2190,8 +2228,8 @@ export default function App() {
         {canViewIntercepts && <Drawer
           visible={isInterceptManagerOpen}
           className="cmhub-utility-drawer cmhub-intercept-drawer"
-          width={760}
-          title={<div className="cmhub-intercept-drawer-title"><span><ShieldAlert size={20} />拦截名单</span><small>维护后对所有授权仓库工作站实时生效。</small></div>}
+          width={832}
+          title={<div className="cmhub-intercept-drawer-title"><span><ShieldAlert size={20} aria-hidden="true" />拦截名单</span><small>维护后对所有授权仓库工作站实时生效。</small></div>}
           footer={null}
           onCancel={() => setIsInterceptManagerOpen(false)}
         >
@@ -2203,10 +2241,22 @@ export default function App() {
           <ArcoModal
             visible
             className="cmhub-settings-modal"
-            title={<ArcoSpace><Settings size={20} /><span>系统设置</span></ArcoSpace>}
+            title={
+              <div className="cmhub-settings-modal-title">
+                <ArcoSpace><Settings size={20} /><span>系统设置</span></ArcoSpace>
+                <ArcoButton
+                  type="text"
+                  size="mini"
+                  aria-label="关闭系统设置"
+                  icon={<X size={18} aria-hidden="true" />}
+                  onClick={() => setShowSettings(false)}
+                />
+              </div>
+            }
             onCancel={() => setShowSettings(false)}
             footer={null}
             style={{ width: 620 }}
+            closable={false}
           >
               <div className="space-y-6">
                 <Tabs
@@ -2469,7 +2519,7 @@ export default function App() {
                 <ArcoAlert
                   type={sharedBatchStatus === 'error' ? 'error' : sharedBatchStatus === 'active' ? 'success' : 'info'}
                   showIcon
-                  content={sharedBatchMessage || '导入的数据会先保存为共享草稿；确认 Excel 与 PDF 后发布，其他工作站即可直接扫码。'}
+                  content={sharedBatchMessage || '发布后其它电脑可直接扫码'}
                 />
                 {canPublishSharedBatch && (
                   <ArcoSpace>
@@ -2620,39 +2670,44 @@ export default function App() {
           </section>
         </Drawer>
 
-        {canEnableEmergencyOffline && (
-          <ArcoAlert
-            className="cmhub-emergency-mode-alert"
-            type={emergencyOfflineEnabled ? 'warning' : 'info'}
-            showIcon
-            content={emergencyOfflineEnabled
-              ? `单机应急模式已开启：仅使用本机已验证面单与最后同步的拦截名单（${interceptLastSyncedAt ? new Date(interceptLastSyncedAt).toLocaleString() : '尚无同步记录'}）。本机面单缓存：${uploadCacheMessage}。待回传 ${cloudAudit.pendingCount + sharedAudit.pendingCount} 条。`
-              : '共享模式断网时默认停止打印。现场主管可临时启用单机应急模式。'}
-            action={(
-              <ArcoSpace>
-                {emergencyOfflineEnabled && (
-                  <ArcoButton onClick={() => {
-                    void Promise.all([
-                      syncInterceptRules(),
-                      cloudLibrary.sync(),
-                      cloudAudit.flushPending(),
-                      sharedAudit.flushPending(),
-                    ]);
-                  }}>恢复连接</ArcoButton>
-                )}
-                <ArcoButton
-                  status={emergencyOfflineEnabled ? 'danger' : undefined}
-                  onClick={() => setEmergencyOfflineEnabled(enabled => !enabled)}
-                >{emergencyOfflineEnabled ? '关闭应急模式' : '启用单机应急'}</ArcoButton>
-              </ArcoSpace>
-            )}
-          />
-        )}
+        <section className="cmhub-scan-utility-bar" data-motion-enter aria-label="扫码打单准备信息与工具">
+          <div className="cmhub-scan-utility-status" aria-label="准备状态">
+            <span data-state={qzConnectionHealth === 'healthy' ? 'ready' : qzConnectionHealth === 'offline' ? 'issue' : 'pending'}>
+              <i aria-hidden="true" /><b>QZ</b><small>{qzReadiness}</small>
+            </span>
+            <span data-state={qzConnectionHealth === 'offline' ? 'issue' : 'ready'}>
+              <i aria-hidden="true" /><b>打印机</b><small>{selectedPrinter ? selectedPrinterLabel : '自动选择'}</small>
+            </span>
+            <span data-state={cloudLibrary.status === 'ready' ? 'ready' : cloudLibrary.status === 'error' ? 'issue' : 'pending'}>
+              <i aria-hidden="true" /><b>面单</b><small>{libraryReadiness}</small>
+            </span>
+            <span><b>{(stats.pdfCount + cloudLibrary.count).toLocaleString()}</b><small>可打印</small></span>
+            {emergencyOfflineEnabled && <span data-state="issue"><i aria-hidden="true" /><b>应急</b><small>本机模式</small></span>}
+          </div>
+          <div className="cmhub-scan-utility-actions" role="toolbar" aria-label="扫码打单工具">
+            <Tooltip content="QZ Tray 教程与新电脑配置">
+              <ArcoButton size="small" aria-label="打开 QZ Tray 教程与新电脑配置" icon={<PlugZap size={15} />} onClick={() => setIsQzGuideOpen(true)}>QZ 配置</ArcoButton>
+            </Tooltip>
+            {canViewIntercepts && <Tooltip content="拦截名单管理">
+              <ArcoButton size="small" aria-label="打开拦截名单管理" icon={<ShieldAlert size={15} />} onClick={() => setIsInterceptManagerOpen(true)}>拦截名单</ArcoButton>
+            </Tooltip>}
+            {canCreateSharedBatch && <Tooltip content="导入 Excel 映射与 PDF 面单">
+              <ArcoButton size="small" aria-label="打开数据导入" icon={<FileSpreadsheet size={15} />} onClick={openDataImport}>数据导入</ArcoButton>
+            </Tooltip>}
+            <Tooltip content="打印机与音效设置">
+              <ArcoButton size="small" aria-label="打开打印机与音效设置" icon={<Settings size={15} />} onClick={() => openSettings('printer')}>打印与音效</ArcoButton>
+            </Tooltip>
+            {canEnableEmergencyOffline && !emergencyOfflineEnabled && <Tooltip content="共享模式断网时，主管可临时使用本机已验证数据">
+              <ArcoButton size="small" type="text" aria-label="启用单机应急模式" onClick={() => setEmergencyOfflineEnabled(true)}>单机应急</ArcoButton>
+            </Tooltip>}
+          </div>
+        </section>
 
         <div className="cmhub-operating-stack">
             {/* Scanner Input */}
             <ArcoCard
               className="cmhub-operating-card cmhub-scanner-card"
+              data-motion-enter
               data-state={scanFeedback}
               aria-busy={isWorkspacePreparing}
               bordered
@@ -2660,52 +2715,24 @@ export default function App() {
               <div className="cmhub-scan-entry-summary">
                 <div className="cmhub-scan-entry-icon"><Printer size={22} aria-hidden="true" /></div>
                 <div className="cmhub-scan-entry-copy">
+                  <span className="cmhub-scan-entry-eyebrow">快速打印</span>
                   <h2>扫码并打印</h2>
-                  <p>扫描或输入单号后，系统会匹配面单并发送至已选打印机。</p>
+                </div>
+                <div className="cmhub-scan-status" role="status" aria-live="polite">
+                  <span className="cmhub-scan-status-dot" aria-hidden="true" />
+                  {scanStatusCopy}
                 </div>
               </div>
-              <div className="cmhub-scan-stage">
-                <div className="cmhub-scan-entry-controls">
-                  <div className="cmhub-scan-field">
-                    <div className="cmhub-scan-field-label">
-                      <label id="cmhub-scan-input-label" htmlFor="cmhub-scan-input">扫描单号</label>
-                      <div className="cmhub-scan-status" role="status" aria-live="polite">
-                        <span className="cmhub-scan-status-dot" aria-hidden="true" />
-                        {scanStatusCopy}
-                      </div>
-                    </div>
-                    <ArcoInput
-                      value={scanInput}
-                      onChange={handleScanInputChange}
-                      onFocus={() => { void getAudioContext().catch(() => undefined); }}
-                      onPressEnter={submitScanInput}
-                      id="cmhub-scan-input"
-                      placeholder={isWorkspacePreparing ? '正在准备本机数据…' : '等待扫码或输入单号…'}
-                      size="large"
-                      disabled={isWorkspacePreparing}
-                      className={cn('cmhub-scan-input', scanFeedback === 'error' && 'is-error')}
-                      aria-labelledby="cmhub-scan-input-label"
-                      prefix={<Scan size={20} aria-hidden="true" />}
-                      suffix={<kbd className="cmhub-scan-enter-key">Enter</kbd>}
-                    />
-                  </div>
-                  <div className="cmhub-scan-entry-actions" role="group" aria-label="扫码打印操作">
-                    <ArcoButton type="primary" disabled={isWorkspacePreparing || !scanInput.trim()} onClick={submitScanInput}>
-                      <Printer size={16} aria-hidden="true" />
-                      <span>打印</span>
-                    </ArcoButton>
-                  </div>
-                </div>
-                <div className="cmhub-scan-field-meta">
-                  <span>扫码枪将自动提交；手动输入后按 Enter</span>
-                  <span>面单自动匹配</span>
-                  <span>本机打印机直打</span>
-                  <span>拦截名单即时校验</span>
-                </div>
-              </div>
+              <ScanCommandInput
+                feedback={scanFeedback}
+                isPreparing={isWorkspacePreparing}
+                onCandidate={handleScanCandidate}
+                onSubmit={submitScanInput}
+                onWarmAudio={audioEnabled ? () => { void getAudioContext().catch(() => undefined); } : undefined}
+              />
             </ArcoCard>
 
-            <ArcoCard className="cmhub-operating-card cmhub-scan-result-card" bordered>
+            <ArcoCard className="cmhub-operating-card cmhub-scan-result-card" data-motion-enter bordered>
               <div className="cmhub-scan-result-heading">
                 <span>本次处理结果</span>
                 <small>{latestPrintLog ? latestPrintLog.time : '等待首次扫描'}</small>
@@ -2714,7 +2741,7 @@ export default function App() {
                 <div className="cmhub-scan-result-content" data-status={latestPrintLog.status}>
                   <div><small>扫描单号</small><strong>{latestPrintLog.firstLeg}</strong></div>
                   <ArrowRight size={20} aria-hidden="true" />
-                  <div><small>匹配末端单号</small><strong>{latestPrintLog.exchange || '—'}</strong></div>
+                  <div><small>匹配末端单号</small><strong>{latestPrintLog.exchange || '-'}</strong></div>
                   <span>{latestPrintLog.status === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}{latestPrintLog.status === 'success' ? '已提交到打印机' : latestPrintLog.message}</span>
                 </div>
               ) : (
@@ -2723,7 +2750,7 @@ export default function App() {
             </ArcoCard>
 
             {/* Logs */}
-            <section id="operation-log" ref={logSectionRef} tabIndex={-1} aria-label="操作日志">
+            <section id="operation-log" ref={logSectionRef} data-motion-enter tabIndex={-1} aria-label="操作日志">
               <ArcoCard className="cmhub-operating-card cmhub-log-card" bordered bodyStyle={{ padding: 0 }}>
               <div className="cmhub-log-card-header">
                 <div className="cmhub-log-card-heading">
@@ -2789,7 +2816,7 @@ export default function App() {
                 <span>当前分类已保存 <b className="text-text-primary">{logQuery.total.toLocaleString()}</b> / {MAX_PRINT_LOG_ENTRIES.toLocaleString()} 条</span>
                 <span className="whitespace-nowrap">每页 {LOGS_PER_PAGE} 条 · 最新优先</span>
               </div>
-              <div id="cmhub-log-table" key={activeTab} className="cmhub-log-content" role="tabpanel">
+              <div id="cmhub-log-table" key={activeTab} className="cmhub-log-content" data-motion-tab role="tabpanel">
                 <PrintLogTable logs={logQuery.logs} latestLogId={lastLogId} />
               </div>
               {logQuery.total > 0 && (

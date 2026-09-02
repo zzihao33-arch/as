@@ -9,8 +9,7 @@ interface PrintLogTableProps {
 
 function PrintLogTable({ logs, latestLogId }: PrintLogTableProps) {
   const columns = useMemo(() => [
-    { title: '序号', dataIndex: 'rowNumber', width: 80 },
-    { title: '时间', dataIndex: 'time', width: 130 },
+    { title: '时间', dataIndex: 'time', width: 140 },
     {
       title: '相关单号/对象',
       dataIndex: 'firstLeg',
@@ -49,7 +48,6 @@ function PrintLogTable({ logs, latestLogId }: PrintLogTableProps) {
       rowKey="id"
       border={false}
       pagination={false}
-      scroll={{ y: 400 }}
       data={logs}
       columns={columns}
       rowClassName={(record) => record.id === latestLogId ? 'cmhub-latest-log' : ''}

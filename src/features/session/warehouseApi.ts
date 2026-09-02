@@ -695,7 +695,7 @@ export interface AttendancePayrollRow {
   totalPay: number | null;
   issues: string[];
   weeklyMinutes: Array<{ week: string; minutes: number }>;
-  days: Array<{ workDate: string; netMinutes: number; status: string }>;
+  days: Array<{ workDate: string; grossMinutes: number; status: string }>;
 }
 
 export interface AttendancePayrollResult {
@@ -836,16 +836,101 @@ export async function saveAttendanceShiftRule(input: Partial<AttendanceShiftRule
   return result.data;
 }
 
+const payrollNumber = (value: unknown) => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+function normalizeAttendancePayrollResult(value: unknown): AttendancePayrollResult {
+  if (!value || typeof value !== 'object') {
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬数据格式不完整，请刷新后重试。');
+  }
+
+  const source = value as Partial<AttendancePayrollResult>;
+  if (!Array.isArray(source.rows)) {
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬明细缺失，请刷新后重试。');
+  }
+
+  const rows = source.rows.map(rawRow => {
+    const row = rawRow && typeof rawRow === 'object'
+      ? rawRow as Partial<AttendancePayrollRow>
+      : {} as Partial<AttendancePayrollRow>;
+    const weeklyMinutes = Array.isArray(row.weeklyMinutes)
+      ? row.weeklyMinutes.map(item => ({ week: String(item?.week ?? ''), minutes: payrollNumber(item?.minutes) ?? 0 }))
+      : [];
+    const rawDays = Array.isArray(row.days) ? row.days : [];
+    const days = rawDays.length
+      ? rawDays.map(day => ({
+        workDate: String(day?.workDate ?? ''),
+        grossMinutes: payrollNumber(day?.grossMinutes) ?? 0,
+        status: String(day?.status ?? ''),
+      }))
+      : [];
+    const requiredNumbers = [row.bonus, row.fuelDays, row.regularMinutes, row.overtimeMinutes, row.fuelAllowance];
+    const nullableNumbers = [row.hourlyRate, row.regularPay, row.overtimePay, row.totalPay];
+    const malformed = !row.employeeReference
+      || !row.employeeName
+      || requiredNumbers.some(item => payrollNumber(item) === null)
+      || nullableNumbers.some(item => item != null && payrollNumber(item) === null)
+      || !Array.isArray(row.issues)
+      || !Array.isArray(row.weeklyMinutes)
+      || !Array.isArray(row.days)
+      || rawDays.some(day => payrollNumber(day?.grossMinutes) === null);
+    const issues = Array.isArray(row.issues) ? row.issues.map(String).filter(Boolean) : [];
+    if (malformed) issues.push('薪酬数据格式异常，请联系管理员重新计算');
+
+    return {
+      userId: typeof row.userId === 'string' ? row.userId : null,
+      employeeReference: String(row.employeeReference ?? 'unknown'),
+      employeeName: String(row.employeeName ?? '未知员工'),
+      employeeNo: typeof row.employeeNo === 'string' ? row.employeeNo : null,
+      hourlyRate: payrollNumber(row.hourlyRate),
+      bonus: payrollNumber(row.bonus) ?? 0,
+      fuelDays: payrollNumber(row.fuelDays) ?? 0,
+      regularMinutes: payrollNumber(row.regularMinutes) ?? 0,
+      overtimeMinutes: payrollNumber(row.overtimeMinutes) ?? 0,
+      regularPay: payrollNumber(row.regularPay),
+      overtimePay: payrollNumber(row.overtimePay),
+      fuelAllowance: payrollNumber(row.fuelAllowance) ?? 0,
+      totalPay: malformed ? null : payrollNumber(row.totalPay),
+      issues: [...new Set(issues)],
+      weeklyMinutes,
+      days,
+    } satisfies AttendancePayrollRow;
+  });
+
+  if (!source.rule || typeof source.rule !== 'object') {
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则缺失，请刷新后重试。');
+  }
+  const rule = source.rule;
+  const ruleNumbers = [rule.lunchDeductionMinutes, rule.weeklyRegularMinutes, rule.overtimeMultiplier, rule.fuelAllowancePerDay];
+  if (ruleNumbers.some(item => payrollNumber(item) === null)) {
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则格式异常，请刷新后重试。');
+  }
+  return {
+    from: String(source.from ?? ''),
+    to: String(source.to ?? ''),
+    runId: typeof source.runId === 'string' ? source.runId : null,
+    rows,
+    rule: {
+      lunchDeductionMinutes: payrollNumber(rule.lunchDeductionMinutes) ?? 0,
+      weeklyRegularMinutes: payrollNumber(rule.weeklyRegularMinutes) ?? 0,
+      overtimeMultiplier: payrollNumber(rule.overtimeMultiplier) ?? 0,
+      fuelAllowancePerDay: payrollNumber(rule.fuelAllowancePerDay) ?? 0,
+    },
+  };
+}
+
 export async function getAttendancePayrollPreview(dateFrom: string, dateTo: string) {
   const result = await request<{ data: AttendancePayrollResult }>(`/warehouse/v1/attendance/payroll-preview?${new URLSearchParams({ dateFrom, dateTo })}`);
-  return result.data;
+  return normalizeAttendancePayrollResult(result.data);
 }
 
 export async function createAttendancePayrollRun(dateFrom: string, dateTo: string) {
   const result = await request<{ data: AttendancePayrollResult }>('/warehouse/v1/attendance/payroll-runs', {
     method: 'POST', body: JSON.stringify({ dateFrom, dateTo }),
   });
-  return result.data;
+  return normalizeAttendancePayrollResult(result.data);
 }
 
 export function saveAttendancePayProfile(input: { userId: string; hourlyRate: number; effectiveFrom: string }): Promise<unknown> {

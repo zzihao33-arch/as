@@ -141,7 +141,7 @@ const applyTemplateStyles = (workbookBytes: ArrayBuffer, totalRowNumber: number,
 export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOptions) {
   const weeks = options.weeks.slice(0, WEEK_COLUMN_KEYS.length);
   const headers = [
-    '序号', '姓名', '基础时薪', '出勤日期与班次明细 (已扣午休)',
+    '序号', '姓名', '基础时薪', '出勤日期与班次明细 (按实际分钟)',
     ...WEEK_COLUMN_KEYS.map((_, index) => formatWeekHeader(weeks[index], index)),
     '常规工时 (小时)', 'OT工时 (>40h/周)', '常规工资', '加班工资', '奖金', '油补 (天)', '油补金额', '应发金额', '核对',
   ];
@@ -150,7 +150,7 @@ export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOpti
   const issueRows = new Set<number>();
   const values = [
     [formatExportTitle(options.periodLabel), ...Array(18).fill('')],
-    ['计算规则：1. 每日扣除 1 小时午休 (12:30-13:30) | 2. 单周(周一至周日)工作超过 40 小时部分按 1.5 倍计算加班费', ...Array(18).fill('')],
+    ['计算规则：1. 工时按上下班之间的实际分钟累计，不扣固定午休 | 2. 单周(周一至周日)工作超过 40 小时部分按 1.5 倍计算加班费', ...Array(18).fill('')],
     headers,
     ...options.rows.map((row, index) => {
       const rowNumber = firstDataRow + index;

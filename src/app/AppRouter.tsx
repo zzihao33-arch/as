@@ -37,9 +37,23 @@ function RequireAnyPermission({ permissions }: { permissions: string[] }) {
 
 function FirstAllowedRoute() {
   const session = useWarehouseSession();
+  const roleName = session.session?.roleName ?? '';
+  const isOperationsRole = /操作员|operator/i.test(roleName);
+  const isSupervisorRole = session.session?.platformRole === 'SYSTEM_ADMIN'
+    || /主管|supervisor|manager|admin/i.test(roleName);
+
+  // The first screen is a work decision, not a permission ordering accident.
+  // Operators return to the scan console, while supervisory roles begin with
+  // situational awareness. Other roles retain the previous safe fallback.
+  if (isOperationsRole && session.hasPermission('scan.use')) {
+    return <Navigate to="/operations/scan-print" replace />;
+  }
+  if (isSupervisorRole && session.hasPermission('dashboard.view')) {
+    return <Navigate to="/dashboard" replace />;
+  }
   const firstAllowed = [
-    ['dashboard.view', '/dashboard'],
     ['scan.use', '/operations/scan-print'],
+    ['dashboard.view', '/dashboard'],
     ['air_pickups.view', '/air-pickups'],
     ['bol.view', '/air-pickups/handover-documents'],
     ['attendance.punch', '/payroll'],
@@ -83,6 +97,7 @@ export function AppRouter() {
             <Route path="/operations/intercepts" element={<Navigate to="/operations/scan-print#intercepts" replace />} />
           </Route>
           <Route element={<RequirePermission permission="air_pickups.view" />}><Route path="/air-pickups" element={<AirPickupPage />} /></Route>
+          <Route element={<RequirePermission permission="air_pickups.view" />}><Route path="/air-pickups/history" element={<Navigate to="/air-pickups?scope=all" replace />} /></Route>
           <Route element={<RequirePermission permission="bol.view" />}>
             <Route path="/air-pickups/handover-documents" element={<BolPage />} />
           </Route>

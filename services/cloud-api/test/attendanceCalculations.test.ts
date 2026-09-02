@@ -38,7 +38,7 @@ test('flags shifts longer than eighteen hours for review', () => {
   assert.equal(result.netMinutes, 0);
 });
 
-test('calculates weekly overtime, fuel allowance, and total pay with existing rules', () => {
+test('calculates weekly overtime, fuel allowance, and total pay from actual minutes', () => {
   const row = calculatePayrollRow({
     employeeReference: 'user:1',
     employeeName: 'Max',
@@ -47,8 +47,8 @@ test('calculates weekly overtime, fuel allowance, and total pay with existing ru
     bonus: 50,
     fuelDays: 2,
     days: [
-      { workDate: '2026-08-24', netMinutes: 2_400, status: 'COMPLETE' },
-      { workDate: '2026-08-25', netMinutes: 600, status: 'COMPLETE' },
+      { workDate: '2026-08-24', grossMinutes: 2_400, status: 'COMPLETE' },
+      { workDate: '2026-08-25', grossMinutes: 600, status: 'COMPLETE' },
     ],
   });
   assert.equal(row.regularMinutes, 2_400);
@@ -57,4 +57,21 @@ test('calculates weekly overtime, fuel allowance, and total pay with existing ru
   assert.equal(row.overtimePay, 300);
   assert.equal(row.fuelAllowance, 39);
   assert.equal(row.totalPay, 1_189);
+});
+
+test('counts a 45-minute shift as 0.75 payable hours without a fixed lunch deduction', () => {
+  const row = calculatePayrollRow({
+    employeeReference: 'user:45-minutes',
+    employeeName: 'Minute Worker',
+    employeeNo: '045',
+    hourlyRate: 20,
+    bonus: 0,
+    fuelDays: 0,
+    days: [{ workDate: '2026-09-02', grossMinutes: 45, status: 'COMPLETE' }],
+  });
+
+  assert.equal(row.regularMinutes, 45);
+  assert.equal(row.overtimeMinutes, 0);
+  assert.equal(row.regularPay, 15);
+  assert.equal(row.totalPay, 15);
 });

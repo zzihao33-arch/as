@@ -231,10 +231,37 @@ export function usePrintLogs() {
     return () => window.clearTimeout(timer);
   }, [lastLogId]);
 
+  // A dashboard has its own hook instance. Exposing a real reload lets it
+  // retrieve records written by the printing workbench instead of only
+  // repainting the activity panel with its initial in-memory snapshot.
+  const refresh = useCallback(async () => {
+    try {
+      const storedEntries = await readAllLocalFirstEntries<unknown>('printLogs');
+      const legacyDatabaseEntry = storedEntries.find(({ key }) => key === PRINT_LOGS_DATABASE_KEY);
+      const recordEntries = storedEntries.filter(
+        (entry): entry is LocalFirstEntry<unknown> & { key: string } => isPrintLogRecordKey(entry.key)
+      );
+      const recordLogs = normalizeLogs(recordEntries.map(({ value }) => value));
+      const legacyLogs = legacyDatabaseEntry
+        ? normalizeLogs(legacyDatabaseEntry.value)
+        : recordEntries.length === 0 ? readLegacyLogs() : [];
+      const nextLogs = mergeLogs(legacyLogs, recordLogs);
+      logsRef.current = nextLogs;
+      setLogs(nextLogs);
+      return true;
+    } catch {
+      const legacyLogs = readLegacyLogs();
+      logsRef.current = legacyLogs;
+      setLogs(legacyLogs);
+      return false;
+    }
+  }, []);
+
   return {
     logs,
     lastLogId,
     addLog,
-    clearLogsByType
+    clearLogsByType,
+    refresh
   };
 }

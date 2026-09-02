@@ -1,36 +1,55 @@
+/* Hallmark · genre: modern-minimal · macrostructure: workbench · design-system: design.md · designed-as-app */
 html,
 body {
   min-width: 320px;
+  min-height: 100%;
   margin: 0;
-  background: var(--color-bg-2);
-  color: var(--color-text-1);
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
-  font-family: var(--cmhub-font-sans);
+  background: var(--cmhub-surface-canvas);
+  color: var(--cmhub-text-primary);
+  font-family: var(--cmhub-font-body);
 }
 
-html { scroll-behavior: smooth; }
+html {
+  overflow-x: clip;
+  scroll-behavior: smooth;
+}
 
-body { font-variant-numeric: tabular-nums; }
+body {
+  overflow-x: clip;
+  font-size: var(--cmhub-font-size-md);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cmhub-line-height-normal);
+  text-rendering: optimizeLegibility;
+}
+
+#root { min-height: 100%; }
 
 button,
 input,
 select,
-textarea {
-  font: inherit;
-}
+textarea { font: inherit; }
+
+button,
+[role='button'] { touch-action: manipulation; }
 
 ::selection {
-  background: var(--color-primary-light-2);
-  color: var(--color-text-1);
+  background: var(--cmhub-surface-selected);
+  color: var(--cmhub-text-primary);
 }
 
 :focus-visible {
-  outline: 2px solid var(--primary-6);
-  outline-offset: 3px;
+  outline: 2px solid var(--cmhub-focus-ring);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+:where(button, input, select, textarea, [role='button'])[disabled],
+:where(button, input, select, textarea, [role='button'])[aria-disabled='true'] {
+  cursor: not-allowed;
 }
 
 * {
-  scrollbar-color: var(--color-fill-3) transparent;
+  scrollbar-color: var(--cmhub-line-strong) transparent;
   scrollbar-width: thin;
 }
 
@@ -40,16 +59,24 @@ textarea {
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 3px solid var(--color-bg-2);
-  border-radius: 999px;
-  background: var(--color-fill-3);
+  border: 3px solid var(--cmhub-surface-canvas);
+  border-radius: var(--cmhub-radius-pill);
+  background: var(--cmhub-line-strong);
+}
+
+@media (pointer: coarse) {
+  :where(button, [role='button'], .arco-btn) { min-height: var(--cmhub-control-height); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
   *,
   *::before,
   *::after {
+    animation-duration: 150ms !important;
+    animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 150ms !important;
   }
 }

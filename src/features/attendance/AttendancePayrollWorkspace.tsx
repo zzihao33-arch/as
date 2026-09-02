@@ -54,6 +54,7 @@ import {
   type AttendanceShiftRule,
 } from '../session/warehouseApi';
 import { AttendanceCapturePanel } from './AttendanceCapturePanel';
+import { formatAttendanceDecimalHours } from './attendanceTime';
 
 const ATTENDANCE_TIME_ZONE = 'America/New_York';
 
@@ -118,14 +119,26 @@ function AttendancePhotoThumb({ attemptId, label }: { attemptId?: string | null;
     let active = true;
     let objectUrl = '';
     const target = targetRef.current;
-    const observer = new IntersectionObserver(entries => {
-      if (!entries.some(entry => entry.isIntersecting)) return;
-      observer.disconnect();
+    const loadPhoto = () => {
       void openAttendancePunchPhoto(attemptId).then(blob => {
         if (!active || !blob) return;
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
       }).catch(() => undefined);
+    };
+
+    if (typeof IntersectionObserver === 'undefined') {
+      loadPhoto();
+      return () => {
+        active = false;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      };
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      loadPhoto();
     }, { rootMargin: '120px' });
     observer.observe(target);
     return () => {
@@ -140,7 +153,7 @@ function AttendancePhotoThumb({ attemptId, label }: { attemptId?: string | null;
       <button ref={targetRef} type="button" className="cmhub-attendance-photo-thumb" onClick={() => url && setPreview(true)} aria-label={`预览${label}`}>
         {url ? <img src={url} alt={label} /> : <span>加载中</span>}
       </button>
-      <Modal title={label} visible={preview} footer={null} onCancel={() => setPreview(false)}>
+      <Modal className="cmhub-attendance-modal cmhub-attendance-photo-modal" title={label} visible={preview} footer={null} onCancel={() => setPreview(false)}>
         {url && <img className="cmhub-attendance-photo-preview" src={url} alt={label} />}
       </Modal>
     </>
@@ -198,7 +211,12 @@ function RecordsPanel({ refreshKey }: { refreshKey: number }) {
           { title: '员工', width: 150, render: (_, row) => <div className="cmhub-attendance-employee"><strong>{row.employeeName}</strong><small>{row.employeeNo || row.employeeReference}</small></div> },
           { title: '上班', dataIndex: 'clockInAt', width: 120, render: value => formatTime(value) },
           { title: '下班', dataIndex: 'clockOutAt', width: 120, render: value => formatTime(value) },
-          { title: '净工时', dataIndex: 'netMinutes', width: 100, render: value => `${(Number(value) / 60).toFixed(2)} h` },
+          {
+            title: '工作时长',
+            dataIndex: 'grossMinutes',
+            width: 110,
+            render: value => <span className="cmhub-attendance-hours" title={`${Math.max(0, Math.round(Number(value) || 0))} 分钟`}>{formatAttendanceDecimalHours(Number(value))}</span>,
+          },
           { title: '状态', dataIndex: 'status', width: 110, render: value => { const [label, color] = attendanceStatus(value); return <Tag color={color}>{label}</Tag>; } },
           { title: '异常', width: 160, render: (_, row) => <Space size="mini">{row.isLate && <Tag color="orange">迟到</Tag>}{row.isEarlyLeave && <Tag color="orange">早退</Tag>}{!row.isLate && !row.isEarlyLeave && '—'}</Space> },
           { title: '现场抓拍', width: 130, render: (_, row) => <Space size="mini"><AttendancePhotoThumb attemptId={row.clockInAttemptId} label={`${row.employeeName} 上班抓拍`} /><AttendancePhotoThumb attemptId={row.clockOutAttemptId} label={`${row.employeeName} 下班抓拍`} /></Space> },
@@ -281,7 +299,7 @@ function AppealsPanel({ refreshKey, onChanged }: { refreshKey: number; onChanged
         noDataElement={<Empty description="暂无申诉记录" />}
       />
 
-      <Modal title="发起考勤申诉" visible={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void create()} okText="提交申诉" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title="发起考勤申诉" visible={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void create()} okText="提交申诉" unmountOnExit>
         <div className="cmhub-attendance-form-grid">
           <label>考勤日期<Input type="date" value={draft.workDate} onChange={value => setDraft(current => ({ ...current, workDate: value }))} /></label>
           <label>异常类型<Select value={draft.type} onChange={value => setDraft(current => ({ ...current, type: value }))} options={[
@@ -293,7 +311,7 @@ function AppealsPanel({ refreshKey, onChanged }: { refreshKey: number; onChanged
         </div>
       </Modal>
 
-      <Modal title={`审批申诉 · ${reviewTarget?.employeeName ?? ''}`} visible={Boolean(reviewTarget)} onCancel={() => setReviewTarget(null)} onOk={() => void review()} okText="确认处理" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title={`审批申诉 · ${reviewTarget?.employeeName ?? ''}`} visible={Boolean(reviewTarget)} onCancel={() => setReviewTarget(null)} onOk={() => void review()} okText="确认处理" unmountOnExit>
         <Alert type="warning" content="审批通过后会保留修正前后快照并重新计算该日考勤；审批人不可审批自己的申诉。" />
         <div className="cmhub-attendance-form-stack">
           <label>审批结果<Select value={reviewDecision} onChange={setReviewDecision} options={[{ label: '通过', value: 'APPROVED' }, { label: '驳回', value: 'REJECTED' }]} /></label>
@@ -414,7 +432,7 @@ function ConfigurationPanel() {
         </Card>
       )}
 
-      <Modal title="打卡地配置" visible={locationOpen} onCancel={() => setLocationOpen(false)} onOk={() => void persistLocation()} okText="保存" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title="打卡地配置" visible={locationOpen} onCancel={() => setLocationOpen(false)} onOk={() => void persistLocation()} okText="保存" unmountOnExit>
         <div className="cmhub-attendance-form-grid">
           <label>地点名称<Input value={locationDraft.name} onChange={value => setLocationDraft(current => ({ ...current, name: value }))} /></label>
           <label>状态<Select value={locationDraft.status} onChange={value => setLocationDraft(current => ({ ...current, status: value }))} options={[{ label: '启用', value: 'ACTIVE' }, { label: '停用', value: 'DISABLED' }]} /></label>
@@ -426,7 +444,7 @@ function ConfigurationPanel() {
         </div>
       </Modal>
 
-      <Modal title="班次规则" visible={ruleOpen} onCancel={() => setRuleOpen(false)} onOk={() => void persistRule()} okText="保存" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title="班次规则" visible={ruleOpen} onCancel={() => setRuleOpen(false)} onOk={() => void persistRule()} okText="保存" unmountOnExit>
         <div className="cmhub-attendance-form-grid">
           <label>规则名称<Input value={ruleDraft.name} onChange={value => setRuleDraft(current => ({ ...current, name: value }))} /></label>
           <label>状态<Select value={ruleDraft.status} onChange={value => setRuleDraft(current => ({ ...current, status: value }))} options={[{ label: '启用', value: 'ACTIVE' }, { label: '停用', value: 'DISABLED' }]} /></label>
@@ -468,7 +486,10 @@ function PayrollPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try { setResult(await getAttendancePayrollPreview(from, to)); }
-    catch (cause) { Message.error(cause instanceof Error ? cause.message : '薪酬预览加载失败。'); }
+    catch (cause) {
+      setResult(null);
+      Message.error(cause instanceof Error ? cause.message : '薪酬预览加载失败。');
+    }
     finally { setLoading(false); }
   }, [from, to]);
   useEffect(() => { void load(); }, [load]);
@@ -486,7 +507,7 @@ function PayrollPanel() {
         fuelDays: row.fuelDays,
         regularHours: row.regularMinutes / 60,
         overtimeHours: row.overtimeMinutes / 60,
-        attendanceDays: row.days.filter(day => day.netMinutes > 0).length,
+        attendanceDays: row.days.filter(day => day.grossMinutes > 0).length,
         weeklyHours: row.weeklyMinutes.map(item => ({ week: item.week, hours: item.minutes / 60 })),
         issues: row.issues.map(message => ({ message, severity: 'blocking' as const })),
         regularPay: row.regularPay ?? 0,
@@ -526,7 +547,7 @@ function PayrollPanel() {
 
   return (
     <Card className="cmhub-attendance-panel-card" title="薪酬核算" extra={session.hasPermission('payroll.export') && <Button type="primary" icon={<Download size={15} />} loading={loading} disabled={!result?.rows.length || result.rows.some(row => row.issues.length > 0)} onClick={() => void exportPayroll()}>固化并导出 Excel</Button>}>
-      <Alert type="info" content="考勤记录是唯一工时来源。完整上下班卡自动扣除 1 小时午休；每周超过 40 小时按 1.5 倍计算，加油补贴按 $19.50/天。缺少时薪或考勤异常时禁止导出。" />
+      <Alert type="info" content="考勤记录是唯一工时来源。完整上下班卡按实际分钟累计，不扣除固定午休；每周超过 40 小时按 1.5 倍计算，加油补贴按 $19.50/天。缺少时薪或考勤异常时禁止导出。" />
       <div className="cmhub-attendance-toolbar">
         <div className="cmhub-attendance-range">
           <label>开始日期<Input type="date" value={from} onChange={setFrom} /></label>
@@ -540,12 +561,12 @@ function PayrollPanel() {
         columns={[
           { title: '员工', fixed: 'left', width: 160, render: (_, row) => <div className="cmhub-attendance-employee"><strong>{row.employeeName}</strong><small>{row.employeeNo || row.employeeReference}</small></div> },
           { title: '时薪', dataIndex: 'hourlyRate', width: 100, render: value => value === null ? <Tag color="red">未设置</Tag> : `$${Number(value).toFixed(2)}` },
-          { title: '正常工时', dataIndex: 'regularMinutes', width: 110, render: value => `${(Number(value) / 60).toFixed(2)} h` },
-          { title: 'OT 工时', dataIndex: 'overtimeMinutes', width: 100, render: value => `${(Number(value) / 60).toFixed(2)} h` },
+          { title: '正常工时', dataIndex: 'regularMinutes', width: 110, render: value => formatAttendanceDecimalHours(Number(value)) },
+          { title: 'OT 工时', dataIndex: 'overtimeMinutes', width: 100, render: value => formatAttendanceDecimalHours(Number(value)) },
           { title: '正常工资', dataIndex: 'regularPay', width: 110, render: value => value === null ? '—' : `$${Number(value).toFixed(2)}` },
           { title: '加班工资', dataIndex: 'overtimePay', width: 110, render: value => value === null ? '—' : `$${Number(value).toFixed(2)}` },
           { title: '奖金', dataIndex: 'bonus', width: 90, render: value => `$${Number(value).toFixed(2)}` },
-          { title: '油补', width: 130, render: (_, row) => `${row.fuelDays} 天 · $${row.fuelAllowance.toFixed(2)}` },
+          { title: '油补', width: 130, render: (_, row) => `${Number(row.fuelDays).toLocaleString('zh-CN')} 天 · $${Number(row.fuelAllowance).toFixed(2)}` },
           { title: '应发金额', dataIndex: 'totalPay', width: 120, render: value => value === null ? <Tag color="red">待核对</Tag> : <strong>${Number(value).toFixed(2)}</strong> },
           { title: '核对', width: 220, render: (_, row) => row.issues.length ? <Tag color="red">{row.issues.join('；')}</Tag> : <Tag color="green">已核对</Tag> },
           { title: '操作', fixed: 'right', width: 170, render: (_, row) => session.hasPermission('payroll.manage')
@@ -555,13 +576,13 @@ function PayrollPanel() {
         noDataElement={<Empty description="当前周期暂无可核算考勤" />}
       />
 
-      <Modal title={`设置时薪 · ${rateTarget?.employeeName ?? ''}`} visible={Boolean(rateTarget)} onCancel={() => setRateTarget(null)} onOk={() => void persistRate()} okText="保存" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title={`设置时薪 · ${rateTarget?.employeeName ?? ''}`} visible={Boolean(rateTarget)} onCancel={() => setRateTarget(null)} onOk={() => void persistRate()} okText="保存" unmountOnExit>
         <div className="cmhub-attendance-form-stack">
           <label>时薪（美元）<Input type="number" min={0.01} value={rate} onChange={setRate} /></label>
           <label>生效日期<Input type="date" value={rateEffectiveFrom} onChange={setRateEffectiveFrom} /></label>
         </div>
       </Modal>
-      <Modal title={`薪酬调整 · ${adjustTarget?.employeeName ?? ''}`} visible={Boolean(adjustTarget)} onCancel={() => setAdjustTarget(null)} onOk={() => void persistAdjustment()} okText="保存" unmountOnExit>
+      <Modal className="cmhub-attendance-modal" title={`薪酬调整 · ${adjustTarget?.employeeName ?? ''}`} visible={Boolean(adjustTarget)} onCancel={() => setAdjustTarget(null)} onOk={() => void persistAdjustment()} okText="保存" unmountOnExit>
         <div className="cmhub-attendance-form-stack">
           <label>奖金（美元）<Input type="number" min={0} value={bonus} onChange={setBonus} /></label>
           <label>油补天数<Input type="number" min={0} value={fuelDays} onChange={setFuelDays} /></label>
@@ -572,19 +593,45 @@ function PayrollPanel() {
   );
 }
 
+type AttendanceTabKey = 'punch' | 'records' | 'appeals' | 'configuration' | 'payroll';
+
 export default function AttendancePayrollWorkspace() {
   const session = useWarehouseSession();
-  const [activeTab, setActiveTab] = useState(
-    session.hasPermission('attendance.punch') ? 'punch'
-      : (session.hasPermission('attendance.self_view') || session.hasPermission('attendance.team_view')) ? 'records'
-        : (session.hasPermission('attendance.appeal') || session.hasPermission('attendance.review')) ? 'appeals'
-          : (session.hasPermission('attendance.locations.manage') || session.hasPermission('attendance.rules.manage')) ? 'configuration'
-            : 'payroll',
-  );
-  const [refreshKey, setRefreshKey] = useState(0);
+  const canPunch = session.hasPermission('attendance.punch');
+  const canViewRecords = session.hasPermission('attendance.self_view') || session.hasPermission('attendance.team_view');
+  const canUseAppeals = session.hasPermission('attendance.appeal') || session.hasPermission('attendance.review');
   const configurationAllowed = session.hasPermission('attendance.locations.manage') || session.hasPermission('attendance.rules.manage');
+  const canViewPayroll = session.hasPermission('payroll.view');
+  const availableTabs = useMemo<AttendanceTabKey[]>(() => [
+    ...(canPunch ? ['punch' as const] : []),
+    ...(canViewRecords ? ['records' as const] : []),
+    ...(canUseAppeals ? ['appeals' as const] : []),
+    ...(configurationAllowed ? ['configuration' as const] : []),
+    ...(canViewPayroll ? ['payroll' as const] : []),
+  ], [canPunch, canUseAppeals, canViewPayroll, canViewRecords, configurationAllowed]);
+  const [activeTab, setActiveTab] = useState<AttendanceTabKey>(() => availableTabs[0] ?? 'payroll');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const resolvedActiveTab = availableTabs.includes(activeTab) ? activeTab : availableTabs[0];
   const changed = () => setRefreshKey(value => value + 1);
-  const heading = ({ punch: '我的打卡', records: '考勤记录', appeals: '异常申诉', configuration: '考勤配置', payroll: '考勤薪酬' } as Record<string, string>)[activeTab] ?? '考勤与薪酬';
+  const heading = ({ punch: '我的打卡', records: '考勤记录', appeals: '异常申诉', configuration: '考勤配置', payroll: '考勤薪酬' } as Record<AttendanceTabKey, string>)[resolvedActiveTab ?? 'payroll'];
+
+  useEffect(() => {
+    if (resolvedActiveTab && resolvedActiveTab !== activeTab) setActiveTab(resolvedActiveTab);
+  }, [activeTab, resolvedActiveTab]);
+
+  if (!resolvedActiveTab) {
+    return (
+      <section className="cmhub-page cmhub-attendance-page" aria-labelledby="attendance-page-title">
+        <div className="cmhub-page-heading">
+          <div>
+            <h1 id="attendance-page-title">考勤与薪酬</h1>
+            <p>当前账号尚未获得此工作区的可用权限。</p>
+          </div>
+        </div>
+        <Alert type="warning" content="请联系系统管理员分配考勤或薪酬权限后重试。" />
+      </section>
+    );
+  }
 
   return (
     <section className="cmhub-page cmhub-attendance-page" aria-labelledby="attendance-page-title">
@@ -597,12 +644,12 @@ export default function AttendancePayrollWorkspace() {
       </div>
 
       <Card className="cmhub-attendance-workspace">
-        <Tabs activeTab={activeTab} onChange={setActiveTab} destroyOnHide>
-          {session.hasPermission('attendance.punch') && <Tabs.TabPane key="punch" title={<Space size="mini"><CalendarClock size={16} />我的打卡</Space>}><AttendanceCapturePanel onChanged={changed} /></Tabs.TabPane>}
-          {(session.hasPermission('attendance.self_view') || session.hasPermission('attendance.team_view')) && <Tabs.TabPane key="records" title={<Space size="mini"><Clock3 size={16} />考勤记录</Space>}><RecordsPanel refreshKey={refreshKey} /></Tabs.TabPane>}
-          {(session.hasPermission('attendance.appeal') || session.hasPermission('attendance.review')) && <Tabs.TabPane key="appeals" title={<Space size="mini"><FileWarning size={16} />异常申诉</Space>}><AppealsPanel refreshKey={refreshKey} onChanged={changed} /></Tabs.TabPane>}
+        <Tabs activeTab={resolvedActiveTab} onChange={key => setActiveTab(key as AttendanceTabKey)} destroyOnHide>
+          {canPunch && <Tabs.TabPane key="punch" title={<Space size="mini"><CalendarClock size={16} />我的打卡</Space>}><AttendanceCapturePanel onChanged={changed} /></Tabs.TabPane>}
+          {canViewRecords && <Tabs.TabPane key="records" title={<Space size="mini"><Clock3 size={16} />考勤记录</Space>}><RecordsPanel refreshKey={refreshKey} /></Tabs.TabPane>}
+          {canUseAppeals && <Tabs.TabPane key="appeals" title={<Space size="mini"><FileWarning size={16} />异常申诉</Space>}><AppealsPanel refreshKey={refreshKey} onChanged={changed} /></Tabs.TabPane>}
           {configurationAllowed && <Tabs.TabPane key="configuration" title={<Space size="mini"><Settings2 size={16} />管理配置</Space>}><ConfigurationPanel /></Tabs.TabPane>}
-          {session.hasPermission('payroll.view') && <Tabs.TabPane key="payroll" title={<Space size="mini"><WalletCards size={16} />薪酬核算</Space>}><PayrollPanel /></Tabs.TabPane>}
+          {canViewPayroll && <Tabs.TabPane key="payroll" title={<Space size="mini"><WalletCards size={16} />薪酬核算</Space>}><PayrollPanel /></Tabs.TabPane>}
         </Tabs>
       </Card>
 

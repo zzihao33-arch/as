@@ -1,6 +1,5 @@
 import {
   Alert,
-  Badge,
   Button,
   Card,
   Checkbox,
@@ -12,11 +11,11 @@ import {
   InputNumber,
   Message,
   Modal,
+  Pagination,
   Progress,
   Select,
   Space,
   Spin,
-  Table,
   Tabs,
   Tag,
   Timeline,
@@ -25,8 +24,11 @@ import {
 import {
   Archive,
   Camera,
+  ChevronDown,
+  CircleAlert,
   Eye,
   ImagePlus,
+  ImageOff,
   PackageCheck,
   Pencil,
   Plane,
@@ -34,9 +36,11 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Truck,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useWorkbenchMotion } from '../features/motion/useWorkbenchMotion';
 import {
   confirmAirHandoverBatch,
   createAirHandoverBatch,
@@ -108,7 +112,7 @@ function evidenceTag(order: AirPickupOrder) {
   if (order.evidenceStatus === 'COMPLETE') return <Tag color="green">凭证完整</Tag>;
   if (order.status === 'HANDED_OVER') return <Tag color="orange">凭证待补</Tag>;
   if (order.evidenceStatus === 'PARTIAL') return <Tag color="arcoblue">已有部分凭证</Tag>;
-  return <Tag color="gray">暂无凭证</Tag>;
+  return <Tag className="cmhub-air-tag-neutral">凭证未生成</Tag>;
 }
 
 function differs(order: AirPickupOrder, draft: ReceiptDraft) {
@@ -159,7 +163,7 @@ function localDateTimeValue(value: string | null = null) {
 
 function ExchangeProgress({ order }: { order: AirPickupOrder }) {
   const progress = order.exchangeProgress;
-  if (!progress.total) return <span className="cmhub-air-progress-empty">暂无换单数据</span>;
+  if (!progress.total) return <span className="cmhub-air-progress-empty">换单数据待录入</span>;
   const percent = Math.min(100, Math.round((progress.processed / progress.total) * 100));
   return <div className="cmhub-air-progress" aria-label={`换单进度 ${progress.processed} / ${progress.total}，${percent}%`}>
     <div className="cmhub-air-progress-heading"><strong>{progress.processed.toLocaleString()} / {progress.total.toLocaleString()}</strong><span>{percent}%</span></div>
@@ -175,6 +179,7 @@ function ExchangeProgress({ order }: { order: AirPickupOrder }) {
 function EvidenceThumbnail({ asset, onPreview }: { asset: AirHandoverEvidence; onPreview: (asset: AirHandoverEvidence) => void }) {
   const containerRef = useRef<HTMLButtonElement>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [thumbnailStatus, setThumbnailStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   useEffect(() => {
     const node = containerRef.current;
     if (!node) return undefined;
@@ -182,11 +187,15 @@ function EvidenceThumbnail({ asset, onPreview }: { asset: AirHandoverEvidence; o
     let objectUrl = '';
     const load = async () => {
       try {
+        setThumbnailStatus('loading');
         const blob = await downloadAirEvidence(asset.downloadPath);
         if (disposed) return;
         objectUrl = URL.createObjectURL(blob);
         setThumbnailUrl(objectUrl);
-      } catch { /* keep the reserved thumbnail placeholder and allow full preview retry */ }
+        setThumbnailStatus('ready');
+      } catch {
+        if (!disposed) setThumbnailStatus('unavailable');
+      }
     };
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); void load(); }
@@ -194,14 +203,48 @@ function EvidenceThumbnail({ asset, onPreview }: { asset: AirHandoverEvidence; o
     observer.observe(node);
     return () => { disposed = true; observer.disconnect(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [asset.downloadPath]);
-  return <button ref={containerRef} className="cmhub-air-evidence-thumb" onClick={() => onPreview(asset)} aria-label={`预览 ${asset.filename}`}>
-    {thumbnailUrl ? <img src={thumbnailUrl} alt="" loading="lazy" /> : <span className="cmhub-air-evidence-placeholder"><Camera size={20} aria-hidden="true" /></span>}
+  return <button ref={containerRef} className="cmhub-air-evidence-thumb" onClick={() => onPreview(asset)} aria-label={thumbnailStatus === 'unavailable' ? `${asset.filename} 预览文件不可用` : `预览 ${asset.filename}`}>
+    {thumbnailUrl && thumbnailStatus === 'ready'
+      ? <img src={thumbnailUrl} alt="" loading="lazy" onError={() => setThumbnailStatus('unavailable')} />
+      : <span className="cmhub-air-evidence-placeholder">
+        {thumbnailStatus === 'unavailable' ? <ImageOff size={20} aria-hidden="true" /> : <Camera size={20} aria-hidden="true" />}
+        <small>{thumbnailStatus === 'unavailable' ? '文件不可用' : '正在加载'}</small>
+      </span>}
     <small>{asset.filename}</small>
   </button>;
 }
 
+function HandoverConfirmationPanel({ batch }: { batch: AirHandoverBatch }) {
+  const podCount = batch.evidence.filter(item => item.type === 'POD').length;
+  const loadingCount = batch.evidence.filter(item => item.type === 'LOADING').length;
+  const evidenceComplete = podCount >= 1 && loadingCount >= 3;
+
+  return <div className="cmhub-air-handover-confirm-content">
+    <div className="cmhub-air-handover-confirm-hero">
+      <span aria-hidden="true"><Truck size={22} /></span>
+      <div>
+        <h3>确认 {batch.orders.length} 张提货单已完成交仓</h3>
+        <p>提交后，批次和所含提货单将统一更新为“已交仓”。</p>
+      </div>
+    </div>
+    <dl className="cmhub-air-handover-confirm-summary">
+      <div><dt>交仓批次</dt><dd>{batch.batchNo}</dd></div>
+      <div><dt>提货单</dt><dd>{batch.orders.length} 单</dd></div>
+      <div><dt>交仓时间</dt><dd>{formatDate(batch.handedOverAt)}</dd></div>
+      <div><dt>凭证状态</dt><dd>{evidenceComplete ? '已完整' : '待补充'}</dd></div>
+    </dl>
+    <div className="cmhub-air-handover-confirm-note" data-state={evidenceComplete ? 'complete' : 'pending'}>
+      <CircleAlert size={18} aria-hidden="true" />
+      <span>{evidenceComplete
+        ? `当前已上传 POD ${podCount} 张、装车照 ${loadingCount} 张，满足完整凭证标准。`
+        : `当前 POD ${podCount} 张、装车照 ${loadingCount} 张。凭证不足不会阻塞交仓，系统将标记为“凭证待补”。`}</span>
+    </div>
+  </div>;
+}
+
 export default function AirPickupPage() {
   const warehouseSession = useWarehouseSession();
+  const motionScopeRef = useRef<HTMLElement>(null);
   const [orders, setOrders] = useState<AirPickupOrder[]>([]);
   const [summary, setSummary] = useState<AirPickupSummary>(emptySummary);
   const [clients, setClients] = useState<AirPickupClient[]>([]);
@@ -226,6 +269,7 @@ export default function AirPickupPage() {
   const [handoverOrderIds, setHandoverOrderIds] = useState<string[]>([]);
   const [handoverBatch, setHandoverBatch] = useState<AirHandoverBatch | null>(null);
   const [handoverSaving, setHandoverSaving] = useState(false);
+  const [handoverConfirmOpen, setHandoverConfirmOpen] = useState(false);
   const [batchEditOpen, setBatchEditOpen] = useState(false);
   const [batchCandidates, setBatchCandidates] = useState<AirPickupOrder[]>([]);
   const [detailOrder, setDetailOrder] = useState<AirPickupOrder | null>(null);
@@ -249,6 +293,9 @@ export default function AirPickupPage() {
   const canAddEvidence = warehouseSession.hasPermission('air_pickups.evidence.add');
   const canManageEvidence = warehouseSession.hasPermission('air_pickups.evidence.manage');
   const canCorrect = warehouseSession.hasPermission('air_pickups.correct');
+  const motionTabKey = `records:${status}:${evidenceStatus}`;
+
+  useWorkbenchMotion(motionScopeRef, { tabKey: motionTabKey });
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -393,6 +440,22 @@ export default function AirPickupPage() {
     finally { setHandoverSaving(false); }
   };
 
+  const confirmCurrentHandover = async () => {
+    if (!handoverBatch) return;
+    setHandoverSaving(true);
+    try {
+      setHandoverBatch(await confirmAirHandoverBatch(handoverBatch.id));
+      setHandoverConfirmOpen(false);
+      setSelectedIds([]);
+      await load();
+      Message.success('整批交仓成功');
+    } catch (cause) {
+      Message.error(cause instanceof Error ? cause.message : '整批交仓失败，请稍后重试。');
+    } finally {
+      setHandoverSaving(false);
+    }
+  };
+
   const handleEvidenceFiles = async (type: 'POD' | 'LOADING', files: FileList | null) => {
     if (!handoverBatch || !files?.length) return;
     const currentCount = handoverBatch.evidence.filter(item => item.type === type).length;
@@ -422,108 +485,123 @@ export default function AirPickupPage() {
     } catch (cause) { Message.error(cause instanceof Error ? cause.message : '凭证预览失败。'); }
   };
 
-  const columns = [
-    { title: '提货单号', dataIndex: 'billNo', width: 175, render: (_: unknown, order: AirPickupOrder) => (
-      <button className="cmhub-air-link" onClick={() => void openDetail(order)}>{order.billNo}</button>
-    ) },
-    { title: '来源客户', width: 150, render: (_: unknown, order: AirPickupOrder) => (
-      <span className="cmhub-air-source" title={order.sourceClientName}>{order.sourceClientName}</span>
-    ) },
-    { title: '预报', width: 190, render: (_: unknown, order: AirPickupOrder) => (
-      <span>{order.forecastCartons}箱 · {order.forecastPackages}包 · {order.forecastWeight}{order.forecastWeightUnit}</span>
-    ) },
-    { title: '换单进度', width: 250, render: (_: unknown, order: AirPickupOrder) => <ExchangeProgress order={order} /> },
-    { title: '状态', width: 200, render: (_: unknown, order: AirPickupOrder) => <Space>{statusTag(order.status)}{evidenceTag(order)}</Space> },
-    { title: '批次', width: 160, render: (_: unknown, order: AirPickupOrder) => order.handoverBatchNo
-      ? <button className="cmhub-air-link is-secondary" onClick={() => void openBatch(order.handoverBatchId!)}>{order.handoverBatchNo}</button>
-      : order.receiptBatchNo ?? '—' },
-    { title: '更新时间', width: 150, render: (_: unknown, order: AirPickupOrder) => (
-      <time className="cmhub-air-updated-at" dateTime={order.updatedAt} title={warehouseFullDateTimeFormatter.format(new Date(order.updatedAt))}>
-        {formatWarehouseUpdatedAt(order.updatedAt)}
-      </time>
-    ) },
-    { title: '操作', width: 250, fixed: 'right' as const, render: (_: unknown, order: AirPickupOrder) => (
-      <Space>
-        <Button size="mini" icon={<Eye size={13} />} onClick={() => void openDetail(order)}>详情</Button>
-        {canEdit && order.status === 'RECORDED' && <Button size="mini" icon={<Pencil size={13} />} onClick={() => openEdit(order)}>编辑</Button>}
-        {canReceive && order.status === 'RECORDED' && <Button size="mini" type="primary" onClick={() => openReceipt([order])}>入库</Button>}
-        {canCorrect && order.status === 'RECORDED' && <Button size="mini" status="danger" onClick={() => setVoidTarget(order)}>作废</Button>}
-        {canHandover && order.status === 'RECEIVED' && !order.handoverBatchId && <Button size="mini" type="primary" onClick={() => { setHandoverOrderIds([order.id]); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverOpen(true); }}>交仓</Button>}
-        {canAddEvidence && order.status === 'HANDED_OVER' && order.evidenceStatus !== 'COMPLETE' && order.handoverBatchId && <Button size="mini" onClick={() => void openBatch(order.handoverBatchId!)}>补凭证</Button>}
-      </Space>
-    ) },
-  ];
+  const toggleSelected = (order: AirPickupOrder, checked: boolean) => {
+    setSelectedIds(current => checked
+      ? current.includes(order.id) ? current : [...current, order.id]
+      : current.filter(id => id !== order.id));
+  };
+
+  const renderNextAction = (order: AirPickupOrder) => {
+    if (canReceive && order.status === 'RECORDED') {
+      return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<PackageCheck size={14} aria-hidden="true" />} onClick={() => openReceipt([order])}>确认入库</Button>;
+    }
+    if (canHandover && order.status === 'RECEIVED' && !order.handoverBatchId) {
+      return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<Truck size={14} aria-hidden="true" />} onClick={() => { setHandoverOrderIds([order.id]); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverOpen(true); }}>确认交仓</Button>;
+    }
+    if (canAddEvidence && order.status === 'HANDED_OVER' && order.evidenceStatus !== 'COMPLETE' && order.handoverBatchId) {
+      return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<Camera size={14} aria-hidden="true" />} onClick={() => void openBatch(order.handoverBatchId!)}>补齐凭证</Button>;
+    }
+    return <Button className="cmhub-air-row-action" size="small" type="text" icon={<Eye size={14} aria-hidden="true" />} onClick={() => void openDetail(order)}>查看详情</Button>;
+  };
 
   return (
-    <section className="cmhub-page cmhub-air-page" aria-labelledby="air-management-title">
-      <AirPickupModuleHeader action={canCreate && <Button type="primary" icon={<Plus size={16} />} onClick={() => void openCreate()}>录入提货单</Button>} />
+    <section ref={motionScopeRef} className="cmhub-page cmhub-air-page" aria-labelledby="air-management-title">
+      <AirPickupModuleHeader
+        showDocumentsLink
+        action={canCreate && <Button type="primary" icon={<Plus size={16} />} onClick={() => void openCreate()}>录入提货单</Button>}
+      />
 
-      <div className="cmhub-air-summary" aria-label="状态概览">
-        <div><Plane size={18} /><span>当前结果</span><strong>{total}</strong></div>
-        <div><PackageCheck size={18} /><span>已选择</span><strong>{selectedIds.length}</strong></div>
-        <div><Archive size={18} /><span>待入库</span><strong>{summary.recorded}</strong></div>
-        <div><Camera size={18} /><span>凭证待补</span><strong>{summary.evidencePending}</strong></div>
+      <div className="cmhub-air-summary" data-motion-enter aria-label="状态概览">
+        <article><Plane size={18} /><span>提单总数</span><strong>{total}</strong></article>
+        <article><PackageCheck size={18} /><span>已选择</span><strong>{selectedIds.length}</strong></article>
+        <article><Archive size={18} /><span>待入库</span><strong>{summary.recorded}</strong></article>
+        <article><Camera size={18} /><span>凭证待补</span><strong>{summary.evidencePending}</strong></article>
       </div>
 
       {error && <Alert type="error" content={error} action={<Button size="mini" onClick={() => void load()}>重试</Button>} />}
 
+      <div data-motion-enter>
       <Card className="cmhub-module-frame cmhub-air-list-card" bordered>
+        <div className="cmhub-air-list-intro">
+          <div>
+            <span>提货单工作台</span>
+            <h2>提单列表</h2>
+            <p>按状态、客户和凭证追溯每一笔流转记录。</p>
+          </div>
+          <small>每 5 秒自动同步</small>
+        </div>
         <div className="cmhub-air-filter-row">
-          <Tabs activeTab={status || 'ALL'} onChange={key => { setStatus(key === 'ALL' ? '' : key as AirPickupStatus); setPage(1); setSelectedIds([]); }}>
+          <Tabs activeTab={status || 'ALL'} onChange={key => { setStatus(key === 'ALL' ? '' : key as AirPickupStatus); setEvidenceStatus(''); setPage(1); setSelectedIds([]); }}>
             <Tabs.TabPane key="ALL" title="全部" />
-            <Tabs.TabPane key="RECORDED" title={<Badge count={summary.recorded} maxCount={9999} dotStyle={{ background: '#f53f3f' }}><span className="cmhub-air-tab-with-badge">已录入</span></Badge>} />
+            <Tabs.TabPane key="RECORDED" title="已录入" />
             <Tabs.TabPane key="RECEIVED" title="已入库" />
             <Tabs.TabPane key="HANDED_OVER" title="已交仓" />
             <Tabs.TabPane key="VOIDED" title="已作废" />
           </Tabs>
           <div className="cmhub-air-filter-controls">
-            <Input.Search allowClear value={searchDraft} prefix={<Search size={15} />} placeholder="搜索提货单号或客户"
+            <Input.Search aria-label="搜索提货单号或客户" allowClear value={searchDraft} prefix={<Search size={15} />} placeholder="搜索提货单号或客户"
               onChange={setSearchDraft} onSearch={value => { setSearch(value); setPage(1); }} />
-            <Select allowClear showSearch placeholder="来源客户" value={clientFilter || undefined}
-              onChange={value => { setClientFilter(value ?? ''); setPage(1); }}
-              options={clients.map(client => ({ label: client.name, value: client.id }))} />
-            <Select allowClear placeholder="凭证状态" value={evidenceStatus || undefined}
-              onChange={value => { setEvidenceStatus((value ?? '') as AirEvidenceStatus | ''); setPage(1); }}
-              options={[{ label: '暂无凭证', value: 'NONE' }, { label: '凭证待补', value: 'PARTIAL' }, { label: '凭证完整', value: 'COMPLETE' }]} />
-            <Tooltip content="数据每5秒自动同步"><Button icon={<RefreshCw size={15} />} onClick={() => void load()}>刷新</Button></Tooltip>
+            <details className="cmhub-air-more-filters">
+              <summary className="cmhub-air-toolbar-action">
+                <SlidersHorizontal size={15} aria-hidden="true" />
+                <span>更多筛选</span>
+                <ChevronDown className="cmhub-air-filter-chevron" size={14} aria-hidden="true" />
+              </summary>
+              <div>
+                <label>
+                  <span>来源客户</span>
+                  <Select aria-label="按来源客户筛选" allowClear showSearch placeholder="全部客户" value={clientFilter || undefined}
+                    onChange={value => { setClientFilter(value ?? ''); setPage(1); }}
+                    options={clients.map(client => ({ label: client.name, value: client.id }))} />
+                </label>
+                <label>
+                  <span>凭证状态</span>
+                  <Select aria-label="按凭证状态筛选" allowClear placeholder="全部状态" value={evidenceStatus || undefined}
+                    onChange={value => { setEvidenceStatus((value ?? '') as AirEvidenceStatus | ''); setPage(1); }}
+                    options={[{ label: '暂无凭证', value: 'NONE' }, { label: '凭证待补', value: 'PARTIAL' }, { label: '凭证完整', value: 'COMPLETE' }]} />
+                </label>
+              </div>
+            </details>
+            <Tooltip content="数据每5秒自动同步"><Button className="cmhub-air-toolbar-action cmhub-filter-action" data-motion-hover data-refreshing={loading || undefined} icon={<RefreshCw size={16} aria-hidden="true" />} disabled={loading} onClick={() => void load()}>刷新</Button></Tooltip>
           </div>
         </div>
 
-        <div className="cmhub-air-batchbar">
-          <span>选择同一批货后可批量处理，单批最多 200 单。</span>
+        {selectedIds.length > 0 && <div className="cmhub-air-batchbar" role="status">
+          <span>已选择 {selectedIds.length} 单。仅相同流转状态的提货单可批量处理。</span>
           <Space>
-            {canReceive && <Button disabled={!selectedRecorded.length || selectedRecorded.length !== selectedOrders.length} icon={<PackageCheck size={15} />} onClick={() => openReceipt(selectedRecorded)}>批量入库 ({selectedRecorded.length})</Button>}
-            {canHandover && <Button type="primary" disabled={!selectedReceived.length || selectedReceived.length !== selectedOrders.length} icon={<Truck size={15} />}
-              onClick={() => { setHandoverOrderIds(selectedReceived.map(order => order.id)); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverBatch(null); setHandoverOpen(true); }}>批量交仓 ({selectedReceived.length})</Button>}
+            <Button type="text" size="small" onClick={() => setSelectedIds([])}>清除选择</Button>
+            {canReceive && <Button className="cmhub-air-batch-action" type="secondary" size="small" disabled={!selectedRecorded.length || selectedRecorded.length !== selectedOrders.length} icon={<PackageCheck size={15} aria-hidden="true" />} onClick={() => openReceipt(selectedRecorded)}>批量入库 <span className="cmhub-air-action-count">{selectedRecorded.length}</span></Button>}
+            {canHandover && <Button className="cmhub-air-batch-action" type="primary" size="small" disabled={!selectedReceived.length || selectedReceived.length !== selectedOrders.length} icon={<Truck size={15} aria-hidden="true" />}
+              onClick={() => { setHandoverOrderIds(selectedReceived.map(order => order.id)); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverBatch(null); setHandoverOpen(true); }}>批量交仓 <span className="cmhub-air-action-count">{selectedReceived.length}</span></Button>}
           </Space>
-        </div>
+        </div>}
 
-        <div className="cmhub-air-desktop-table">
-          <Table rowKey="id" borderCell={false} loading={loading} data={orders} columns={columns}
-            scroll={{ x: 1550 }} noDataElement={<Empty description="暂无提货单，点击“录入提货单”开始。" />}
-            rowSelection={{ type: 'checkbox', selectedRowKeys: selectedIds, onChange: keys => setSelectedIds(keys.map(String)), checkboxProps: order => ({ disabled: order.status === 'VOIDED' }) }}
-            pagination={{ current: page, pageSize: 20, total, showTotal: true, onChange: setPage }} />
-        </div>
-        <div className="cmhub-air-mobile-list">
-          {loading ? <div className="cmhub-module-loading"><Spin />正在同步提货单…</div> : orders.map(order => <article key={order.id}>
-            <header><Checkbox checked={selectedIds.includes(order.id)} disabled={order.status === 'VOIDED'} onChange={checked => setSelectedIds(current => checked ? [...current, order.id] : current.filter(id => id !== order.id))} />
-              <button className="cmhub-air-link" onClick={() => void openDetail(order)}>{order.billNo}</button>{statusTag(order.status)}</header>
-            <dl><div><dt>来源</dt><dd>{order.sourceClientName}</dd></div><div><dt>预报</dt><dd>{order.forecastCartons}箱 · {order.forecastPackages}包 · {order.forecastWeight}{order.forecastWeightUnit}</dd></div><div><dt>换单</dt><dd><ExchangeProgress order={order} /></dd></div><div><dt>凭证</dt><dd>{evidenceTag(order)}</dd></div></dl>
-            <footer>
-              <Button size="small" onClick={() => void openDetail(order)}>详情</Button>
-              {canEdit && order.status === 'RECORDED' && <Button size="small" onClick={() => openEdit(order)}>编辑</Button>}
-              {canReceive && order.status === 'RECORDED' && <Button size="small" type="primary" onClick={() => openReceipt([order])}>入库</Button>}
-              {canCorrect && order.status === 'RECORDED' && <Button size="small" status="danger" onClick={() => setVoidTarget(order)}>作废</Button>}
-              {canHandover && order.status === 'RECEIVED' && !order.handoverBatchId && <Button size="small" type="primary" onClick={() => { setHandoverOrderIds([order.id]); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverOpen(true); }}>交仓</Button>}
-              {canAddEvidence && order.status === 'HANDED_OVER' && order.evidenceStatus !== 'COMPLETE' && order.handoverBatchId && <Button size="small" onClick={() => void openBatch(order.handoverBatchId!)}>补凭证</Button>}
-            </footer>
+        <div className="cmhub-air-action-queue" data-motion-tab role="table" aria-label="空提提单列表">
+          <div className="cmhub-air-action-queue-head" role="row">
+            <span role="columnheader" aria-label="选择" />
+            <span role="columnheader">提货单与客户</span><span role="columnheader">预报与换单</span><span role="columnheader">状态与凭证</span><span role="columnheader">更新时间</span><span role="columnheader">下一步</span>
+          </div>
+          {loading ? <div className="cmhub-module-loading"><Spin />正在同步提货单…</div> : orders.map(order => <article key={order.id} role="row">
+            <div className="cmhub-air-order-select" role="cell"><Checkbox aria-label={`选择 ${order.billNo}`} checked={selectedIds.includes(order.id)} disabled={order.status === 'VOIDED'} onChange={checked => toggleSelected(order, checked)} /></div>
+            <div className="cmhub-air-order-identity" role="cell">
+              <button className="cmhub-air-link" onClick={() => void openDetail(order)}>{order.billNo}</button>
+              <span title={order.sourceClientName}>{order.sourceClientName}</span>
+            </div>
+            <div className="cmhub-air-order-progress" role="cell">
+              <strong>{order.forecastCartons}箱 · {order.forecastPackages}包 · {order.forecastWeight}{order.forecastWeightUnit}</strong>
+              <ExchangeProgress order={order} />
+            </div>
+            <div className="cmhub-air-order-state" role="cell"><Space>{statusTag(order.status)}{evidenceTag(order)}</Space></div>
+            <time className="cmhub-air-updated-at" role="cell" dateTime={order.updatedAt} title={warehouseFullDateTimeFormatter.format(new Date(order.updatedAt))}>{formatWarehouseUpdatedAt(order.updatedAt)}</time>
+            <div className="cmhub-air-order-action" role="cell">{renderNextAction(order)}</div>
           </article>)}
-          {!loading && !orders.length && <Empty description="暂无提货单" />}
-          {total > 20 && <div className="cmhub-air-mobile-pagination"><Button disabled={page <= 1} onClick={() => setPage(current => current - 1)}>上一页</Button><span>{page} / {Math.ceil(total / 20)}</span><Button disabled={page >= Math.ceil(total / 20)} onClick={() => setPage(current => current + 1)}>下一页</Button></div>}
+          {!loading && !orders.length && <Empty description="当前筛选条件下没有提货记录" />}
         </div>
+        {total > 20 && <footer className="cmhub-air-queue-pagination"><Pagination current={page} pageSize={20} total={total} showTotal onChange={setPage} /></footer>}
       </Card>
+      </div>
 
-      <Modal title={editingOrder ? `编辑 ${editingOrder.billNo}` : '录入空运提货单'} visible={editorOpen} confirmLoading={saving}
+      <Modal className="cmhub-air-modal cmhub-air-editor-modal" title={editingOrder ? `编辑 ${editingOrder.billNo}` : '录入空运提货单'} visible={editorOpen} confirmLoading={saving}
         okText={editingOrder ? '保存修改' : '保存并录入'} onCancel={() => { setEditorOpen(false); form.resetFields(); }} onOk={() => form.submit()} unmountOnExit={false}>
         <Form form={form} layout="vertical" onValuesChange={(_, values) => {
           if (!editingOrder) localStorage.setItem(DRAFT_KEY, JSON.stringify({ savedAt: Date.now(), values }));
@@ -546,17 +624,29 @@ export default function AirPickupPage() {
             <Select showSearch placeholder="选择客户" options={clients.map(client => ({ label: `${client.name} · ${client.code}`, value: client.id }))} />
           </Form.Item>}
           <Form.Item label="货物名称" field="cargoName"><Input maxLength={100} placeholder="选填" /></Form.Item>
-          <div className="cmhub-form-grid cmhub-air-form-grid">
-            <Form.Item label="预报箱数" field="forecastCartons" rules={[{ required: true }]}><InputNumber min={1} max={999999} precision={0} /></Form.Item>
-            <Form.Item label="预报包裹数" field="forecastPackages" rules={[{ required: true }]}><InputNumber min={1} max={999999} precision={0} /></Form.Item>
-            <Form.Item label="预报重量" field="forecastWeight" rules={[{ required: true }]}><InputNumber min={0.001} precision={3} /></Form.Item>
-            <Form.Item label="单位" field="forecastWeightUnit" rules={[{ required: true }]}><Select options={[{ label: 'KG', value: 'KG' }, { label: 'LB', value: 'LB' }]} /></Form.Item>
+          <div className="cmhub-form-grid cmhub-air-measure-grid">
+            <Form.Item label="预报箱数" field="forecastCartons" rules={[{ required: true, message: '请输入预报箱数' }]}>
+              <InputNumber hideControl min={1} max={999999} precision={0} />
+            </Form.Item>
+            <Form.Item label="预报包裹数" field="forecastPackages" rules={[{ required: true, message: '请输入预报包裹数' }]}>
+              <InputNumber hideControl min={1} max={999999} precision={0} />
+            </Form.Item>
+            <Form.Item className="cmhub-air-weight-form-item" label="预报重量" required>
+              <Input.Group compact className="cmhub-air-weight-group">
+                <Form.Item field="forecastWeight" noStyle={{ showErrorTip: true }} rules={[{ required: true, message: '请输入预报重量' }]}>
+                  <InputNumber className="cmhub-air-weight-value" aria-label="预报重量" hideControl min={0.001} precision={3} />
+                </Form.Item>
+                <Form.Item field="forecastWeightUnit" noStyle={{ showErrorTip: true }} rules={[{ required: true, message: '请选择重量单位' }]}>
+                  <Select className="cmhub-air-weight-unit" aria-label="预报重量单位" options={[{ label: 'KG', value: 'KG' }, { label: 'LB', value: 'LB' }]} />
+                </Form.Item>
+              </Input.Group>
+            </Form.Item>
           </div>
           <Form.Item label="备注" field="remarks"><Input.TextArea maxLength={200} showWordLimit autoSize={{ minRows: 3, maxRows: 5 }} /></Form.Item>
         </Form>
       </Modal>
 
-      <Modal className="cmhub-air-receipt-modal" title={`批量入库确认 · ${Object.keys(receiptDrafts).length} 单`} visible={receiptOpen} style={{ width: 1180 }}
+      <Modal className="cmhub-air-modal cmhub-air-receipt-modal" title={`批量入库确认 · ${Object.keys(receiptDrafts).length} 单`} visible={receiptOpen} style={{ width: 1180 }}
         okText="整批确认入库" unmountOnExit onCancel={closeReceiptEditor} onOk={async () => {
           const selected = Object.entries(receiptDrafts);
           const unavailable = selected.find(([id]) => !orders.some(order => order.id === id));
@@ -580,10 +670,13 @@ export default function AirPickupPage() {
           } catch (cause) { Message.error(cause instanceof Error ? cause.message : '批量入库失败，整批未保存。'); }
           finally { setSaving(false); }
         }} confirmLoading={saving}>
-        <Alert type="info" content="实际值默认带入预报值；任一项改变后，该单的差异说明必须填写。提交采用整批事务。" />
+        <Alert type="info" content="先核对预报信息，再填写实际入库值。任一实际值发生变化时，必须填写差异说明；整批提交将一次完成。" />
         <div className="cmhub-air-receipt-layout">
           <main>
-            <label className="cmhub-air-common-time">共同入库时间<Input type="datetime-local" value={receiptReceivedAt} onChange={setReceiptReceivedAt} /></label>
+            <label className="cmhub-air-common-time">
+              <span>共同入库时间<small>仓库本地时间</small></span>
+              <Input aria-label="共同入库时间" type="datetime-local" value={receiptReceivedAt} onChange={setReceiptReceivedAt} />
+            </label>
             <div className="cmhub-air-receipt-list">
               {selectExistingRecordsById(orders, Object.keys(receiptDrafts)).map(order => {
                 const id = order.id;
@@ -591,12 +684,22 @@ export default function AirPickupPage() {
                 const changed = differs(order, draft);
                 const update = (patch: Partial<ReceiptDraft>) => setReceiptDrafts(current => ({ ...current, [id]: { ...current[id], ...patch } }));
                 return <div className="cmhub-air-receipt-row" data-variance={changed || undefined} key={id}>
-                  <header><strong>{order.billNo}</strong><Tag color={changed ? 'orange' : 'green'}>{changed ? '检测到差异' : '数据一致'}</Tag></header>
-                  <div className="cmhub-air-receipt-forecast"><small>预报</small><span>{order.forecastCartons}箱 · {order.forecastPackages}包 · {order.forecastWeight}{order.forecastWeightUnit}</span></div>
-                  <label>实际箱数<InputNumber min={1} max={999999} precision={0} value={draft.actualCartons} onChange={value => update({ actualCartons: Number(value) })} /></label>
-                  <label>实际包裹数<InputNumber min={1} max={999999} precision={0} value={draft.actualPackages} onChange={value => update({ actualPackages: Number(value) })} /></label>
-                  <label>实际重量<InputNumber min={0.001} precision={3} value={draft.actualWeight} onChange={value => update({ actualWeight: Number(value) })} /></label>
-                  <label>单位<Select value={draft.actualWeightUnit} options={[{ label: 'KG', value: 'KG' }, { label: 'LB', value: 'LB' }]} onChange={value => update({ actualWeightUnit: value as AirWeightUnit })} /></label>
+                  <header><div><strong>{order.billNo}</strong><small>核对该提货单的预报值与本次实收值</small></div><Tag color={changed ? 'orange' : 'green'}>{changed ? '检测到差异' : '数据一致'}</Tag></header>
+                  <div className="cmhub-air-receipt-forecast" aria-label={`${order.billNo} 预报信息`}>
+                    <span><small>预报箱数</small><strong>{order.forecastCartons} 箱</strong></span>
+                    <span><small>预报包裹数</small><strong>{order.forecastPackages} 包</strong></span>
+                    <span><small>预报重量</small><strong>{order.forecastWeight} {order.forecastWeightUnit}</strong></span>
+                  </div>
+                  <div className="cmhub-air-receipt-actual-heading"><strong>实际入库值</strong><small>默认沿用预报值，可按现场结果修改</small></div>
+                  <label>实际箱数<InputNumber aria-label={`${order.billNo} 实际箱数`} hideControl min={1} max={999999} precision={0} value={draft.actualCartons} onChange={value => update({ actualCartons: Number(value) })} /></label>
+                  <label>实际包裹数<InputNumber aria-label={`${order.billNo} 实际包裹数`} hideControl min={1} max={999999} precision={0} value={draft.actualPackages} onChange={value => update({ actualPackages: Number(value) })} /></label>
+                  <label className="cmhub-air-receipt-weight-field">
+                    <span>实际重量</span>
+                    <Input.Group compact className="cmhub-air-weight-group cmhub-air-receipt-weight-group">
+                      <InputNumber className="cmhub-air-weight-value" aria-label={`${order.billNo} 实际重量`} hideControl min={0.1} step={0.1} precision={1} value={draft.actualWeight} onChange={value => update({ actualWeight: Number(value) })} />
+                      <Select className="cmhub-air-weight-unit" aria-label={`${order.billNo} 实际重量单位`} value={draft.actualWeightUnit} options={[{ label: 'KG', value: 'KG' }, { label: 'LB', value: 'LB' }]} onChange={value => update({ actualWeightUnit: value as AirWeightUnit })} />
+                    </Input.Group>
+                  </label>
                   <label className="cmhub-air-difference">差异说明{changed && <i>*</i>}<Input maxLength={500} value={draft.differenceReason} onChange={value => update({ differenceReason: value })} placeholder={changed ? '请说明实际与预报差异' : '无差异，可不填'} /></label>
                 </div>;
               })}
@@ -627,17 +730,14 @@ export default function AirPickupPage() {
         </div>
       </Modal>
 
-      <Modal title={handoverBatch ? `${handoverBatch.batchNo} · ${handoverBatch.status === 'DRAFT' ? '交仓草稿' : '已交仓'}` : `新建交仓批次 · ${handoverOrderIds.length} 单`}
+      <Modal className="cmhub-air-modal cmhub-air-handover-modal" title={handoverBatch ? `${handoverBatch.batchNo} · ${handoverBatch.status === 'DRAFT' ? '交仓草稿' : '已交仓'}` : `新建交仓批次 · ${handoverOrderIds.length} 单`}
         visible={handoverOpen} style={{ width: 960 }} footer={handoverBatch ? (
           <Space>
             <Button onClick={() => setHandoverOpen(false)}>关闭</Button>
             {(handoverBatch.status === 'DRAFT' || canCorrect) && <Button icon={<Pencil size={14} />} loading={handoverSaving} onClick={() => void openBatchEditor()}>{handoverBatch.status === 'DRAFT' ? '编辑批次' : '更正批次'}</Button>}
-            {handoverBatch.status === 'DRAFT' && <Button type="primary" loading={handoverSaving} onClick={() => {
-              Modal.confirm({ title: '整批确认交仓？', content: `将 ${handoverBatch.orders.length} 张提货单标记为已交仓。凭证不足不会阻塞，但会显示“凭证待补”。`,
-                okText: '确认交仓', onOk: async () => { setHandoverSaving(true); try { setHandoverBatch(await confirmAirHandoverBatch(handoverBatch.id)); setSelectedIds([]); await load(); Message.success('整批交仓成功'); } finally { setHandoverSaving(false); } } });
-            }}>确认交仓</Button>}
+            {handoverBatch.status === 'DRAFT' && <Button type="primary" loading={handoverSaving} onClick={() => setHandoverConfirmOpen(true)}>确认交仓</Button>}
           </Space>
-        ) : undefined} onCancel={() => { setHandoverOpen(false); setHandoverBatch(null); }}
+        ) : undefined} onCancel={() => { setHandoverConfirmOpen(false); setHandoverOpen(false); setHandoverBatch(null); }}
         onOk={handoverBatch ? undefined : () => handoverForm.submit()} confirmLoading={handoverSaving} okText="创建交仓草稿" unmountOnExit={false}>
         {!handoverBatch ? <Form form={handoverForm} layout="vertical" onSubmit={async values => {
           setHandoverSaving(true);
@@ -678,7 +778,22 @@ export default function AirPickupPage() {
         </div>}
       </Modal>
 
-      <Modal title={handoverBatch?.status === 'CONFIRMED' ? '更正已确认交仓批次' : '编辑交仓草稿'} visible={batchEditOpen}
+      <Modal
+        className="cmhub-air-modal cmhub-air-handover-confirm-modal"
+        title="确认整批交仓"
+        visible={handoverConfirmOpen && Boolean(handoverBatch)}
+        style={{ width: 560 }}
+        okText="确认交仓"
+        cancelText="返回检查"
+        confirmLoading={handoverSaving}
+        onCancel={() => setHandoverConfirmOpen(false)}
+        onOk={() => void confirmCurrentHandover()}
+        unmountOnExit
+      >
+        {handoverBatch && <HandoverConfirmationPanel batch={handoverBatch} />}
+      </Modal>
+
+      <Modal className="cmhub-air-modal cmhub-air-handover-edit-modal" title={handoverBatch?.status === 'CONFIRMED' ? '更正已确认交仓批次' : '编辑交仓草稿'} visible={batchEditOpen}
         style={{ width: 720 }} okText={handoverBatch?.status === 'CONFIRMED' ? '验证并保存更正' : '保存草稿'} confirmLoading={handoverSaving}
         onCancel={() => { setBatchEditOpen(false); batchEditForm.resetFields(); }} onOk={() => batchEditForm.submit()} unmountOnExit={false}>
         {handoverBatch?.status === 'CONFIRMED' && <Alert type="warning" content="已确认批次的成员、车辆或时间更正需要主管权限、原因和当前账户密码。移出的提货单会恢复为“已入库”。" />}
@@ -712,22 +827,25 @@ export default function AirPickupPage() {
 
       <Drawer className="cmhub-air-detail-drawer" title={<div className="cmhub-air-detail-title"><strong>{detailOrder?.billNo ?? '提货单详情'}</strong><span>{detailOrder?.sourceClientName ?? '正在加载来源客户'}</span></div>} visible={Boolean(detailOrder)} width={720}
         onCancel={() => setDetailOrder(null)} footer={detailOrder && <Space>
+          {canEdit && detailOrder.status === 'RECORDED' && <Button icon={<Pencil size={14} />} onClick={() => openEdit(detailOrder)}>编辑提货单</Button>}
           {canCorrect && detailOrder.status !== 'VOIDED' && !detailOrder.handoverBatchId && <Button status="danger" icon={<ShieldAlert size={14} />} onClick={() => setVoidTarget(detailOrder)}>作废</Button>}
           {detailOrder.handoverBatchId && <Button icon={<Archive size={14} />} onClick={() => void openBatch(detailOrder.handoverBatchId!)}>查看交仓批次</Button>}
         </Space>}>
         {detailLoading ? <div className="cmhub-module-loading"><Spin />正在加载详情…</div> : detailOrder && <div className="cmhub-air-detail">
           <Space>{statusTag(detailOrder.status)}{evidenceTag(detailOrder)}{!detailOrder.billNoIsStandard && <Tag color="orange">非标准单号</Tag>}</Space>
-          <Descriptions column={1} border size="small" data={[
-            { label: '来源客户', value: detailOrder.sourceClientName },
-            { label: '来源方式', value: detailOrder.sourceType === 'UPSTREAM' ? `上游接口${detailOrder.externalBatchId ? ` · ${detailOrder.externalBatchId}` : ''}` : '人工录入' },
-            { label: '预报', value: `${detailOrder.forecastCartons}箱 · ${detailOrder.forecastPackages}包 · ${detailOrder.forecastWeight}${detailOrder.forecastWeightUnit}` },
-            { label: '换单进度', value: <ExchangeProgress order={detailOrder} /> },
-            { label: '实际', value: detailOrder.actualCartons ? `${detailOrder.actualCartons}箱 · ${detailOrder.actualPackages}包 · ${detailOrder.actualWeight}${detailOrder.actualWeightUnit}` : '尚未入库' },
-            { label: '差异说明', value: detailOrder.differenceReason || '—' },
-            { label: '入库批次', value: detailOrder.receiptBatchNo || '—' },
-            { label: '交仓批次', value: detailOrder.handoverBatchNo || '—' },
-            { label: '备注', value: detailOrder.remarks || '—' },
-          ]} />
+          <dl className="cmhub-air-detail-facts">
+            {[
+              { label: '来源客户', value: detailOrder.sourceClientName },
+              { label: '来源方式', value: detailOrder.sourceType === 'UPSTREAM' ? `上游接口${detailOrder.externalBatchId ? ` · ${detailOrder.externalBatchId}` : ''}` : '人工录入' },
+              { label: '预报数据', value: `${detailOrder.forecastCartons} 箱 · ${detailOrder.forecastPackages} 包 · ${detailOrder.forecastWeight} ${detailOrder.forecastWeightUnit}` },
+              { label: '换单进度', value: <ExchangeProgress order={detailOrder} /> },
+              { label: '实际入库', value: detailOrder.actualCartons ? `${detailOrder.actualCartons} 箱 · ${detailOrder.actualPackages} 包 · ${detailOrder.actualWeight} ${detailOrder.actualWeightUnit}` : '尚未入库' },
+              { label: '差异说明', value: detailOrder.differenceReason || '无' },
+              { label: '入库批次', value: detailOrder.receiptBatchNo || '—' },
+              { label: '交仓批次', value: detailOrder.handoverBatchNo || '—' },
+              { label: '备注', value: detailOrder.remarks || '无' },
+            ].map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}
+          </dl>
           {(detailOrder.receiptEvidence?.length ?? 0) > 0 && <section className="cmhub-air-detail-evidence">
             <h3>入库照片</h3>
             <div className="cmhub-air-detail-evidence-grid">{detailOrder.receiptEvidence!.map(asset => <EvidenceThumbnail key={asset.id} asset={asset} onPreview={previewEvidence} />)}</div>
@@ -744,11 +862,11 @@ export default function AirPickupPage() {
         </div>}
       </Drawer>
 
-      <Modal title="凭证预览" visible={Boolean(previewUrl)} footer={null} onCancel={() => { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
+      <Modal className="cmhub-air-modal cmhub-air-preview-modal" title="凭证预览" visible={Boolean(previewUrl)} footer={null} onCancel={() => { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
         {previewUrl && <img className="cmhub-air-preview" src={previewUrl} alt="交仓凭证预览" />}
       </Modal>
 
-      <Modal title="移除凭证" visible={Boolean(removeAsset)} okText="验证并移除" okButtonProps={{ status: 'danger' }} onCancel={() => { setRemoveAsset(null); removeForm.resetFields(); }} onOk={() => removeForm.submit()}>
+      <Modal className="cmhub-air-modal" title="移除凭证" visible={Boolean(removeAsset)} okText="验证并移除" okButtonProps={{ status: 'danger' }} onCancel={() => { setRemoveAsset(null); removeForm.resetFields(); }} onOk={() => removeForm.submit()}>
         <Form form={removeForm} layout="vertical" onSubmit={async values => {
           if (!removeAsset || !handoverBatch) return;
           try { await removeAirEvidence(removeAsset.id, values as { password: string; reason: string }); setRemoveAsset(null); removeForm.resetFields(); setHandoverBatch(await getAirHandoverBatch(handoverBatch.id)); await load(true); Message.success('凭证已从业务视图移除，审计记录已保留'); }
@@ -760,7 +878,7 @@ export default function AirPickupPage() {
         </Form>
       </Modal>
 
-      <Modal title={`作废 ${voidTarget?.billNo ?? ''}`} visible={Boolean(voidTarget)} okText="验证并作废" okButtonProps={{ status: 'danger' }} onCancel={() => { setVoidTarget(null); voidForm.resetFields(); }} onOk={() => voidForm.submit()}>
+      <Modal className="cmhub-air-modal" title={`作废 ${voidTarget?.billNo ?? ''}`} visible={Boolean(voidTarget)} okText="验证并作废" okButtonProps={{ status: 'danger' }} onCancel={() => { setVoidTarget(null); voidForm.resetFields(); }} onOk={() => voidForm.submit()}>
         <Form form={voidForm} layout="vertical" onSubmit={async values => {
           if (!voidTarget) return;
           try { await voidAirPickup(voidTarget.id, values as { password: string; reason: string }); setVoidTarget(null); setDetailOrder(null); voidForm.resetFields(); await load(); Message.success('提货单已作废'); }
