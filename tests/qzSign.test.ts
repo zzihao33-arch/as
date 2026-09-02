@@ -27,7 +27,7 @@ const request = (overrides: Record<string, unknown> = {}) => ({
     origin: 'https://cmhubtool.com',
     host: 'cmhubtool.com'
   },
-  body: { request: 'a'.repeat(128) },
+  body: { request: 'a'.repeat(64) },
   ...overrides
 });
 
@@ -38,12 +38,12 @@ test('QZ signing rejects requests without a browser origin', () => {
   assert.equal(response.statusCode, 403);
 });
 
-test('QZ signing accepts only the configured SHA-512 digest shape', () => {
+test('QZ signing accepts only the SHA-256 digest shape sent by qz-tray', () => {
   const response = new MockResponse();
   handler(request({ body: { request: 'not-a-qz-digest' } }), response);
 
   assert.equal(response.statusCode, 400);
-  assert.match(response.body, /128/);
+  assert.match(response.body, /64/);
 });
 
 test('a valid same-origin digest reaches key configuration instead of being rejected', () => {
