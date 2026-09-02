@@ -9,6 +9,7 @@ export const WAREHOUSE_PERMISSION_CODES = [
   'batches.create',
   'batches.publish',
   'batches.close',
+  'batches.delete',
   'scan.import_local',
   'offline_mode.enable',
   'print.submit',

@@ -474,6 +474,15 @@ warehouseRouter.post('/work-batches/:batchId/close', warehouseBoundary.session, 
   }
 });
 
+warehouseRouter.delete('/work-batches/:batchId', warehouseBoundary.session, requireWarehousePermission('batches.delete'), async (req, res, next) => {
+  try {
+    const result = await sharedWarehouseWork.deleteBatch(req.warehouseSession!, req.params.batchId);
+    res.json({ data: result, requestId: req.requestId });
+  } catch (error) {
+    next(error);
+  }
+});
+
 warehouseRouter.post('/work-batch-claims', warehouseBoundary.session, requireWarehousePermission('scan.use'), requireWarehouseWorkspace, async (req, res, next) => {
   try {
     const claim = await sharedWarehouseWork.claimItem(req.warehouseSession!, {

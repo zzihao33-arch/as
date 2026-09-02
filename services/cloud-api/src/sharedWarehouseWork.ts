@@ -44,6 +44,10 @@ type AssetRow = RowDataPacket & {
   byte_size: number;
   asset_status: 'STORING' | 'READY' | 'FAILED';
 };
+type BatchAssetDeletionRow = RowDataPacket & {
+  storage_key: string;
+  byte_size: number;
+};
 type AttemptRow = RowDataPacket & { id: string; payload_sha256: string; outcome: string; created_at: Date };
 type InterceptRow = RowDataPacket & {
   id: string;
@@ -343,6 +347,49 @@ export function createSharedWarehouseWork(dependencies: { mysql: Pool; storage: 
         `INSERT INTO warehouse_work_batch_changes (batch_id, change_type) VALUES (?, 'BATCH_CLOSED')`, [batchId],
       );
       return { id: batchId, status: 'CLOSED' as const };
+    },
+
+    async deleteBatch(_session: WarehouseSession, batchIdValue: unknown) {
+      const batchId = uuid(batchIdValue, 'batchId');
+      if (!storage.remove) throw new ApiError(501, 'LABEL_STORAGE_DELETE_UNSUPPORTED', '当前面单存储不支持安全删除。');
+      const connection = await mysql.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [batches] = await connection.execute<(RowDataPacket & {
+          mapping_count: number; pdf_count: number;
+        })[]>(
+          `SELECT mapping_count, pdf_count FROM warehouse_work_batches WHERE id = ? LIMIT 1 FOR UPDATE`, [batchId],
+        );
+        if (!batches[0]) throw new ApiError(404, 'BATCH_NOT_FOUND', '未找到共享批次。');
+        const [assets] = await connection.execute<BatchAssetDeletionRow[]>(
+          `SELECT storage_key, byte_size FROM warehouse_work_batch_assets WHERE batch_id = ? FOR UPDATE`, [batchId],
+        );
+
+        // Each shared-batch asset has a batch-scoped storage key. Remove bytes before
+        // metadata so a failed object-store operation leaves the batch retryable.
+        for (const key of new Set(assets.map(asset => asset.storage_key))) await storage.remove(key);
+
+        await connection.execute(`DELETE FROM warehouse_work_batch_print_attempts WHERE batch_id = ?`, [batchId]);
+        await connection.execute(`DELETE FROM warehouse_work_batch_changes WHERE batch_id = ?`, [batchId]);
+        await connection.execute(`DELETE FROM warehouse_work_batch_items WHERE batch_id = ?`, [batchId]);
+        await connection.execute(`DELETE FROM warehouse_work_batch_assets WHERE batch_id = ?`, [batchId]);
+        const [result] = await connection.execute<ResultSetHeader>(
+          `DELETE FROM warehouse_work_batches WHERE id = ?`, [batchId],
+        );
+        if (result.affectedRows !== 1) throw new ApiError(409, 'BATCH_DELETE_CONFLICT', '共享批次删除状态发生变化，请刷新后重试。');
+        await connection.commit();
+        return {
+          id: batchId,
+          mappingCount: Number(batches[0].mapping_count),
+          pdfCount: Number(batches[0].pdf_count),
+          deletedStorageBytes: assets.reduce((sum, asset) => sum + Number(asset.byte_size), 0),
+        };
+      } catch (error) {
+        await connection.rollback().catch(() => undefined);
+        throw error;
+      } finally {
+        connection.release();
+      }
     },
 
     async listItems(batchIdValue: unknown, input: { offset?: unknown; limit?: unknown }) {

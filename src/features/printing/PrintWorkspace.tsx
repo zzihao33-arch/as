@@ -14,7 +14,7 @@ import {
   Tooltip,
   Typography
 } from '@arco-design/web-react';
-import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, ArrowRight, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert } from 'lucide-react';
+import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, ArrowRight, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert, Trash2 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLocation } from 'react-router-dom';
@@ -47,6 +47,7 @@ import {
   checkGlobalIntercepts,
   closeSharedWorkBatch,
   createSharedWorkBatch,
+  deleteSharedWorkBatch,
   downloadWarehouseLabel,
   listSharedWorkBatches,
   publishSharedWorkBatch,
@@ -341,6 +342,8 @@ export default function App() {
   const [sharedBatchMessage, setSharedBatchMessage] = useState('');
   const [activeSharedBatches, setActiveSharedBatches] = useState<SharedWorkBatch[]>([]);
   const [closingSharedBatchId, setClosingSharedBatchId] = useState('');
+  const [sharedBatchPendingDelete, setSharedBatchPendingDelete] = useState<SharedWorkBatch | null>(null);
+  const [deletingSharedBatchId, setDeletingSharedBatchId] = useState('');
   const [emergencyOfflineEnabled, setEmergencyOfflineEnabled] = useState(false);
   const sharedBatchIdRef = useRef('');
   const sharedBatchPromiseRef = useRef<Promise<string> | null>(null);
@@ -439,6 +442,7 @@ export default function App() {
   const canCreateSharedBatch = warehouseSession.hasPermission('batches.create');
   const canPublishSharedBatch = warehouseSession.hasPermission('batches.publish');
   const canCloseSharedBatch = warehouseSession.hasPermission('batches.close');
+  const canDeleteSharedBatch = warehouseSession.hasPermission('batches.delete');
   const canEnableEmergencyOffline = warehouseSession.hasPermission('offline_mode.enable');
   const canViewIntercepts = warehouseSession.hasPermission('intercepts.view');
 
@@ -450,18 +454,18 @@ export default function App() {
     : '';
 
   const refreshActiveSharedBatches = useCallback(async () => {
-    if (!canCloseSharedBatch) return;
+    if (!canCloseSharedBatch && !canDeleteSharedBatch) return;
     try {
-      setActiveSharedBatches(await listSharedWorkBatches('ACTIVE'));
+      setActiveSharedBatches(await listSharedWorkBatches(canDeleteSharedBatch ? undefined : 'ACTIVE'));
     } catch (cause) {
       setSharedBatchStatus('error');
       setSharedBatchMessage(cause instanceof Error ? cause.message : '读取活动共享批次失败。');
     }
-  }, [canCloseSharedBatch]);
+  }, [canCloseSharedBatch, canDeleteSharedBatch]);
 
   useEffect(() => {
-    if (isDataImportOpen && canCloseSharedBatch) void refreshActiveSharedBatches();
-  }, [canCloseSharedBatch, isDataImportOpen, refreshActiveSharedBatches]);
+    if (isDataImportOpen && (canCloseSharedBatch || canDeleteSharedBatch)) void refreshActiveSharedBatches();
+  }, [canCloseSharedBatch, canDeleteSharedBatch, isDataImportOpen, refreshActiveSharedBatches]);
 
   const ensureSharedDraft = async () => {
     if (!canCreateSharedBatch) throw new Error('当前角色没有创建共享批次的权限。');
@@ -606,6 +610,28 @@ export default function App() {
       setSharedBatchMessage(cause instanceof Error ? cause.message : '关闭共享批次失败。');
     } finally {
       setClosingSharedBatchId('');
+    }
+  };
+
+  const deleteListedSharedBatch = async () => {
+    const batch = sharedBatchPendingDelete;
+    if (!batch || !canDeleteSharedBatch) return;
+    setDeletingSharedBatchId(batch.id);
+    try {
+      const result = await deleteSharedWorkBatch(batch.id);
+      if (batch.id === sharedBatchId) {
+        sharedBatchIdRef.current = '';
+        setSharedBatchId('');
+        setSharedBatchStatus('idle');
+      }
+      setSharedBatchMessage(`已删除共享批次“${batch.name}”：${result.mappingCount.toLocaleString()} 条映射、${result.pdfCount.toLocaleString()} 个 PDF。`);
+      setSharedBatchPendingDelete(null);
+      await refreshActiveSharedBatches();
+    } catch (cause) {
+      setSharedBatchStatus('error');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '删除共享批次失败。');
+    } finally {
+      setDeletingSharedBatchId('');
     }
   };
 
@@ -2148,6 +2174,28 @@ export default function App() {
           </ArcoModal>
         )}
 
+        {sharedBatchPendingDelete && (
+          <ArcoModal
+            visible
+            className="cmhub-confirm-modal"
+            title={<ArcoSpace><Trash2 size={20} /><span>删除共享批次</span></ArcoSpace>}
+            onCancel={() => !deletingSharedBatchId && setSharedBatchPendingDelete(null)}
+            footer={
+              <ArcoSpace>
+                <ArcoButton disabled={Boolean(deletingSharedBatchId)} onClick={() => setSharedBatchPendingDelete(null)}>取消</ArcoButton>
+                <ArcoButton status="danger" type="primary" loading={deletingSharedBatchId === sharedBatchPendingDelete.id} onClick={() => void deleteListedSharedBatch()}>
+                  删除映射与 PDF
+                </ArcoButton>
+              </ArcoSpace>
+            }
+          >
+            <Typography.Paragraph>
+              将永久删除“<Typography.Text bold>{sharedBatchPendingDelete.name}</Typography.Text>”及其
+              {` ${sharedBatchPendingDelete.mappingCount.toLocaleString()} 条映射、${sharedBatchPendingDelete.pdfCount.toLocaleString()} 个私有 PDF。此操作不可恢复。`}
+            </Typography.Paragraph>
+          </ArcoModal>
+        )}
+
         {(qzConnectionHealth === 'offline' || cloudLibrary.status === 'error' || interceptStorageStatus === 'corrupted' || interceptStorageStatus === 'unavailable' || (uploadCacheStatus === 'unavailable' && uploadCacheMessage) || (canEnableEmergencyOffline && emergencyOfflineEnabled)) && (
           <aside className="cmhub-scan-notice-dock" aria-label="扫码打单系统提醒" aria-live="polite">
             {qzConnectionHealth === 'offline' && (
@@ -2536,22 +2584,34 @@ export default function App() {
                     )}
                   </ArcoSpace>
                 )}
-                {canCloseSharedBatch && activeSharedBatches.length > 0 && (
-                  <div className="cmhub-active-shared-batches" aria-label="活动共享批次">
-                    <div className="cmhub-active-shared-batches-title">当前活动批次</div>
+                {(canCloseSharedBatch || canDeleteSharedBatch) && activeSharedBatches.length > 0 && (
+                  <div className="cmhub-active-shared-batches" aria-label="共享批次管理">
+                    <div className="cmhub-active-shared-batches-title">共享批次管理</div>
                     {activeSharedBatches.map(batch => (
                       <div className="cmhub-active-shared-batch" key={batch.id}>
                         <div>
                           <strong>{batch.name}</strong>
-                          <span>{batch.mappingCount.toLocaleString()} 条映射 · {batch.pdfCount.toLocaleString()} 个 PDF</span>
+                          <span>{batch.status === 'DRAFT' ? '草稿' : batch.status === 'ACTIVE' ? '生效中' : '已关闭'} · {batch.mappingCount.toLocaleString()} 条映射 · {batch.pdfCount.toLocaleString()} 个 PDF</span>
                         </div>
-                        <ArcoButton
-                          size="mini"
-                          status="warning"
-                          loading={closingSharedBatchId === batch.id}
-                          disabled={Boolean(closingSharedBatchId)}
-                          onClick={() => void closeListedSharedBatch(batch)}
-                        >关闭</ArcoButton>
+                        <ArcoSpace className="cmhub-active-shared-batch-actions">
+                          {canCloseSharedBatch && batch.status === 'ACTIVE' && (
+                            <ArcoButton
+                              size="mini"
+                              status="warning"
+                              loading={closingSharedBatchId === batch.id}
+                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
+                              onClick={() => void closeListedSharedBatch(batch)}
+                            >关闭</ArcoButton>
+                          )}
+                          {canDeleteSharedBatch && (
+                            <ArcoButton
+                              size="mini"
+                              status="danger"
+                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
+                              onClick={() => setSharedBatchPendingDelete(batch)}
+                            >删除</ArcoButton>
+                          )}
+                        </ArcoSpace>
                       </div>
                     ))}
                   </div>

@@ -308,6 +308,14 @@ export function closeSharedWorkBatch(batchId: string): Promise<unknown> {
   return request(`/warehouse/v1/work-batches/${batchId}/close`, { method: 'POST' });
 }
 
+export async function deleteSharedWorkBatch(batchId: string) {
+  const result = await request<{ data: { id: string; mappingCount: number; pdfCount: number; deletedStorageBytes: number } }>(
+    `/warehouse/v1/work-batches/${batchId}`,
+    { method: 'DELETE' },
+  );
+  return result.data;
+}
+
 export async function claimSharedWorkBatchItem(input: { trackingNo: string; workstationId: string }) {
   const result = await request<{ data: { blocked: true; trackingNo: string; reason: string | null } | {
     blocked: false; claimToken: string; item: {

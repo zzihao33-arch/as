@@ -547,6 +547,12 @@
   min-width: 0;
 }
 
+.cmhub-active-shared-batch > .cmhub-active-shared-batch-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
 .cmhub-active-shared-batch strong,
 .cmhub-active-shared-batch span {
   overflow: hidden;
