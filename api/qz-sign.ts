@@ -72,12 +72,11 @@ export default function handler(req: any, res: any) {
   }
 
   const requestToSign = getRequestToSign(req);
-  // PrintWorkspace configures qz-tray with SHA-512. qz-tray hashes its call
-  // payload before invoking the signature callback, so the server should only
-  // accept the corresponding 128-character hex digest rather than arbitrary
-  // text that could turn this endpoint into a general signing oracle.
-  if (!/^[a-f0-9]{128}$/i.test(requestToSign)) {
-    sendText(res, 400, 'QZ request 必须是 128 位 SHA-512 摘要。');
+  // qz-tray hashes the call payload with SHA-256 before invoking this callback.
+  // The configured SHA-512 value is the RSA signature algorithm QZ verifies;
+  // it does not change this callback payload into a SHA-512 digest.
+  if (!/^[a-f0-9]{64}$/i.test(requestToSign)) {
+    sendText(res, 400, 'QZ request 必须是 64 位 SHA-256 摘要。');
     return;
   }
 
