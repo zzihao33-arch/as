@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { NextFunction, Request, Response } from 'express';
 import { ApiError } from '../src/errors.js';
 import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseWorkspace } from '../src/warehouseAccess.js';
+import { createWarehouseHttpBoundary } from '../src/warehouseHttp.js';
 import type { WarehouseSession } from '../src/warehouseIdentity.js';
 
 const baseSession: WarehouseSession = {
@@ -65,5 +66,37 @@ describe('warehouse permission middleware', () => {
     requireWarehouseWorkspace(request, {} as Response, ((error?: unknown) => { result = error; }) as NextFunction);
     assert.ok(result instanceof ApiError);
     assert.equal(result.code, 'WAREHOUSE_SELECTION_REQUIRED');
+  });
+});
+
+describe('warehouse HTTP boundary', () => {
+  it('allows the SHA-256 header used by shared-PDF uploads in CORS preflight responses', () => {
+    const boundary = createWarehouseHttpBoundary({
+      identity: {} as never,
+      allowedOrigins: new Set(['https://cmhubtool.com']),
+      cookieName: 'cmhub_warehouse_session',
+    });
+    const headers = new Map<string, string>();
+    let statusCode = 0;
+    let ended = false;
+    const request = {
+      method: 'OPTIONS',
+      header: (name: string) => name === 'origin' ? 'https://cmhubtool.com' : undefined,
+    } as unknown as Request;
+    const response = {
+      setHeader: (name: string, value: string) => headers.set(name, value),
+      status: (status: number) => {
+        statusCode = status;
+        return { end: () => { ended = true; } };
+      },
+    } as unknown as Response;
+    let nextCalled = false;
+
+    boundary.origin(request, response, (() => { nextCalled = true; }) as NextFunction);
+
+    assert.equal(statusCode, 204);
+    assert.equal(ended, true);
+    assert.equal(nextCalled, false);
+    assert.match(headers.get('Access-Control-Allow-Headers') ?? '', /X-Label-SHA256/i);
   });
 });
