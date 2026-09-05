@@ -1,5 +1,6 @@
-import { memo, useMemo } from 'react';
-import { Table, Tag, Typography } from '@arco-design/web-react';
+import { memo } from 'react';
+import { Clock3 } from 'lucide-react';
+import { Tag } from 'tdesign-react';
 import type { PrintLog } from './printingTypes';
 
 interface PrintLogTableProps {
@@ -8,50 +9,59 @@ interface PrintLogTableProps {
 }
 
 function PrintLogTable({ logs, latestLogId }: PrintLogTableProps) {
-  const columns = useMemo(() => [
-    { title: '时间', dataIndex: 'time', width: 140 },
-    {
-      title: '相关单号/对象',
-      dataIndex: 'firstLeg',
-      render: (_: unknown, record: PrintLog) => record.type === 'print' ? (
-        <div>
-          <Typography.Text>{record.firstLeg}</Typography.Text>
-          <br />
-          <Typography.Text type="secondary">快递单号: {record.exchange}</Typography.Text>
-        </div>
-      ) : record.firstLeg
-    },
-    { title: '状态/详情', dataIndex: 'message' },
-    {
-      title: '结果',
-      dataIndex: 'status',
-      width: 100,
-      render: (_: unknown, record: PrintLog) => {
-        if (record.type === 'print' && record.status === 'success') {
-          return <Tag color="blue">已提交</Tag>;
-        }
-        if (record.type === 'print' && record.outcome === 'TIMEOUT') {
-          return <Tag color="orange">结果未知</Tag>;
-        }
-        return (
-          <Tag color={record.status === 'success' ? 'green' : 'red'}>
-            {record.status === 'success' ? '成功' : '失败'}
-          </Tag>
-        );
-      }
-    }
-  ], []);
+  if (logs.length === 0) {
+    return (
+      <div className="cmhub-log-empty-state" role="status">
+        <Clock3 size={22} aria-hidden="true" />
+        <div><strong>暂无匹配的记录</strong><span>调整筛选条件，或完成一次新的操作后在这里查看结果</span></div>
+      </div>
+    );
+  }
 
   return (
-    <Table
-      className="cmhub-log-table"
-      rowKey="id"
-      border={false}
-      pagination={false}
-      data={logs}
-      columns={columns}
-      rowClassName={(record) => record.id === latestLogId ? 'cmhub-latest-log' : ''}
-    />
+    <div className="cmhub-log-list" role="list" aria-label="操作日志记录">
+      {logs.map(record => {
+        const isSuccess = record.status === 'success';
+        const isTimeout = record.outcome === 'TIMEOUT';
+        const visualStatus = isTimeout ? 'pending' : isSuccess ? 'success' : 'error';
+        const resultLabel = isTimeout ? '结果未知' : isSuccess ? (record.type === 'print' ? '已提交' : '成功') : '失败';
+        const dateLabel = record.createdAt > 0
+          ? new Date(record.createdAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+          : '本次操作';
+        const timeLabel = record.time.replace(/\s?(AM|PM)$/i, '');
+        const compactTime = timeLabel.match(/^\d{1,2}:\d{2}/)?.[0] ?? timeLabel;
+
+        return (
+          <article
+            key={record.id}
+            className={`cmhub-log-row ${record.id === latestLogId ? 'is-latest' : ''} is-${visualStatus}`}
+            role="listitem"
+          >
+            <div className="cmhub-log-row-time">
+              <time dateTime={record.createdAt > 0 ? new Date(record.createdAt).toISOString() : undefined}>
+                <span>{dateLabel}</span>
+                <strong>{compactTime}</strong>
+              </time>
+            </div>
+            <div className="cmhub-log-row-subject">
+              <strong>{record.firstLeg || '未命名对象'}</strong>
+              <span>{record.exchange ? `→ ${record.exchange}` : record.type === 'import' ? '导入数据记录' : record.type === 'system' ? '系统运行记录' : '未匹配单号'}</span>
+            </div>
+            <div className="cmhub-log-row-detail">
+              <span>{record.message}</span>
+            </div>
+            <Tag
+              className={`cmhub-log-result is-${visualStatus}`}
+              size="small"
+              theme={visualStatus === 'success' ? 'success' : visualStatus === 'pending' ? 'warning' : 'danger'}
+              variant="light"
+            >
+              {resultLabel}
+            </Tag>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 

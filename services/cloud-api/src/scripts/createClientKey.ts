@@ -40,6 +40,34 @@ async function main(): Promise<void> {
          VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?)`,
         [clientId, code, name, issued.keyId, issued.prefix, issued.hash, limit],
       );
+      const [profiles] = await connection.execute<(RowDataPacket & { id: string; customer_type: 'BUSINESS' | 'UPSTREAM' })[]>(
+        'SELECT id, customer_type FROM customer_profiles WHERE customer_code = ? LIMIT 1 FOR UPDATE', [code],
+      );
+      const profile = profiles[0];
+      if (profile?.customer_type === 'BUSINESS') {
+        throw new Error('A business customer cannot be activated as an upstream integration client. Use a new upstream customer code.');
+      }
+      if (profile) {
+        await connection.execute(
+          `UPDATE customer_profiles
+           SET integration_client_id = ?, integration_status = 'INTEGRATED', customer_status = 'ACTIVE',
+               updated_by_user_id = NULL, updated_by_reference = 'system:create-client-key'
+           WHERE id = ?`, [clientId, profile.id],
+        );
+        await connection.execute(
+          `INSERT INTO customer_profile_events (customer_profile_id, event_type, actor_reference, event_data)
+           VALUES (?, 'INTEGRATION_CONNECTED', 'system:create-client-key', ?)`,
+          [profile.id, JSON.stringify({ integrationClientId: clientId, clientCode: code })],
+        );
+      } else {
+        await connection.execute(
+          `INSERT INTO customer_profiles
+            (id, customer_code, display_name, customer_type, integration_status, integration_client_id,
+             created_by_reference, updated_by_reference)
+           VALUES (?, ?, ?, 'UPSTREAM', 'INTEGRATED', ?, 'system:create-client-key', 'system:create-client-key')`,
+          [randomUUID(), code.toUpperCase(), name, clientId],
+        );
+      }
       createdClient = true;
     }
     await connection.execute(

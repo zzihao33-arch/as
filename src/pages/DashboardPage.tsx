@@ -1,49 +1,24 @@
-import { Alert, Button, Skeleton, Tag } from '@arco-design/web-react';
+import { Alert, Button, Skeleton } from 'tdesign-react';
 import qz from 'qz-tray';
-import {
-  ArrowRight,
-  BadgeCheck,
-  Camera,
-  ChevronDown,
-  Cloud,
-  FileInput,
-  Fingerprint,
-  History,
-  PackageCheck,
-  PackageSearch,
-  Plane,
-  Printer,
-  RefreshCw,
-} from 'lucide-react';
-import { type UIEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowRight, BadgeCheck, Camera, Cloud, FileInput, Fingerprint, History, PackageCheck, PackageSearch, Plane, Printer, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkbenchMotion } from '../features/motion/useWorkbenchMotion';
 import { usePrintLogs } from '../features/printing/hooks/usePrintLogs';
-import {
-  getAttendancePunchContext,
-  listAirPickups,
-  listGlobalIntercepts,
-  listSharedWorkBatches,
-  type AirPickupOrder,
-  type AirPickupSummary,
-  type SharedWorkBatch,
-} from '../features/session/warehouseApi';
+import { getAttendancePunchContext, listAirPickups, listGlobalIntercepts, listSharedWorkBatches, type AirPickupOrder, type AirPickupStatus, type AirPickupSummary, type SharedWorkBatch } from '../features/session/warehouseApi';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 
-type DashboardSnapshot = {
-  batches: SharedWorkBatch[];
-  airOrders: AirPickupOrder[];
-  airSummary: AirPickupSummary;
-  interceptCount: number;
-  attendanceExceptionCount: number;
-  cloudOnline: boolean;
-};
+type DashboardSnapshot = { batches: SharedWorkBatch[]; airOrders: AirPickupOrder[]; airSummary: AirPickupSummary; interceptCount: number; attendanceExceptionCount: number; cloudOnline: boolean };
+type WorkQueueItem = { label: string; description: string; value: number; tone: 'primary' | 'warning' | 'danger'; path: string; action: string };
 
 const emptySummary: AirPickupSummary = { recorded: 0, received: 0, handedOver: 0, voided: 0, evidencePending: 0 };
-
-const shortTime = (value: string | number) => new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-}).format(new Date(value));
+const shortTime = (value: string | number) => new Intl.DateTimeFormat('zh-CN', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(value));
+const pickupStatusDetails: Record<AirPickupStatus, { label: string; action: string; tone: string }> = {
+  RECORDED: { label: '待入库', action: '去入库', tone: 'recorded' },
+  RECEIVED: { label: '待交仓', action: '去交仓', tone: 'received' },
+  HANDED_OVER: { label: '已交仓', action: '查看', tone: 'handed-over' },
+  VOIDED: { label: '已作废', action: '查看', tone: 'voided' },
+};
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -52,250 +27,113 @@ export default function DashboardPage() {
   const { logs, refresh: refreshPrintLogs } = usePrintLogs();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isActivityRefreshing, setIsActivityRefreshing] = useState(false);
-  const [lastActivitySyncedAt, setLastActivitySyncedAt] = useState<number | null>(null);
-  const [visibleActivityCount, setVisibleActivityCount] = useState(5);
-  const [snapshot, setSnapshot] = useState<DashboardSnapshot>({
-    batches: [], airOrders: [], airSummary: emptySummary, interceptCount: 0, attendanceExceptionCount: 0, cloudOnline: false,
-  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot>({ batches: [], airOrders: [], airSummary: emptySummary, interceptCount: 0, attendanceExceptionCount: 0, cloudOnline: false });
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     setError('');
     const [batchesResult, interceptResult, airResult, attendanceResult] = await Promise.allSettled([
-      listSharedWorkBatches('ACTIVE'),
-      listGlobalIntercepts('0', 2_000),
-      listAirPickups({ page: 1, pageSize: 6 }),
-      getAttendancePunchContext(),
+      listSharedWorkBatches('ACTIVE'), listGlobalIntercepts('0', 2_000), listAirPickups({ page: 1, pageSize: 6 }), getAttendancePunchContext(),
     ]);
     const successful = [batchesResult, interceptResult, airResult, attendanceResult].filter(result => result.status === 'fulfilled').length;
-    if (!successful) setError('工作概览暂时无法读取云端数据，请检查网络或稍后重试。');
+    if (!successful) setError('工作概览暂时无法读取云端数据，请检查网络后重试');
     setSnapshot({
       batches: batchesResult.status === 'fulfilled' ? batchesResult.value : [],
       interceptCount: interceptResult.status === 'fulfilled' ? interceptResult.value.data.length : 0,
       airOrders: airResult.status === 'fulfilled' ? airResult.value.data : [],
       airSummary: airResult.status === 'fulfilled' ? airResult.value.summary : emptySummary,
-      attendanceExceptionCount: attendanceResult.status === 'fulfilled'
-        && attendanceResult.value.todayResult
-        && !['OPEN', 'COMPLETE'].includes(attendanceResult.value.todayResult.status) ? 1 : 0,
+      attendanceExceptionCount: attendanceResult.status === 'fulfilled' && attendanceResult.value.todayResult && !['OPEN', 'COMPLETE'].includes(attendanceResult.value.todayResult.status) ? 1 : 0,
       cloudOnline: successful > 0,
     });
-    if (successful > 0) setLastActivitySyncedAt(Date.now());
+    if (successful > 0) setLastSyncedAt(Date.now());
     if (!quiet) setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  const printLogs = useMemo(() => logs.filter(log => log.type === 'print'), [logs]);
-  const visiblePrintLogs = printLogs.slice(0, visibleActivityCount);
-  const hasMorePrintLogs = visibleActivityCount < printLogs.length;
-  const loadMorePrintLogs = useCallback(() => {
-    setVisibleActivityCount(current => Math.min(current + 5, printLogs.length));
-  }, [printLogs.length]);
-  const refreshActivity = useCallback(async () => {
-    if (isActivityRefreshing) return;
-    const feedbackStartedAt = performance.now();
-    setIsActivityRefreshing(true);
-    try {
-      await Promise.all([load(true), refreshPrintLogs()]);
-      setVisibleActivityCount(5);
-    } finally {
-      const feedbackRemaining = Math.max(0, 360 - (performance.now() - feedbackStartedAt));
-      if (feedbackRemaining) {
-        await new Promise(resolve => window.setTimeout(resolve, feedbackRemaining));
-      }
-      setIsActivityRefreshing(false);
-    }
-  }, [isActivityRefreshing, load, refreshPrintLogs]);
-  const handleActivityScroll = useCallback((event: UIEvent<HTMLOListElement>) => {
-    const list = event.currentTarget;
-    if (hasMorePrintLogs && list.scrollHeight - list.scrollTop - list.clientHeight < 28) {
-      loadMorePrintLogs();
-    }
-  }, [hasMorePrintLogs, loadMorePrintLogs]);
-  const submittedCount = printLogs.filter(log => log.status === 'success').length;
-  const availableMappings = snapshot.batches.reduce((sum, batch) => sum + batch.mappingCount, 0);
+  const refreshDashboard = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try { await Promise.all([load(true), refreshPrintLogs()]); } finally { setIsRefreshing(false); }
+  }, [isRefreshing, load, refreshPrintLogs]);
+
+  const printLogs = useMemo(() => logs.filter(log => log.type === 'print').slice(0, 6), [logs]);
+  const submittedCount = useMemo(() => logs.filter(log => log.type === 'print' && log.status === 'success').length, [logs]);
+  const availableMappings = useMemo(() => snapshot.batches.reduce((sum, batch) => sum + batch.mappingCount, 0), [snapshot.batches]);
   const pendingCount = Math.max(0, availableMappings - submittedCount);
   const qzConnected = (() => { try { return qz.websocket.isActive(); } catch { return false; } })();
   const selectedPrinter = localStorage.getItem('selectedPrinter') || '自动选择打印机';
+  const syncDescription = lastSyncedAt ? `上次同步 ${shortTime(lastSyncedAt)}` : '正在建立首次同步';
 
-  const metrics = [
-    { label: '待换单包裹', value: pendingCount, tone: 'blue', path: '/operations/scan-print' },
-    { label: '已提交打印', value: submittedCount, tone: 'blue', path: '/operations/scan-print#operation-log' },
-    { label: '拦截数量', value: snapshot.interceptCount, tone: 'danger', path: '/operations/scan-print#intercepts' },
-    { label: '待入库提货单', value: snapshot.airSummary.recorded, tone: 'warning', path: '/air-pickups' },
-    { label: '凭证待补', value: snapshot.airSummary.evidencePending, tone: 'warning', path: '/air-pickups' },
-    { label: '考勤异常', value: snapshot.attendanceExceptionCount, tone: 'warning', path: '/payroll' },
+  const queueItems = useMemo<WorkQueueItem[]>(() => [
+    { label: '待换单包裹', description: '面单匹配完成后可直接打印', value: pendingCount, tone: 'primary', path: '/operations/scan-print', action: '处理包裹' },
+    { label: '待入库提货单', description: '空提单已录入，等待入库确认', value: snapshot.airSummary.recorded, tone: 'warning', path: '/air-pickups', action: '进入空提' },
+    { label: '凭证待补', description: '补齐交接凭证后才可完成流转', value: snapshot.airSummary.evidencePending, tone: 'warning', path: '/air-pickups', action: '补充凭证' },
+    { label: '拦截事项', description: '存在异常包裹，需要确认处理方案', value: snapshot.interceptCount, tone: 'danger', path: '/operations/scan-print#intercepts', action: '查看拦截' },
+    { label: '考勤异常', description: '今日打卡记录需要核对', value: snapshot.attendanceExceptionCount, tone: 'warning', path: '/payroll', action: '查看考勤' },
+  ], [pendingCount, snapshot.airSummary.evidencePending, snapshot.airSummary.recorded, snapshot.attendanceExceptionCount, snapshot.interceptCount]);
+  const activeQueue = queueItems.filter(item => item.value > 0);
+  const priorityItem = activeQueue[0] ?? queueItems[0];
+  const overviewNumbers = [
+    { label: '已提交打印', value: submittedCount, path: '/operations/scan-print#operation-log' },
+    { label: '当前映射面单', value: availableMappings, path: '/operations/scan-print' },
+    { label: '今日空提单', value: snapshot.airSummary.recorded + snapshot.airSummary.received + snapshot.airSummary.handedOver, path: '/air-pickups' },
   ];
-
-  const quickActions = [
-    { label: '进入扫码打单', description: '匹配面单并直达本机打印机', icon: PackageSearch, path: '/operations/scan-print', primary: true },
-    { label: '录入提货单', description: '开始一张新的空运提货单', icon: FileInput, path: '/air-pickups' },
-    { label: '批量入库', description: '处理当前待入库队列', icon: PackageCheck, path: '/air-pickups' },
-    { label: '我的打卡', description: '记录或查看当日考勤', icon: Fingerprint, path: '/payroll' },
-  ];
-  const primaryAction = quickActions.find(action => action.primary)!;
-  const secondaryActions = quickActions.filter(action => !action.primary);
-  const PrimaryActionIcon = primaryAction.icon;
 
   useWorkbenchMotion(motionScopeRef);
 
   return (
-    <section ref={motionScopeRef} className="cmhub-page cmhub-dashboard-page cmhub-stitch-page" aria-labelledby="dashboard-title">
-      <header className="cmhub-stitch-heading" data-motion-enter>
-        <div>
-          <h1 id="dashboard-title">工作概览 · {session.session?.warehouseName ?? '当前仓库'}</h1>
-          <p>实时同步仓库作业动态 · 数据更新于 {shortTime(Date.now())}</p>
-        </div>
-        <div className="cmhub-dashboard-connectivity" aria-label="连接状态">
-          <span className={snapshot.cloudOnline ? 'is-ok' : 'is-error'}><Cloud size={14} />云端同步 {snapshot.cloudOnline ? '在线' : '异常'}</span>
-          <span className={qzConnected ? 'is-ok' : 'is-muted'}><BadgeCheck size={14} />QZ Tray {qzConnected ? '已连接' : '待连接'}</span>
-          <span className="is-muted"><Printer size={14} />{selectedPrinter}</span>
-          <span className="is-muted"><History size={14} />本地缓存可用</span>
+    <section ref={motionScopeRef} className="cmhub-page cmhub-overview" aria-labelledby="dashboard-title">
+      <h1 id="dashboard-title" className="cmhub-visually-hidden">{session.session?.warehouseName ?? '当前仓库'}</h1>
+      <header className="cmhub-overview-header" data-motion-enter>
+        <div className="cmhub-overview-context" aria-label="工作台连接状态">
+          <dl>
+            <div><dd className={snapshot.cloudOnline ? 'is-online' : 'is-offline'}><Cloud size={15} aria-hidden="true" />{snapshot.cloudOnline ? '已同步' : '未连接'}</dd></div>
+            <div><dd className={qzConnected ? 'is-online' : ''}><Printer size={15} aria-hidden="true" />{qzConnected ? 'QZ 已连接' : '等待 QZ'}</dd></div>
+            <div><dd title={selectedPrinter}><BadgeCheck size={15} aria-hidden="true" />{selectedPrinter}</dd></div>
+          </dl>
+          <div className="cmhub-overview-refresh-row"><span aria-live="polite">{syncDescription}</span><Button className="cmhub-overview-refresh" variant="text" shape="square" size="small" aria-label="刷新工作区" loading={isRefreshing} icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => void refreshDashboard()} /></div>
         </div>
       </header>
 
-      {error && <Alert type="warning" content={error} action={<Button size="small" onClick={() => void load()}>重试</Button>} />}
+      {error && <Alert theme="warning" message={error} operation={<Button size="small" onClick={() => void load()}>重新加载</Button>} />}
 
-      <div className="cmhub-dashboard-metrics" aria-label="今日业务摘要">
-        {metrics.map(metric => (
-          <button key={metric.label} type="button" data-motion-enter data-motion-hover data-tone={metric.tone} onClick={() => void navigate(metric.path)} aria-label={`查看${metric.label}：${metric.value.toLocaleString()}`}>
-            <span className="cmhub-dashboard-metric-label">{metric.label}</span>
-            {loading ? <Skeleton text={{ rows: 1, width: '42%' }} animation /> : <strong>{metric.value.toLocaleString()}</strong>}
-            <small>查看队列 <ArrowRight size={13} aria-hidden="true" /></small>
-          </button>
-        ))}
-      </div>
+      <main className="cmhub-overview-layout">
+          <article className={`cmhub-overview-launcher is-${priorityItem.tone}`} data-motion-enter>
+            <div className="cmhub-overview-launcher-icon"><PackageSearch size={24} aria-hidden="true" /></div>
+            <div className="cmhub-overview-launcher-copy"><h2>{loading ? '正在汇总今日工作' : priorityItem.value > 0 ? priorityItem.label : '开始扫码打单'}</h2><p>{loading ? '正在读取仓库队列和本机打印记录' : priorityItem.value > 0 ? `${priorityItem.value.toLocaleString()} 项需要处理${priorityItem.description}` : '当前没有阻塞事项，可直接进入扫码打单'}</p></div>
+            <Button theme="primary" size="large" onClick={() => void navigate(priorityItem.path)} suffix={<ArrowRight size={17} aria-hidden="true" />}>{priorityItem.value > 0 ? priorityItem.action : '开始打单'}</Button>
+          </article>
 
-      <div className="cmhub-dashboard-body">
-        <div className="cmhub-dashboard-primary-column">
-          <section className="cmhub-dashboard-action-board" data-motion-enter aria-labelledby="quick-actions-title">
-            <header>
-              <div>
-                <span className="cmhub-eyebrow">优先操作</span>
-                <h2 id="quick-actions-title">从当前最重要的工作开始</h2>
-              </div>
-              <small>高频工作入口</small>
-            </header>
-            <div className="cmhub-dashboard-action-grid">
-              <button type="button" className="cmhub-dashboard-primary-action" data-motion-hover onClick={() => void navigate(primaryAction.path)}>
-                <span className="cmhub-dashboard-action-icon"><PrimaryActionIcon size={22} aria-hidden="true" /></span>
-                <span><strong>{primaryAction.label}</strong><small>{primaryAction.description}</small></span>
-                <ArrowRight size={19} aria-hidden="true" />
-              </button>
-              <div className="cmhub-dashboard-secondary-actions">
-                {secondaryActions.map(action => {
-                  const Icon = action.icon;
-                  return <button key={action.label} type="button" data-motion-hover onClick={() => void navigate(action.path)}>
-                    <Icon size={18} aria-hidden="true" /><span><strong>{action.label}</strong><small>{action.description}</small></span><ArrowRight size={15} aria-hidden="true" />
-                  </button>;
-                })}
-              </div>
-            </div>
+          <section className="cmhub-overview-section cmhub-overview-queue" data-motion-enter aria-labelledby="queue-title">
+            <header><div><h2 id="queue-title">优先队列</h2><p>按当前阻塞程度安排处理顺序</p></div><span className={activeQueue.length ? 'is-active' : 'is-clear'}>{activeQueue.length ? `${activeQueue.length} 类待处理` : '队列正常'}</span></header>
+            {loading ? <div className="cmhub-overview-queue-skeleton"><Skeleton rowCol={[1, 1, 1]} animation="gradient" /></div> : activeQueue.length ? <div className="cmhub-overview-queue-list">{activeQueue.map((item) => <button key={item.label} type="button" className={`is-${item.tone}`} onClick={() => void navigate(item.path)}><span className="cmhub-overview-queue-count">{item.value.toLocaleString()}</span><span className="cmhub-overview-queue-copy"><strong>{item.label}</strong><small>{item.description}</small></span><span className="cmhub-overview-queue-action">{item.action}<ArrowRight size={15} aria-hidden="true" /></span></button>)}</div> : <div className="cmhub-overview-clear-state"><PackageCheck size={23} aria-hidden="true" /><div><strong>没有需要立即处理的事项</strong><span>可以继续扫码打单，或查看今日流转记录</span></div></div>}
           </section>
 
-          <section className="cmhub-dashboard-panel" data-motion-enter aria-labelledby="pending-title">
-            <header><h2 id="pending-title">近期待办任务</h2><Button type="text" onClick={() => void navigate('/air-pickups')}>查看全部</Button></header>
-            {loading ? <div className="cmhub-dashboard-skeleton"><Skeleton text={{ rows: 4 }} animation /></div> : snapshot.airOrders.length ? (
-              <div className="cmhub-dashboard-task-table" role="table">
-                <div role="row"><span role="columnheader">提货单号</span><span role="columnheader">更新时间</span><span role="columnheader">业务类型</span><span role="columnheader">状态</span><span role="columnheader">操作</span></div>
-                {snapshot.airOrders.slice(0, 4).map(order => {
-                  const actionLabel = order.status === 'RECORDED' ? '去入库' : order.status === 'RECEIVED' ? '去交仓' : '查看';
-                  return <div role="row" key={order.id}>
-                    <strong role="cell">{order.billNo}</strong><time role="cell">{shortTime(order.updatedAt)}</time><span role="cell">空提流转</span>
-                    <span role="cell"><Tag color={order.status === 'RECORDED' ? 'arcoblue' : order.status === 'RECEIVED' ? 'orange' : order.status === 'HANDED_OVER' ? 'green' : 'gray'}>
-                      {{ RECORDED: '待入库', RECEIVED: '待交仓', HANDED_OVER: '已交仓', VOIDED: '已作废' }[order.status]}
-                    </Tag></span>
-                    <span role="cell">
-                      <Button
-                        className="cmhub-dashboard-task-action"
-                        type="secondary"
-                        size="small"
-                        aria-label={`${actionLabel} ${order.billNo}`}
-                        data-motion-hover
-                        onClick={() => void navigate('/air-pickups')}
-                      >
-                        {actionLabel}<ArrowRight size={14} aria-hidden="true" />
-                      </Button>
-                    </span>
-                  </div>;
-                })}
-              </div>
-            ) : <div className="cmhub-dashboard-empty-state"><Plane size={24} /><span>当前没有待处理任务</span></div>}
-          </section>
-        </div>
+          <section className="cmhub-overview-section cmhub-overview-numbers" data-motion-enter aria-labelledby="numbers-title"><header><div><h2 id="numbers-title">今日概况</h2><p>用于核对处理节奏，不代替完整流水</p></div></header><div>{overviewNumbers.map(item => <button key={item.label} type="button" onClick={() => void navigate(item.path)}><span>{item.label}</span><strong>{loading ? <Skeleton rowCol={[{ width: '42px' }]} animation="gradient" /> : item.value.toLocaleString()}</strong><ArrowRight size={15} aria-hidden="true" /></button>)}</div></section>
 
-        <aside
-          className="cmhub-dashboard-panel cmhub-dashboard-activity"
-          data-motion-enter
-          data-refreshing={isActivityRefreshing || undefined}
-          aria-labelledby="activity-title"
-          aria-busy={isActivityRefreshing}
-        >
-          <header>
-            <div className="cmhub-dashboard-activity-heading">
-              <span className="cmhub-dashboard-activity-icon"><History size={17} aria-hidden="true" /></span>
-              <h2 id="activity-title">最近操作动态</h2>
-              <span
-                className="cmhub-dashboard-activity-refresh-state"
-                data-state={isActivityRefreshing ? 'loading' : snapshot.cloudOnline ? 'ready' : 'error'}
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-              >
-                <span>{isActivityRefreshing ? '正在同步' : snapshot.cloudOnline ? '最后同步' : '同步异常'}</span>
-                <time>{lastActivitySyncedAt ? shortTime(lastActivitySyncedAt) : '等待首次同步'}</time>
-              </span>
-            </div>
-            <div className="cmhub-dashboard-activity-header-actions">
-              <Button
-                className="cmhub-dashboard-activity-refresh"
-                type="secondary"
-                size="small"
-                icon={<RefreshCw size={16} aria-hidden="true" />}
-                disabled={isActivityRefreshing}
-                onClick={() => void refreshActivity()}
-                aria-label={isActivityRefreshing ? '正在刷新最近操作动态' : '刷新最近操作动态'}
-                title="刷新最近操作动态"
-              >
-                {isActivityRefreshing ? '刷新中' : '刷新'}
-              </Button>
-            </div>
-          </header>
-          <ol onScroll={handleActivityScroll} aria-label="最近操作动态记录" aria-busy={isActivityRefreshing}>
-            {visiblePrintLogs.map((log, index) => {
-              const reference = `${log.firstLeg}${log.exchange && log.exchange !== '-' ? ` → ${log.exchange}` : ''}`;
-              return <li key={log.id} className={log.status === 'error' ? 'is-error' : index === 0 ? 'is-active' : ''}>
-                <i aria-hidden="true" />
-                <div className="cmhub-dashboard-activity-copy">
-                  <div className="cmhub-dashboard-activity-mainline">
-                    <strong>{log.status === 'success' ? '打印任务已提交' : '打印任务异常'}</strong>
-                    <time dateTime={log.createdAt ? new Date(log.createdAt).toISOString() : undefined} title={log.time}>
-                      {log.createdAt ? shortTime(log.createdAt) : log.time}
-                    </time>
-                  </div>
-                  <Button
-                    className="cmhub-dashboard-activity-reference"
-                    type="text"
-                    size="mini"
-                    title={reference}
-                    aria-label={`查看打印记录 ${reference}`}
-                    onClick={() => void navigate('/operations/scan-print#operation-log')}
-                  >
-                    {reference}
-                  </Button>
-                </div>
-              </li>;
-            })}
-            {hasMorePrintLogs && (
-              <li className="cmhub-dashboard-activity-load-more">
-                <Button type="text" size="small" icon={<ChevronDown size={15} aria-hidden="true" />} onClick={loadMorePrintLogs}>下拉加载更多动态</Button>
-              </li>
-            )}
-            {!printLogs.length && <li className="is-empty"><Camera size={21} /><span>扫码处理后将在这里显示最近动态</span></li>}
-          </ol>
-        </aside>
-      </div>
+          <section className="cmhub-overview-section cmhub-overview-pickups" data-motion-enter aria-labelledby="pickup-title">
+            <header><div><h2 id="pickup-title">空提流转</h2><p>最近更新的提货单，优先呈现可继续处理的记录</p></div><Button variant="text" onClick={() => void navigate('/air-pickups')}>查看全部<ArrowRight size={15} aria-hidden="true" /></Button></header>
+            {loading ? <div className="cmhub-overview-table-skeleton"><Skeleton rowCol={[1, 1, 1, 1]} animation="gradient" /></div> : snapshot.airOrders.length ? <div className="cmhub-overview-pickup-list" role="list" aria-label="最近更新的空提流转记录">{snapshot.airOrders.slice(0, 4).map(order => {
+              const status = pickupStatusDetails[order.status];
+              return <article key={order.id} className="cmhub-overview-pickup-row" role="listitem">
+                <div className="cmhub-overview-pickup-identity"><span>提货单号</span><strong>{order.billNo}</strong></div>
+                <div className="cmhub-overview-pickup-time"><span>更新时间</span><time dateTime={new Date(order.updatedAt).toISOString()}>{shortTime(order.updatedAt)}</time></div>
+                <div className="cmhub-overview-pickup-state"><span>状态</span><b className={`is-${status.tone}`}>{status.label}</b></div>
+                <button type="button" className="cmhub-overview-pickup-action" aria-label={`${status.action} ${order.billNo}`} onClick={() => void navigate('/air-pickups')}>{status.action}<ArrowRight size={14} aria-hidden="true" /></button>
+              </article>;
+            })}</div> : <div className="cmhub-overview-empty-table"><Plane size={23} aria-hidden="true" /><span>暂无空提流转记录</span><Button variant="text" onClick={() => void navigate('/air-pickups')}>录入提单</Button></div>}
+          </section>
+
+          <section className="cmhub-overview-section cmhub-overview-shortcuts" data-motion-enter aria-labelledby="shortcuts-title"><header><div><h2 id="shortcuts-title">常用入口</h2><p>高频操作保持在一处，减少页面来回切换</p></div></header><div>{[
+            { label: '录入提单', icon: FileInput, path: '/air-pickups' }, { label: '批量入库', icon: PackageCheck, path: '/air-pickups' }, { label: '我的打卡', icon: Fingerprint, path: '/payroll' },
+          ].map(item => { const Icon = item.icon; return <button key={item.label} type="button" onClick={() => void navigate(item.path)}><Icon size={18} aria-hidden="true" /><span>{item.label}</span><ArrowRight size={15} aria-hidden="true" /></button>; })}</div></section>
+
+          <section className="cmhub-overview-section cmhub-overview-activity" data-motion-enter aria-labelledby="activity-title" aria-busy={isRefreshing}><header><div><h2 id="activity-title">最近动态</h2><p>本机打印记录会在提交后显示</p></div><History size={18} aria-hidden="true" /></header>{printLogs.length ? <ol aria-label="最近打印操作">{printLogs.map((log, index) => { const reference = `${log.firstLeg}${log.exchange && log.exchange !== '-' ? ` → ${log.exchange}` : ''}`; return <li key={log.id} className={log.status === 'error' ? 'is-error' : index === 0 ? 'is-latest' : ''}><i aria-hidden="true" /><div><strong>{log.status === 'success' ? '打印任务已提交' : '打印任务异常'}</strong><time dateTime={log.createdAt ? new Date(log.createdAt).toISOString() : undefined}>{log.createdAt ? shortTime(log.createdAt) : log.time}</time><button type="button" onClick={() => void navigate('/operations/scan-print#operation-log')}>{reference}</button></div></li>; })}</ol> : <div className="cmhub-overview-activity-empty"><Camera size={22} aria-hidden="true" /><span>提交打印任务后，这里会保留最近动态</span></div>}</section>
+          {!loading && !snapshot.cloudOnline && <div className="cmhub-overview-offline-note" role="status"><AlertTriangle size={17} aria-hidden="true" />当前使用本地缓存，恢复连接后请刷新工作区</div>}
+      </main>
     </section>
   );
 }

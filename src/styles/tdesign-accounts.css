@@ -1,0 +1,120 @@
+/* TDesign account-management surface: a compact operational data workspace. */
+.cmhub-accounts-page > .t-alert { margin-bottom: var(--cmhub-space-4, 1rem); }
+
+.cmhub-accounts-heading > .t-button {
+  min-height: var(--cmhub-control-height-large, 2.75rem);
+}
+
+.cmhub-account-toolbar :is(.t-input, .t-select__wrap) {
+  min-height: var(--cmhub-control-height, 2.5rem);
+  border-color: var(--cmhub-line-strong);
+  border-radius: var(--cmhub-control-radius);
+  background: var(--cmhub-surface-base);
+}
+
+.cmhub-account-toolbar :is(.t-input, .t-select__wrap):hover {
+  border-color: color-mix(in srgb, var(--cmhub-interactive-primary) 50%, var(--cmhub-line-strong));
+}
+
+.cmhub-account-toolbar :is(.t-input--focused, .t-select--focused .t-select__wrap) {
+  border-color: var(--cmhub-interactive-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cmhub-interactive-primary) 16%, transparent);
+}
+
+.cmhub-account-toolbar-actions .t-button,
+.cmhub-account-row-actions .t-button {
+  min-height: var(--cmhub-control-height-compact, 2rem);
+}
+
+.cmhub-account-table-panel .t-table {
+  border: 0;
+  border-radius: 0;
+  background: var(--cmhub-surface-base);
+}
+
+.cmhub-account-table-panel .t-table th {
+  height: 2.75rem;
+  background: var(--cmhub-table-header-bg);
+  color: var(--cmhub-table-header-fg);
+  font-size: var(--cmhub-font-size-xs);
+  font-weight: var(--cmhub-font-weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+.cmhub-account-table-panel .t-table td {
+  min-height: var(--cmhub-table-row-height);
+  border-color: var(--cmhub-line-subtle);
+  font-size: var(--cmhub-font-size-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cmhub-account-table-panel .t-table tbody tr:hover > td {
+    background: color-mix(in srgb, var(--cmhub-surface-selected) 42%, var(--cmhub-surface-base));
+  }
+}
+
+.cmhub-account-table-panel .t-table__pagination {
+  min-height: 3.5rem;
+  margin: 0;
+  padding: var(--cmhub-space-3) var(--cmhub-space-5);
+  border-top: 1px solid var(--cmhub-line-subtle);
+}
+
+.cmhub-account-role-list .t-tag,
+.cmhub-account-status-list .t-tag {
+  height: auto;
+  min-height: 1.625rem;
+  padding-block: 0.1875rem;
+  border-radius: var(--cmhub-radius-pill);
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.cmhub-account-row-actions .cmhub-account-row-action.t-button {
+  min-width: auto;
+  padding-inline: var(--cmhub-space-2);
+}
+
+.cmhub-account-form-modal .t-dialog,
+.cmhub-account-secret-modal .t-dialog {
+  overflow: hidden;
+  width: min(40rem, calc(100vw - 2rem)) !important;
+  border-radius: var(--cmhub-panel-radius);
+}
+
+.cmhub-account-secret-modal .t-dialog { width: min(32.5rem, calc(100vw - 2rem)) !important; }
+
+.cmhub-account-form-modal .t-dialog__header,
+.cmhub-account-secret-modal .t-dialog__header {
+  min-height: 4.25rem;
+  padding: 0 var(--cmhub-space-6);
+  border-bottom: 1px solid var(--cmhub-line-subtle);
+}
+
+.cmhub-account-form-modal .t-dialog__body,
+.cmhub-account-secret-modal .t-dialog__body { padding: var(--cmhub-space-5) var(--cmhub-space-6); }
+
+.cmhub-account-form-modal .t-dialog__footer,
+.cmhub-account-secret-modal .t-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--cmhub-space-2);
+  padding: var(--cmhub-space-3) var(--cmhub-space-6);
+  border-top: 1px solid var(--cmhub-line-subtle);
+  background: var(--cmhub-surface-sunken);
+}
+
+.cmhub-account-form .t-form__item { margin-bottom: var(--cmhub-space-4); }
+.cmhub-account-form .t-form__label { color: var(--cmhub-text-secondary); font-size: var(--cmhub-font-size-xs); font-weight: var(--cmhub-font-weight-semibold); }
+.cmhub-account-form .t-form__help { color: var(--cmhub-text-tertiary); font-size: 0.6875rem; }
+.cmhub-account-form :is(.t-input, .t-select__wrap) { min-height: var(--cmhub-control-height); border-radius: var(--cmhub-control-radius); }
+
+@media (max-width: 48rem) {
+  .cmhub-account-toolbar-actions .t-button { width: 100%; }
+  .cmhub-account-form-modal .t-dialog__header,
+  .cmhub-account-secret-modal .t-dialog__header,
+  .cmhub-account-form-modal .t-dialog__body,
+  .cmhub-account-secret-modal .t-dialog__body,
+  .cmhub-account-form-modal .t-dialog__footer,
+  .cmhub-account-secret-modal .t-dialog__footer { padding-inline: var(--cmhub-space-4); }
+}

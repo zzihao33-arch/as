@@ -43,7 +43,7 @@ export function hashInboundPayload(value: unknown): string {
 function validateIdempotencyKey(value: string | undefined): string {
   const key = value?.trim();
   if (!key || !/^[a-zA-Z0-9_-]{8,128}$/.test(key)) {
-    throw new ApiError(400, 'IDEMPOTENCY_KEY_REQUIRED', '请求必须包含 8–128 位 Idempotency-Key。');
+    throw new ApiError(400, 'IDEMPOTENCY_KEY_REQUIRED', '请求必须包含 8–128 位 Idempotency-Key');
   }
   return key;
 }
@@ -66,14 +66,14 @@ function parseResponseBody(value: InboundMessageRow['response_body']): Record<st
 function replayFrom(row: InboundMessageRow | undefined, payloadHash: string): ShipmentIngestResult | undefined {
   if (!row) return undefined;
   if (row.payload_sha256 !== payloadHash) {
-    throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同的请求内容。');
+    throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '该 Idempotency-Key 已用于不同的请求内容');
   }
   if (row.processing_status !== 'COMPLETED') {
-    throw new ApiError(409, 'REQUEST_IN_PROGRESS', '相同请求正在处理中。');
+    throw new ApiError(409, 'REQUEST_IN_PROGRESS', '相同请求正在处理中');
   }
   const responseBody = parseResponseBody(row.response_body);
   if (!row.response_status || !responseBody) {
-    throw new ApiError(500, 'IDEMPOTENCY_RECORD_INVALID', '历史幂等记录不完整，请联系 CM-HUB。');
+    throw new ApiError(500, 'IDEMPOTENCY_RECORD_INVALID', '历史幂等记录不完整，请联系 CM-HUB');
   }
   return {
     status: row.response_status,
@@ -141,9 +141,9 @@ export function createShipmentIngestor(dependencies: { mysql: Pool; redis: Redis
       try {
         locked = await dependencies.redis.set(lockKey, lockToken, 'EX', lockSeconds, 'NX');
       } catch {
-        throw new ApiError(503, 'IDEMPOTENCY_UNAVAILABLE', '去重服务暂时不可用，请稍后重试。');
+        throw new ApiError(503, 'IDEMPOTENCY_UNAVAILABLE', '去重服务暂时不可用，请稍后重试');
       }
-      if (locked !== 'OK') throw new ApiError(409, 'REQUEST_IN_PROGRESS', '相同请求正在处理中。');
+      if (locked !== 'OK') throw new ApiError(409, 'REQUEST_IN_PROGRESS', '相同请求正在处理中');
 
       try {
         const replayAfterLock = replayFrom(

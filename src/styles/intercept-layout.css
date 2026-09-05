@@ -1,0 +1,252 @@
+/* Intercept manager: one viewport-owned drawer, one list-owned scroller.
+   This avoids the former nested page/table scroll contract, which clipped the
+   last rows on short screens and made the table drift from its section title. */
+
+.cmhub-intercept-drawer.tdesign-drawer {
+  max-width: 100vw;
+}
+
+.cmhub-intercept-drawer .t-drawer__content {
+  display: flex;
+  height: 100dvh !important;
+  max-height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cmhub-intercept-drawer .tdesign-drawer-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-page.is-embedded {
+  display: flex;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0 !important;
+  height: auto !important;
+  flex: 1 1 auto !important;
+  padding: var(--cmhub-space-4) var(--cmhub-space-5) !important;
+  overflow: hidden !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden !important;
+  border: 1px solid var(--cmhub-panel-border);
+  border-radius: var(--cmhub-panel-radius);
+  background: var(--cmhub-panel-bg);
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-status-surface {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--cmhub-line-subtle);
+  border-radius: 0;
+  background: transparent;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-status-panel {
+  padding: var(--cmhub-space-3) var(--cmhub-space-5) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: color-mix(in srgb, var(--cmhub-success-subtle) 45%, var(--cmhub-panel-bg)) !important;
+  box-shadow: none !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-workspace[data-can-manage='false'] {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-workspace .cmhub-intercept-entry {
+  position: static;
+  min-width: 0;
+  margin: 0;
+  padding: var(--cmhub-space-4) var(--cmhub-space-5) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--cmhub-line-subtle) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-workspace .cmhub-intercept-entry::after {
+  display: none;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-entry-header,
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-header {
+  align-items: center;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-entry-controls {
+  margin-top: var(--cmhub-space-3);
+  padding-top: 0 !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-entry-footer {
+  margin-top: var(--cmhub-space-3);
+  padding-top: 0;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-section {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: var(--cmhub-space-4) var(--cmhub-space-5) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-header,
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-tools {
+  flex: 0 0 auto;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-tools {
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.42fr);
+  gap: var(--cmhub-space-3);
+  margin: var(--cmhub-space-3) 0;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table-region {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: var(--cmhub-space-1);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table {
+  width: 100%;
+  min-width: 43.75rem;
+  margin: 0 !important;
+  overflow: visible;
+  border-radius: var(--cmhub-control-radius);
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:first-child,
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:first-child {
+  padding-left: var(--cmhub-space-5) !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:last-child,
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:last-child {
+  padding-right: var(--cmhub-space-5) !important;
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table-pagination {
+  padding-inline: var(--cmhub-space-5);
+}
+
+.cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-empty-state {
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: var(--cmhub-space-3);
+  overflow: auto;
+}
+
+@media (max-height: 45rem), (max-width: 40rem) {
+  /* On short or narrow screens, retain the useful empty-state sentence rather
+     than showing a cropped illustration below the list heading. */
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-empty-state {
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--cmhub-space-1);
+    padding: var(--cmhub-space-2);
+    border: 0;
+    background: transparent;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-empty-state .t-empty-image {
+    display: none;
+  }
+}
+
+@media (max-width: 40rem) {
+  .cmhub-intercept-drawer .cmhub-intercept-page.is-embedded {
+    padding: 0 !important;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console {
+    border-width: 1px 0;
+    border-radius: 0;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-status-panel,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-workspace .cmhub-intercept-entry,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-section {
+    padding-inline: var(--cmhub-space-4) !important;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-entry-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start !important;
+    gap: var(--cmhub-space-3);
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-entry-copy,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-mode-control {
+    width: 100%;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-list-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table {
+    min-width: 31rem;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:nth-child(3),
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:nth-child(3),
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:nth-child(4),
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:nth-child(4) {
+    display: none;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:first-child,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:first-child {
+    padding-left: var(--cmhub-space-4) !important;
+  }
+
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__header th:last-child,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table__cell:last-child,
+  .cmhub-intercept-drawer .cmhub-intercept-console .cmhub-intercept-table .t-table-pagination {
+    padding-right: var(--cmhub-space-4) !important;
+  }
+}

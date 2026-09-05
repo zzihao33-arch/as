@@ -68,24 +68,24 @@ const MAX_RANGE_DAYS = 90;
 function actor(session: WarehouseSession): string { return `user:${session.userId}`; }
 function uuid(value: unknown, field: string): string {
   const result = String(value ?? '').trim();
-  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID。`);
+  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID`);
   return result;
 }
 function text(value: unknown, field: string, maxLength: number, required = true): string | null {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return null;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const result = value.trim();
-  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   return result;
 }
 function finiteNumber(value: unknown, field: string, minimum: number, maximum: number, required = true): number | null {
   if ((value === undefined || value === null || value === '') && !required) return null;
   const result = Number(value);
   if (!Number.isFinite(result) || result < minimum || result > maximum) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 数值无效。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 数值无效`);
   }
   return result;
 }
@@ -93,14 +93,14 @@ function booleanValue(value: unknown): boolean { return value === true || value 
 function dateString(value: unknown, field: string): string {
   const result = text(value, field, 10)!;
   if (!DATE_PATTERN.test(result) || Number.isNaN(new Date(`${result}T12:00:00Z`).getTime())) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 YYYY-MM-DD。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 YYYY-MM-DD`);
   }
   return result;
 }
 function dateTime(value: unknown, field: string, required = true): Date | null {
   if ((value === undefined || value === null || value === '') && !required) return null;
   const result = new Date(String(value));
-  if (Number.isNaN(result.getTime())) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是有效时间。`);
+  if (Number.isNaN(result.getTime())) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是有效时间`);
   return result;
 }
 function sqlDate(value: Date | string): string {
@@ -161,7 +161,7 @@ function range(inputFrom: unknown, inputTo: unknown): { from: string; to: string
   const from = inputFrom ? dateString(inputFrom, 'dateFrom') : defaultFromDate.toISOString().slice(0, 10);
   const to = inputTo ? dateString(inputTo, 'dateTo') : defaultTo;
   const days = Math.round((new Date(`${to}T12:00:00Z`).getTime() - new Date(`${from}T12:00:00Z`).getTime()) / 86_400_000) + 1;
-  if (days < 1 || days > MAX_RANGE_DAYS) throw new ApiError(400, 'INVALID_ATTENDANCE_RANGE', '查询区间必须为 1 到 90 天。');
+  if (days < 1 || days > MAX_RANGE_DAYS) throw new ApiError(400, 'INVALID_ATTENDANCE_RANGE', '查询区间必须为 1 到 90 天');
   return { from, to };
 }
 
@@ -173,7 +173,7 @@ async function snapshot(mysql: Pool, session: WarehouseSession): Promise<Employe
      WHERE u.id = ? AND u.user_status = 'ACTIVE' LIMIT 1`,
     [session.warehouseId, session.userId],
   );
-  if (!rows[0]) throw new ApiError(403, 'ATTENDANCE_USER_UNAVAILABLE', '当前账号不能提交考勤。');
+  if (!rows[0]) throw new ApiError(403, 'ATTENDANCE_USER_UNAVAILABLE', '当前账号不能提交考勤');
   return rows[0];
 }
 
@@ -309,7 +309,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
   };
   return {
     async listLocations(session: WarehouseSession) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const [rows] = await mysql.execute<LocationRow[]>(
         `SELECT * FROM attendance_locations WHERE warehouse_id = ? ORDER BY location_status, created_at`, [session.warehouseId],
       );
@@ -317,7 +317,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async saveLocation(session: WarehouseSession, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const id = input.id ? uuid(input.id, 'id') : randomUUID();
       const name = text(input.name, 'name', 128)!;
       const address = text(input.address, 'address', 255, false);
@@ -340,7 +340,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async listShiftRules(session: WarehouseSession) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const [rows] = await mysql.execute<ShiftRuleRow[]>(
         `SELECT * FROM attendance_shift_rules WHERE warehouse_id = ? ORDER BY effective_from DESC, created_at DESC`, [session.warehouseId],
       );
@@ -348,23 +348,23 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async saveShiftRule(session: WarehouseSession, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const id = input.id ? uuid(input.id, 'id') : randomUUID();
       const name = text(input.name, 'name', 128)!;
       const weekdays = Array.isArray(input.weekdays) ? input.weekdays.map(Number) : [];
       if (weekdays.length === 0 || weekdays.some(day => !Number.isInteger(day) || day < 1 || day > 7)) {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'weekdays 必须包含 1 到 7 的星期值。');
+        throw new ApiError(400, 'VALIDATION_ERROR', 'weekdays 必须包含 1 到 7 的星期值');
       }
       const startTime = text(input.startTime, 'startTime', 5)!;
       const endTime = text(input.endTime, 'endTime', 5)!;
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime)) {
-        throw new ApiError(400, 'VALIDATION_ERROR', '班次时间必须为 HH:mm。');
+        throw new ApiError(400, 'VALIDATION_ERROR', '班次时间必须为 HH:mm');
       }
       const lateGrace = finiteNumber(input.lateGraceMinutes ?? 0, 'lateGraceMinutes', 0, 240)!;
       const earlyGrace = finiteNumber(input.earlyGraceMinutes ?? 0, 'earlyGraceMinutes', 0, 240)!;
       const effectiveFrom = dateString(input.effectiveFrom, 'effectiveFrom');
       const effectiveTo = input.effectiveTo ? dateString(input.effectiveTo, 'effectiveTo') : null;
-      if (effectiveTo && effectiveTo < effectiveFrom) throw new ApiError(400, 'VALIDATION_ERROR', '结束日期不能早于开始日期。');
+      if (effectiveTo && effectiveTo < effectiveFrom) throw new ApiError(400, 'VALIDATION_ERROR', '结束日期不能早于开始日期');
       const status = input.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE';
       await mysql.execute(
         `INSERT INTO attendance_shift_rules
@@ -384,7 +384,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async getPunchContext(session: WarehouseSession) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const employee = await snapshot(mysql, session);
       const today = dateInTimeZone(new Date());
       const [locations, shift, dailyRows] = await Promise.all([
@@ -404,14 +404,14 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async submitPunch(session: WarehouseSession, audit: RequestAudit, input: Record<string, unknown> & { content?: unknown; contentType?: unknown }) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const employee = await snapshot(mysql, session);
       const punchType = text(input.punchType, 'punchType', 3)! as PunchType;
-      if (punchType !== 'IN' && punchType !== 'OUT') throw new ApiError(400, 'VALIDATION_ERROR', 'punchType 仅支持 IN 或 OUT。');
+      if (punchType !== 'IN' && punchType !== 'OUT') throw new ApiError(400, 'VALIDATION_ERROR', 'punchType 仅支持 IN 或 OUT');
       const channel = text(input.channel, 'channel', 11)! as AttendanceChannel;
-      if (channel !== 'MOBILE' && channel !== 'WORKSTATION') throw new ApiError(400, 'VALIDATION_ERROR', 'channel 无效。');
+      if (channel !== 'MOBILE' && channel !== 'WORKSTATION') throw new ApiError(400, 'VALIDATION_ERROR', 'channel 无效');
       const gestureType = text(input.gestureType, 'gestureType', 10)! as GestureType;
-      if (gestureType !== 'BLINK' && gestureType !== 'MOUTH_OPEN') throw new ApiError(400, 'VALIDATION_ERROR', 'gestureType 无效。');
+      if (gestureType !== 'BLINK' && gestureType !== 'MOUTH_OPEN') throw new ApiError(400, 'VALIDATION_ERROR', 'gestureType 无效');
       const gesturePassed = booleanValue(input.gesturePassed);
       const gestureScore = finiteNumber(input.gestureScore, 'gestureScore', 0, 100, false);
       const clientCapturedAt = dateTime(input.clientCapturedAt, 'clientCapturedAt', false);
@@ -425,7 +425,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
         String(input.sha256 ?? '') || undefined,
         { width: 640, height: 480 },
       );
-      if (photo.content.length > MAX_PHOTO_BYTES) throw new ApiError(413, 'ATTENDANCE_PHOTO_TOO_LARGE', '打卡照片不能超过 1MB。');
+      if (photo.content.length > MAX_PHOTO_BYTES) throw new ApiError(413, 'ATTENDANCE_PHOTO_TOO_LARGE', '打卡照片不能超过 1MB');
 
       const now = new Date();
       const attemptId = randomUUID();
@@ -441,18 +441,18 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
         let distance: number | null = null;
 
         if (!gesturePassed || gestureScore === null || gestureScore < 0.005) {
-          result = 'EXCEPTION_REQUIRED'; reasonCode = 'GESTURE_NOT_VERIFIED'; reasonText = '动作验证未通过，请重试或提交例外申请。';
+          result = 'EXCEPTION_REQUIRED'; reasonCode = 'GESTURE_NOT_VERIFIED'; reasonText = '动作验证未通过，请重试或提交例外申请';
         }
         if (channel === 'WORKSTATION') {
           if (!workstationId) {
-            result = 'REJECTED'; reasonCode = 'WORKSTATION_REQUIRED'; reasonText = '固定电脑打卡必须登记当前工作站。';
+            result = 'REJECTED'; reasonCode = 'WORKSTATION_REQUIRED'; reasonText = '固定电脑打卡必须登记当前工作站';
           } else {
             const [workstations] = await connection.execute<RowDataPacket[]>(
               `SELECT id FROM workstations WHERE id = ? AND warehouse_id = ? AND workstation_status = 'ACTIVE' LIMIT 1`,
               [workstationId, session.warehouseId],
             );
             if (!workstations[0]) {
-              result = 'REJECTED'; reasonCode = 'WORKSTATION_DISABLED'; reasonText = '当前工作站未登记或已停用。';
+              result = 'REJECTED'; reasonCode = 'WORKSTATION_DISABLED'; reasonText = '当前工作站未登记或已停用';
             }
           }
         }
@@ -464,11 +464,11 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
         }
         if (channel === 'MOBILE') {
           if (latitude === null || longitude === null || accuracy === null) {
-            result = 'EXCEPTION_REQUIRED'; reasonCode = 'LOCATION_REQUIRED'; reasonText = '手机打卡必须获取浏览器位置。';
+            result = 'EXCEPTION_REQUIRED'; reasonCode = 'LOCATION_REQUIRED'; reasonText = '手机打卡必须获取浏览器位置';
           } else if (accuracy > 50) {
-            result = 'EXCEPTION_REQUIRED'; reasonCode = 'LOCATION_LOW_ACCURACY'; reasonText = '定位精度超过50米，请靠近窗口后重试。';
+            result = 'EXCEPTION_REQUIRED'; reasonCode = 'LOCATION_LOW_ACCURACY'; reasonText = '定位精度超过50米，请靠近窗口后重试';
           } else if (!matchedLocationId || distance === null || !locations.some(location => location.id === matchedLocationId && distance! <= location.radius_meters)) {
-            result = 'EXCEPTION_REQUIRED'; reasonCode = 'OUTSIDE_GEOFENCE'; reasonText = '当前位置不在已启用的仓库打卡范围内。';
+            result = 'EXCEPTION_REQUIRED'; reasonCode = 'OUTSIDE_GEOFENCE'; reasonText = '当前位置不在已启用的仓库打卡范围内';
           }
         }
 
@@ -484,7 +484,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
             );
             const openShift = openShifts[0];
             if (openShift?.clock_in_at && openShift.clock_in_at.getTime() >= now.getTime() - 18 * 60 * 60_000) {
-              result = 'REJECTED'; reasonCode = 'OPEN_SHIFT_EXISTS'; reasonText = '已有未结束班次，请先完成下班打卡。';
+              result = 'REJECTED'; reasonCode = 'OPEN_SHIFT_EXISTS'; reasonText = '已有未结束班次，请先完成下班打卡';
             } else if (openShift) {
               await connection.execute(
                 `UPDATE attendance_daily_results
@@ -497,7 +497,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
               [session.warehouseId, actor(session), workDate],
             );
             if (result === 'ACCEPTED' && existing[0]) {
-              result = 'REJECTED'; reasonCode = 'CLOCK_IN_ALREADY_EXISTS'; reasonText = '今天已经存在上班打卡。';
+              result = 'REJECTED'; reasonCode = 'CLOCK_IN_ALREADY_EXISTS'; reasonText = '今天已经存在上班打卡';
             }
           } else {
             const [open] = await connection.execute<DailyRow[]>(
@@ -509,7 +509,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
             );
             daily = open[0] ?? null;
             if (!daily) {
-              result = 'EXCEPTION_REQUIRED'; reasonCode = 'OPEN_SHIFT_NOT_FOUND'; reasonText = '未找到18小时内的上班打卡，请提交例外申请。';
+              result = 'EXCEPTION_REQUIRED'; reasonCode = 'OPEN_SHIFT_NOT_FOUND'; reasonText = '未找到18小时内的上班打卡，请提交例外申请';
             } else {
               workDate = sqlDate(daily.work_date);
             }
@@ -596,7 +596,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async listDailyResults(session: WarehouseSession, filters: { dateFrom?: unknown; dateTo?: unknown; userId?: unknown }) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const dates = range(filters.dateFrom, filters.dateTo);
       await materializeDailyResults(session.warehouseId, dates);
       const canViewTeam = session.platformRole === 'SYSTEM_ADMIN' || session.permissions.includes('attendance.team_view');
@@ -615,7 +615,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async listAppeals(session: WarehouseSession, status?: unknown) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const canReview = session.platformRole === 'SYSTEM_ADMIN' || session.permissions.includes('attendance.review');
       const normalizedStatus = status ? text(status, 'status', 16)! : null;
       const params: Array<string | number | null> = [session.warehouseId];
@@ -629,22 +629,22 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async createAppeal(session: WarehouseSession, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const employee = await snapshot(mysql, session);
       const workDate = dateString(input.workDate, 'workDate');
       const type = text(input.type, 'type', 32)!;
-      if (!['DEVICE_FAILURE', 'TEMPORARY_LEAVE', 'OTHER'].includes(type)) throw new ApiError(400, 'VALIDATION_ERROR', '申诉类型无效。');
+      if (!['DEVICE_FAILURE', 'TEMPORARY_LEAVE', 'OTHER'].includes(type)) throw new ApiError(400, 'VALIDATION_ERROR', '申诉类型无效');
       const description = text(input.description, 'description', 200)!;
       const requestedIn = dateTime(input.requestedClockInAt, 'requestedClockInAt', false);
       const requestedOut = dateTime(input.requestedClockOutAt, 'requestedClockOutAt', false);
-      if (!requestedIn && !requestedOut) throw new ApiError(400, 'VALIDATION_ERROR', '至少填写一个需要修正的准确时间。');
+      if (!requestedIn && !requestedOut) throw new ApiError(400, 'VALIDATION_ERROR', '至少填写一个需要修正的准确时间');
       const [dailyRows] = await mysql.execute<DailyRow[]>(
         `SELECT * FROM attendance_daily_results WHERE warehouse_id = ? AND employee_reference = ? AND work_date = ? LIMIT 1`,
         [session.warehouseId, actor(session), workDate],
       );
       const referenceTime = dailyRows[0]?.updated_at ?? new Date(`${workDate}T23:59:59-04:00`);
       const expiresAt = new Date(referenceTime.getTime() + 72 * 60 * 60_000);
-      if (expiresAt.getTime() < Date.now()) throw new ApiError(409, 'APPEAL_WINDOW_EXPIRED', '该考勤记录已超过72小时申诉期限。');
+      if (expiresAt.getTime() < Date.now()) throw new ApiError(409, 'APPEAL_WINDOW_EXPIRED', '该考勤记录已超过72小时申诉期限');
       const id = randomUUID();
       await mysql.execute(
         `INSERT INTO attendance_appeals
@@ -659,10 +659,10 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async reviewAppeal(session: WarehouseSession, appealIdValue: unknown, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const appealId = uuid(appealIdValue, 'appealId');
       const decision = text(input.decision, 'decision', 16)!;
-      if (decision !== 'APPROVED' && decision !== 'REJECTED') throw new ApiError(400, 'VALIDATION_ERROR', 'decision 无效。');
+      if (decision !== 'APPROVED' && decision !== 'REJECTED') throw new ApiError(400, 'VALIDATION_ERROR', 'decision 无效');
       const reviewNote = text(input.reviewNote, 'reviewNote', 500, decision === 'REJECTED');
       const connection = await mysql.getConnection();
       try {
@@ -671,9 +671,9 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
           `SELECT * FROM attendance_appeals WHERE id = ? AND warehouse_id = ? LIMIT 1 FOR UPDATE`, [appealId, session.warehouseId],
         );
         const appeal = appeals[0];
-        if (!appeal) throw new ApiError(404, 'APPEAL_NOT_FOUND', '未找到申诉。');
-        if (appeal.appeal_status !== 'PENDING') throw new ApiError(409, 'APPEAL_ALREADY_REVIEWED', '该申诉已经处理。');
-        if (appeal.user_id === session.userId) throw new ApiError(409, 'SELF_REVIEW_NOT_ALLOWED', '主管不能审批自己的申诉。');
+        if (!appeal) throw new ApiError(404, 'APPEAL_NOT_FOUND', '未找到申诉');
+        if (appeal.appeal_status !== 'PENDING') throw new ApiError(409, 'APPEAL_ALREADY_REVIEWED', '该申诉已经处理');
+        if (appeal.user_id === session.userId) throw new ApiError(409, 'SELF_REVIEW_NOT_ALLOWED', '主管不能审批自己的申诉');
         if (decision === 'APPROVED') {
           const [dailyRows] = await connection.execute<DailyRow[]>(
             `SELECT * FROM attendance_daily_results WHERE warehouse_id = ? AND employee_reference = ? AND work_date = ? LIMIT 1 FOR UPDATE`,
@@ -682,7 +682,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
           const daily = dailyRows[0] ?? null;
           const clockIn = appeal.requested_clock_in_at ?? daily?.clock_in_at ?? null;
           const clockOut = appeal.requested_clock_out_at ?? daily?.clock_out_at ?? null;
-          if (!clockIn || !clockOut) throw new ApiError(400, 'CORRECTION_TIMES_REQUIRED', '批准申诉必须提供完整的上班和下班时间。');
+          if (!clockIn || !clockOut) throw new ApiError(400, 'CORRECTION_TIMES_REQUIRED', '批准申诉必须提供完整的上班和下班时间');
           const calculation = calculateDailyAttendance({
             workDate: sqlDate(appeal.work_date), clockInAt: clockIn, clockOutAt: clockOut,
             scheduledStartMinutes: timeMinutes(daily?.scheduled_start_snapshot ?? null),
@@ -690,7 +690,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
             lateGraceMinutes: daily?.late_grace_minutes_snapshot ?? 0,
             earlyGraceMinutes: daily?.early_grace_minutes_snapshot ?? 0,
           });
-          if (calculation.status !== 'COMPLETE') throw new ApiError(400, 'INVALID_CORRECTION_SHIFT', '修正后的班次必须大于0且不超过18小时。');
+          if (calculation.status !== 'COMPLETE') throw new ApiError(400, 'INVALID_CORRECTION_SHIFT', '修正后的班次必须大于0且不超过18小时');
           await connection.execute(
             `UPDATE attendance_punches SET punch_status = 'SUPERSEDED'
              WHERE warehouse_id = ? AND employee_reference = ? AND work_date = ? AND punch_status = 'ACTIVE'`,
@@ -749,7 +749,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async savePayProfile(session: WarehouseSession, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const userId = uuid(input.userId, 'userId');
       const hourlyRate = finiteNumber(input.hourlyRate, 'hourlyRate', 0.01, 100_000)!;
       const effectiveFrom = dateString(input.effectiveFrom, 'effectiveFrom');
@@ -759,7 +759,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
          WHERE u.id = ? LIMIT 1`, [session.warehouseId, userId],
       );
       const employee = employees[0];
-      if (!employee) throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', '未找到仓库员工。');
+      if (!employee) throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', '未找到仓库员工');
       const reference = `user:${userId}`;
       await mysql.execute(
         `INSERT INTO attendance_pay_profiles
@@ -775,7 +775,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async savePayrollAdjustment(session: WarehouseSession, input: Record<string, unknown>) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const employeeReference = text(input.employeeReference, 'employeeReference', 64)!;
       const period = range(input.periodStart, input.periodEnd);
       const bonus = finiteNumber(input.bonus ?? 0, 'bonus', 0, 10_000_000)!;
@@ -795,7 +795,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
     },
 
     async calculatePayroll(session: WarehouseSession, filters: { dateFrom?: unknown; dateTo?: unknown }, persist = false) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const dates = range(filters.dateFrom, filters.dateTo);
       await materializeDailyResults(session.warehouseId, dates);
       const [dailyRows] = await mysql.execute<DailyRow[]>(
@@ -837,7 +837,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
         overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY };
       if (persist) {
         const blocked = rows.find(row => row.totalPay === null);
-        if (blocked) throw new ApiError(409, 'PAYROLL_CALCULATION_BLOCKED', `${blocked.employeeName} 缺少有效基础时薪。`);
+        if (blocked) throw new ApiError(409, 'PAYROLL_CALCULATION_BLOCKED', `${blocked.employeeName} 缺少有效基础时薪`);
         runId = randomUUID();
         const connection = await mysql.getConnection();
         try {
@@ -905,9 +905,9 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
          FROM attendance_punch_attempts WHERE id = ? AND warehouse_id = ? LIMIT 1`, [attemptId, session.warehouseId],
       );
       const metadata = rows[0];
-      if (!metadata || !metadata.photo_storage_key || !metadata.photo_content_type) throw new ApiError(404, 'ATTENDANCE_PHOTO_NOT_FOUND', '打卡照片不存在或已到期删除。');
+      if (!metadata || !metadata.photo_storage_key || !metadata.photo_content_type) throw new ApiError(404, 'ATTENDANCE_PHOTO_NOT_FOUND', '打卡照片不存在或已到期删除');
       const canViewTeam = session.platformRole === 'SYSTEM_ADMIN' || session.permissions.includes('attendance.team_view');
-      if (!canViewTeam && metadata.user_id !== session.userId) throw new ApiError(403, 'PERMISSION_DENIED', '无权查看该打卡照片。');
+      if (!canViewTeam && metadata.user_id !== session.userId) throw new ApiError(403, 'PERMISSION_DENIED', '无权查看该打卡照片');
       return { metadata, object: await storage.open(metadata.photo_storage_key) };
     },
   };

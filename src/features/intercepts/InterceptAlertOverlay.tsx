@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Button, Tag } from '@arco-design/web-react';
+import { Button } from 'tdesign-react';
 import { ShieldAlert, X } from 'lucide-react';
 import type { InterceptRule } from './useInterceptRules';
 
@@ -25,28 +25,37 @@ export default function InterceptAlertOverlay({ rule, scannedValue, onConfirm }:
   }, []);
 
   return (
-    <section className="cmhub-intercept-alert" role="alertdialog" aria-modal="true" aria-labelledby="intercept-alert-title" aria-describedby="intercept-alert-description">
+    <section className="cmhub-intercept-alert" role="alertdialog" aria-modal="true" aria-labelledby="intercept-alert-title">
       <div className="cmhub-intercept-alert-panel">
         <Button
           ref={closeButtonRef}
           className="cmhub-intercept-alert-close"
-          type="text"
+          variant="text"
           aria-label="确认已处理并返回扫码"
           icon={<X size={24} />}
           onClick={onConfirm}
         />
-        <div className="cmhub-intercept-alert-icon" aria-hidden="true"><ShieldAlert size={54} strokeWidth={2.2} /></div>
-        <Tag className="cmhub-intercept-alert-tag" color="red">拦截</Tag>
-        <h1 id="intercept-alert-title">快件已阻断</h1>
-        <p id="intercept-alert-description">命中全局拦截名单，请将该快件移入指定区域后再继续扫码。</p>
-        <div className="cmhub-intercept-alert-waybill" aria-label={`拦截单号：${scannedValue}`}>{scannedValue}</div>
+        <header className="cmhub-intercept-alert-header">
+          <span className="cmhub-intercept-alert-icon" aria-hidden="true"><ShieldAlert size={28} strokeWidth={2.35} /></span>
+          <h1 id="intercept-alert-title">快件已阻断</h1>
+        </header>
+        <section className="cmhub-intercept-alert-waybill" aria-label={`拦截单号：${scannedValue}`}>
+          <span>扫描单号</span>
+          <strong>{scannedValue}</strong>
+        </section>
         <dl className="cmhub-intercept-alert-details">
           <div><dt>拦截原因</dt><dd>{rule.reason || '命中拦截名单'}</dd></div>
-          <div><dt>添加来源</dt><dd>{rule.source === 'scan' ? '扫码录入' : '手动录入'}</dd></div>
+          <div><dt>录入方式</dt><dd>{rule.source === 'scan' ? '扫码录入' : '手动录入'}</dd></div>
         </dl>
-        <Button className="cmhub-intercept-alert-confirm" type="primary" status="danger" size="large" onClick={onConfirm}>
-          已移入拦截区，恢复扫码
-        </Button>
+        <footer className="cmhub-intercept-alert-actions">
+          <div>
+            <strong>完成现场处置后恢复扫码</strong>
+            <span>恢复前请确认快件已离开当前作业区</span>
+          </div>
+          <Button className="cmhub-intercept-alert-confirm" theme="danger" size="large" onClick={onConfirm}>
+            已移入拦截区，恢复扫码
+          </Button>
+        </footer>
       </div>
     </section>
   );

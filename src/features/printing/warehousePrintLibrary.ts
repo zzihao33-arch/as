@@ -40,11 +40,11 @@ async function downloadAndValidateLabel(warehouseId: string, shipment: Warehouse
   if (existing?.sha256 === asset.sha256 && existing.blob.size === asset.byteSize) return;
   const blob = await downloadWarehouseLabel(asset.downloadPath);
   if (blob.size !== asset.byteSize || await blob.slice(0, 5).text() !== '%PDF-') {
-    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的文件格式或大小校验失败。`);
+    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的文件格式或大小校验失败`);
   }
   const actualHash = await sha256(blob);
   if (actualHash !== asset.sha256.toLowerCase()) {
-    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的 SHA-256 校验失败。`);
+    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的 SHA-256 校验失败`);
   }
   await writeLocalFirstValue('cloudLabels', key, {
     warehouseId, assetId: asset.id, sha256: actualHash, blob, cachedAt: Date.now(),
@@ -112,7 +112,7 @@ async function synchronizeWarehouse(warehouseId: string, onPage: (targets: Cloud
 
 export async function readCloudLabelFile(warehouseId: string, target: CloudPrintTarget): Promise<File> {
   const cached = await readLocalFirstValue<CachedCloudLabel>('cloudLabels', labelKey(warehouseId, target.labelAssetId));
-  if (!cached || cached.sha256 !== target.labelSha256) throw new Error('云端面单尚未同步到本机，请等待同步完成后重试。');
+  if (!cached || cached.sha256 !== target.labelSha256) throw new Error('云端面单尚未同步到本机，请等待同步完成后重试');
   const name = `${target.courierTrackingNo || target.firstLegTrackingNo}.pdf`;
   return new File([cached.blob], name, { type: 'application/pdf', lastModified: cached.cachedAt });
 }
@@ -134,10 +134,10 @@ export function useWarehousePrintLibrary() {
         const count = await synchronizeWarehouse(warehouseId, setTargets);
         setTargets(await loadTargets(warehouseId));
         setStatus('ready');
-        setMessage(count > 0 ? `云端同步完成，本次处理 ${count} 条更新。` : '云端数据已是最新。');
+        setMessage(count > 0 ? `云端同步完成，本次处理 ${count} 条更新` : '云端数据已是最新');
       } catch (cause) {
         setStatus('error');
-        setMessage(cause instanceof Error ? cause.message : '云端面单同步失败。');
+        setMessage(cause instanceof Error ? cause.message : '云端面单同步失败');
       } finally {
         runningRef.current = null;
       }

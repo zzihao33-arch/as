@@ -1,20 +1,27 @@
-import { useCallback, useState, useEffect, useMemo, useRef, type DragEvent } from 'react';
+import { useCallback, useState, useEffect, useMemo, useRef, type DragEvent, type ReactNode } from 'react';
 import qz from 'qz-tray';
+import * as XLSX from 'xlsx';
 import {
-  Alert as ArcoAlert,
-  Button as ArcoButton,
-  Card as ArcoCard,
+  Alert,
+  Button,
+  Card,
+  Col,
   Drawer,
-  Input as ArcoInput,
-  Modal as ArcoModal,
+  Input,
+  Dialog,
+  Pagination,
+  Popup,
+  Select,
   Slider,
-  Space as ArcoSpace,
+  Space,
   Switch,
+  Tag,
   Tabs,
   Tooltip,
-  Typography
-} from '@arco-design/web-react';
-import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, ArrowRight, History, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert, Trash2 } from 'lucide-react';
+  Typography,
+  Row
+} from 'tdesign-react';
+import { Upload, FileSpreadsheet, FileText, Scan, Printer, CheckCircle2, AlertCircle, AlertTriangle, ArrowRight, X, Settings, RefreshCw, Save, ChevronDown, Check, Volume2, VolumeX, PlayCircle, PlugZap, ShieldAlert, Trash2, Download, Search } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useLocation } from 'react-router-dom';
@@ -25,7 +32,7 @@ import InterceptAlertOverlay from '../intercepts/InterceptAlertOverlay';
 import InterceptListPage from '../intercepts/InterceptListPage';
 import { normalizeInterceptWaybill, type InterceptRule, useInterceptRules } from '../intercepts/useInterceptRules';
 import PrintLogTable from './PrintLogTable';
-import { usePrintLogs, MAX_PRINT_LOG_ENTRIES } from './hooks/usePrintLogs';
+import { usePrintLogs } from './hooks/usePrintLogs';
 import { useScanFeedback } from './hooks/useScanFeedback';
 import { useSessionUploadCache, type RestoredUploadSession } from './hooks/useSessionUploadCache';
 import {
@@ -37,7 +44,7 @@ import {
   type PdfSearchIndex
 } from './printMatching';
 import { paginatePrintLogs } from './printLogPagination';
-import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome, type ScanFeedbackState } from './printingTypes';
+import { PRINT_LOG_TABS, type PrintLog, type PrintLogTab, type PrintLogType, type PrintOutcome, type ScanFeedbackState } from './printingTypes';
 import { readCloudLabelFile, useWarehousePrintLibrary, type CloudPrintTarget } from './warehousePrintLibrary';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
@@ -49,11 +56,13 @@ import {
   createSharedWorkBatch,
   deleteSharedWorkBatch,
   downloadWarehouseLabel,
+  listMissingSharedWorkBatchItems,
   listSharedWorkBatches,
   publishSharedWorkBatch,
   uploadSharedWorkBatchLabel,
   upsertSharedWorkBatchItems,
   type SharedWorkBatch,
+  type SharedWorkBatchMissingItem,
   WAREHOUSE_MOCK_API_ENABLED,
   WarehouseApiError
 } from '../session/warehouseApi';
@@ -98,7 +107,13 @@ interface FileInfo {
   message?: string;
 }
 
+interface SharedLabelUploadProgress {
+  uploaded: number;
+  total: number;
+}
+
 type ImportDropTarget = 'excel' | 'pdf';
+type ImportRemovalTarget = 'excel' | 'pdf';
 
 interface DroppedFileSystemEntry {
   isFile: boolean;
@@ -119,6 +134,42 @@ interface ImportPrecheck {
   matchedCount: number;
   missingWaybills: string[];
   isDeferred?: boolean;
+}
+
+type MissingWaybillExportFormat = 'xlsx' | 'csv';
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportMissingWaybills(
+  rows: SharedWorkBatchMissingItem[],
+  batchName: string,
+  format: MissingWaybillExportFormat,
+) {
+  const exportedAt = new Date().toLocaleString('zh-CN', { hour12: false });
+  const values = rows.map(row => ({
+    '头程单号': row.firstLegTrackingNo,
+    '末端单号': row.courierTrackingNo ?? '',
+    '缺失原因': row.reason,
+    '批次名称': batchName,
+    '导出时间': exportedAt,
+  }));
+  const filenamePrefix = `缺失面单_${batchName.replace(/[\\/:*?"<>|]/g, '_')}_${new Date().toISOString().slice(0, 10)}`;
+  if (format === 'csv') {
+    const csv = XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(values), { FS: ',', RS: '\r\n' });
+    downloadBlob(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }), `${filenamePrefix}.csv`);
+    return;
+  }
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(values), '缺失面单');
+  const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer;
+  downloadBlob(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${filenamePrefix}.xlsx`);
 }
 
 const isPdfFile = (file: File) => file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -187,25 +238,6 @@ const getDroppedFiles = async (dataTransfer: DataTransfer) => {
   return entryFiles.length > 0 ? entryFiles : Array.from(dataTransfer.files);
 };
 
-type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
-
-const createPaginationItems = (currentPage: number, totalPages: number): PaginationItem[] => {
-  if (totalPages <= 7) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages: PaginationItem[] = [1];
-  const windowStart = Math.max(2, currentPage - 2);
-  const windowEnd = Math.min(totalPages - 1, currentPage + 2);
-
-  if (windowStart > 2) pages.push('ellipsis-left');
-  for (let page = windowStart; page <= windowEnd; page += 1) pages.push(page);
-  if (windowEnd < totalPages - 1) pages.push('ellipsis-right');
-  pages.push(totalPages);
-
-  return pages;
-};
-
 const normalizePrinterName = (name: unknown) => String(name || '').trim();
 
 const isVirtualPrinterName = (name: string) => {
@@ -237,12 +269,13 @@ interface ActiveAudio {
 interface ScanCommandInputProps {
   feedback: ScanFeedbackState;
   isPreparing: boolean;
+  readiness: ReactNode;
   onCandidate: (value: string) => boolean;
   onSubmit: (value: string) => void;
   onWarmAudio?: () => void;
 }
 
-function ScanCommandInput({ feedback, isPreparing, onCandidate, onSubmit, onWarmAudio }: ScanCommandInputProps) {
+function ScanCommandInput({ feedback, isPreparing, readiness, onCandidate, onSubmit, onWarmAudio }: ScanCommandInputProps) {
   const [value, setValue] = useState('');
 
   const updateValue = (nextValue: string) => {
@@ -260,40 +293,31 @@ function ScanCommandInput({ feedback, isPreparing, onCandidate, onSubmit, onWarm
     onSubmit(scannedValue);
   };
 
-  return <>
+  return (
     <div className="cmhub-scan-stage">
       <div className="cmhub-scan-field">
         <div className="cmhub-scan-field-label">
-          <label id="cmhub-scan-input-label" htmlFor="cmhub-scan-input">扫描或输入单号</label>
+          <div>
+            <span className="cmhub-scan-kicker">扫码工作台</span>
+          </div>
+          {readiness}
         </div>
-        <ArcoInput
+        <Input
           value={value}
           onChange={updateValue}
           onFocus={onWarmAudio}
-          onPressEnter={submit}
-          id="cmhub-scan-input"
+          onEnter={submit}
           placeholder={isPreparing ? '正在准备本机数据…' : '等待扫码或输入单号…'}
           size="large"
           disabled={isPreparing}
           className={cn('cmhub-scan-input', feedback === 'error' && 'is-error')}
-          aria-labelledby="cmhub-scan-input-label"
-          prefix={<Scan size={20} aria-hidden="true" />}
+          aria-label="扫描或输入单号"
+          prefixIcon={<Scan size={20} aria-hidden="true" />}
           suffix={<kbd className="cmhub-scan-enter-key">Enter</kbd>}
         />
       </div>
-      <div className="cmhub-scan-field-meta">
-        <span>扫码自动提交</span>
-        <span>面单自动匹配</span>
-        <span>拦截即时校验</span>
-      </div>
     </div>
-    <div className="cmhub-scan-entry-actions" role="group" aria-label="扫码打印操作">
-      <ArcoButton type="primary" disabled={isPreparing || !value.trim()} onClick={submit}>
-        <Printer size={16} aria-hidden="true" />
-        <span>打印</span>
-      </ArcoButton>
-    </div>
-  </>;
+  );
 }
 
 export default function App() {
@@ -314,7 +338,9 @@ export default function App() {
     restore: restoreUploadSession,
     collectPdfFilesFromDirectory,
     saveExcelMapping,
-    savePdfFiles
+    savePdfFiles,
+    clearExcelMapping,
+    clearPdfFiles
   } = useSessionUploadCache();
   const {
     findRule: findInterceptRule,
@@ -324,11 +350,27 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<PrintLogTab>('print');
   const motionScopeRef = useRef<HTMLDivElement>(null);
   const [logPage, setLogPage] = useState(1);
-  const logQuery = useMemo(
-    () => paginatePrintLogs(logs, activeTab, logPage, LOGS_PER_PAGE),
-    [activeTab, logPage, logs]
+  const [logSearch, setLogSearch] = useState('');
+  const [isScanToolsOpen, setIsScanToolsOpen] = useState(false);
+  const [isLogClearConfirmOpen, setIsLogClearConfirmOpen] = useState(false);
+  const activeLogEntries = useMemo(
+    () => logs.filter(log => log.type === activeTab),
+    [activeTab, logs]
   );
-  const latestPrintLog = useMemo(() => logs.find(log => log.type === 'print') ?? null, [logs]);
+  const filteredLogEntries = useMemo(() => {
+    const query = logSearch.trim().toLocaleLowerCase();
+    return activeLogEntries.filter(log => {
+      const matchesQuery = !query || [log.firstLeg, log.exchange, log.message]
+        .some(value => value.toLocaleLowerCase().includes(query));
+      return matchesQuery;
+    });
+  }, [activeLogEntries, logSearch]);
+  const logQuery = useMemo(
+    () => paginatePrintLogs(filteredLogEntries, activeTab, logPage, LOGS_PER_PAGE),
+    [activeTab, filteredLogEntries, logPage]
+  );
+  const [transientScanResult, setTransientScanResult] = useState<PrintLog | null>(null);
+  const transientScanResultTimerRef = useRef<number | null>(null);
   const [stats, setStats] = useState({ excelCount: 0, pdfCount: 0, printedCount: 0 });
   const [isDataImportOpen, setIsDataImportOpen] = useState(false);
   const [isQzGuideOpen, setIsQzGuideOpen] = useState(false);
@@ -337,16 +379,24 @@ export default function App() {
   const [pdfFolder, setPdfFolder] = useState<FileInfo | null>(null);
   const [excelSourceCount, setExcelSourceCount] = useState(0);
   const [pdfSourceCount, setPdfSourceCount] = useState(0);
+  const [importRemovalTarget, setImportRemovalTarget] = useState<ImportRemovalTarget | null>(null);
   const [sharedBatchId, setSharedBatchId] = useState('');
   const [sharedBatchStatus, setSharedBatchStatus] = useState<'idle' | 'syncing' | 'draft' | 'active' | 'error'>('idle');
   const [sharedBatchMessage, setSharedBatchMessage] = useState('');
+  const [sharedLabelUpload, setSharedLabelUpload] = useState<SharedLabelUploadProgress | null>(null);
   const [activeSharedBatches, setActiveSharedBatches] = useState<SharedWorkBatch[]>([]);
+  const [isAdditionalSharedBatchesExpanded, setIsAdditionalSharedBatchesExpanded] = useState(false);
   const [closingSharedBatchId, setClosingSharedBatchId] = useState('');
   const [sharedBatchPendingDelete, setSharedBatchPendingDelete] = useState<SharedWorkBatch | null>(null);
   const [deletingSharedBatchId, setDeletingSharedBatchId] = useState('');
+  const [supplementTargetBatchId, setSupplementTargetBatchId] = useState('');
+  const [missingItemsBatch, setMissingItemsBatch] = useState<SharedWorkBatch | null>(null);
+  const [missingItems, setMissingItems] = useState<SharedWorkBatchMissingItem[]>([]);
+  const [missingItemsLoading, setMissingItemsLoading] = useState(false);
   const [emergencyOfflineEnabled, setEmergencyOfflineEnabled] = useState(false);
   const sharedBatchIdRef = useRef('');
   const sharedBatchPromiseRef = useRef<Promise<string> | null>(null);
+  const sharedLabelUploadPromiseRef = useRef<Promise<boolean> | null>(null);
   const sharedUploadedItemsRef = useRef(new Set<string>());
   const sharedUploadedLabelsRef = useRef(new Set<string>());
   const [activeImportDropTarget, setActiveImportDropTarget] = useState<ImportDropTarget | null>(null);
@@ -404,10 +454,7 @@ export default function App() {
   const pdfSourceCountRef = useRef(0);
   const uploadSessionRestorePromiseRef = useRef<Promise<RestoredUploadSession | null> | null>(null);
   const uploadSessionReadyRef = useRef(false);
-  const logTabListRef = useRef<HTMLDivElement>(null);
-  const logTabPillRef = useRef<HTMLSpanElement>(null);
   const logSectionRef = useRef<HTMLElement>(null);
-  const logTabMotionInitializedRef = useRef(false);
   const interceptStorageNoticeLoggedRef = useRef(false);
   const printerOptions = [
     { value: '', label: '自动选择可直打打印机', hint: '自动通过 QZ Tray 匹配真实打印机' },
@@ -416,10 +463,6 @@ export default function App() {
   const selectedPrinterLabel = printerOptions.find(option => option.value === selectedPrinter)?.label || selectedPrinter || '自动选择可直打打印机';
   const totalLogPages = Math.max(1, Math.ceil(logQuery.total / LOGS_PER_PAGE));
   const currentLogPage = Math.min(logPage, totalLogPages);
-  const paginationItems = useMemo(
-    () => createPaginationItems(currentLogPage, totalLogPages),
-    [currentLogPage, totalLogPages]
-  );
   const importPrecheck = useMemo<ImportPrecheck | null>(() => {
     const mappingEntries = Object.entries(mapping);
     const pdfSearchIndex = createPdfSearchIndex(pdfFiles);
@@ -438,6 +481,14 @@ export default function App() {
       missingWaybills
     };
   }, [mapping, pdfFiles]);
+  const precheckMissingItems = useMemo<SharedWorkBatchMissingItem[]>(() => (
+    importPrecheck?.missingWaybills.map(firstLegTrackingNo => ({
+      firstLegTrackingNo,
+      courierTrackingNo: mapping[firstLegTrackingNo] ?? null,
+      reason: '未匹配面单',
+      updatedAt: new Date().toISOString(),
+    })) ?? []
+  ), [importPrecheck, mapping]);
 
   const canCreateSharedBatch = warehouseSession.hasPermission('batches.create');
   const canPublishSharedBatch = warehouseSession.hasPermission('batches.publish');
@@ -445,6 +496,21 @@ export default function App() {
   const canDeleteSharedBatch = warehouseSession.hasPermission('batches.delete');
   const canEnableEmergencyOffline = warehouseSession.hasPermission('offline_mode.enable');
   const canViewIntercepts = warehouseSession.hasPermission('intercepts.view');
+  const sharedLabelUploadPercent = sharedLabelUpload?.total
+    ? Math.round((sharedLabelUpload.uploaded / sharedLabelUpload.total) * 100)
+    : 0;
+  const isSharedLabelUploadActive = Boolean(sharedLabelUpload && sharedLabelUpload.uploaded < sharedLabelUpload.total);
+  const sharedBatchProgressLabel = sharedLabelUpload
+    ? supplementTargetBatchId && sharedBatchStatus === 'syncing'
+      ? `${isSharedLabelUploadActive ? '缺失面单补传中' : '缺失面单补传完成'} (${sharedLabelUpload.uploaded.toLocaleString()}/${sharedLabelUpload.total.toLocaleString()}) · ${sharedLabelUploadPercent}%`
+      : `${isSharedLabelUploadActive ? '共享面单上传中' : '可匹配面单已上传'} (${sharedLabelUpload.uploaded.toLocaleString()}/${sharedLabelUpload.total.toLocaleString()})${stats.excelCount > sharedLabelUpload.total ? ` · 当前批次另有 ${Math.max(0, stats.excelCount - sharedLabelUpload.total).toLocaleString()} 条待补` : ''}`
+    : sharedBatchMessage || '发布后其它电脑可直接扫码';
+  const publishedSharedBatch = activeSharedBatches.find(batch => batch.id === supplementTargetBatchId)
+    ?? activeSharedBatches.find(batch => batch.status === 'ACTIVE');
+  const publishedMappingCount = publishedSharedBatch?.mappingCount ?? stats.excelCount;
+  const publishedPdfCount = publishedSharedBatch?.pdfCount ?? stats.pdfCount;
+  const publishedMissingCount = Math.max(0, publishedMappingCount - publishedPdfCount);
+  const additionalSharedBatches = activeSharedBatches.filter(batch => batch.id !== publishedSharedBatch?.id);
 
   useEffect(() => {
     if (canViewIntercepts && location.hash === '#intercepts') setIsInterceptManagerOpen(true);
@@ -454,21 +520,100 @@ export default function App() {
     : '';
 
   const refreshActiveSharedBatches = useCallback(async () => {
-    if (!canCloseSharedBatch && !canDeleteSharedBatch) return;
+    if (!canCreateSharedBatch && !canCloseSharedBatch && !canDeleteSharedBatch) return;
     try {
       setActiveSharedBatches(await listSharedWorkBatches(canDeleteSharedBatch ? undefined : 'ACTIVE'));
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '读取活动共享批次失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '读取活动共享批次失败');
     }
-  }, [canCloseSharedBatch, canDeleteSharedBatch]);
+  }, [canCloseSharedBatch, canCreateSharedBatch, canDeleteSharedBatch]);
 
   useEffect(() => {
-    if (isDataImportOpen && (canCloseSharedBatch || canDeleteSharedBatch)) void refreshActiveSharedBatches();
-  }, [canCloseSharedBatch, canDeleteSharedBatch, isDataImportOpen, refreshActiveSharedBatches]);
+    if (isDataImportOpen && (canCreateSharedBatch || canCloseSharedBatch || canDeleteSharedBatch)) void refreshActiveSharedBatches();
+  }, [canCloseSharedBatch, canCreateSharedBatch, canDeleteSharedBatch, isDataImportOpen, refreshActiveSharedBatches]);
+
+  const loadAllMissingItems = async (batchId: string) => {
+    const allItems: SharedWorkBatchMissingItem[] = [];
+    let offset = 0;
+    while (true) {
+      const page = await listMissingSharedWorkBatchItems(batchId, offset);
+      allItems.push(...page.items);
+      offset += page.items.length;
+      if (offset >= page.total || page.items.length === 0) return allItems;
+    }
+  };
+
+  const viewMissingItems = async (batch: SharedWorkBatch) => {
+    setMissingItemsBatch(batch);
+    setMissingItemsLoading(true);
+    try {
+      setMissingItems(await loadAllMissingItems(batch.id));
+    } catch (cause) {
+      setMissingItems([]);
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '读取缺失面单列表失败');
+    } finally {
+      setMissingItemsLoading(false);
+    }
+  };
+
+  const supplementActiveBatch = async (batch: SharedWorkBatch, nextPdfFiles = pdfFilesRef.current) => {
+    if (!canCreateSharedBatch || batch.status !== 'ACTIVE') return;
+    if (sharedLabelUploadPromiseRef.current) return sharedLabelUploadPromiseRef.current;
+    setSupplementTargetBatchId(batch.id);
+    const pending = (async () => {
+      setSharedBatchStatus('syncing');
+      setSharedBatchMessage(`正在为“${batch.name}”补传缺失面单…`);
+      try {
+        const missing = await loadAllMissingItems(batch.id);
+        const searchIndex = createPdfSearchIndex(nextPdfFiles);
+        const matches = missing.flatMap(item => {
+          const match = findPdfMatch(searchIndex, [item.firstLegTrackingNo, item.courierTrackingNo ?? '']);
+          const file = match.key ? nextPdfFiles[match.key] : null;
+          return file && !match.ambiguous ? [{ firstLegTrackingNo: item.firstLegTrackingNo, file }] : [];
+        });
+        if (matches.length === 0) {
+          setSharedBatchStatus('active');
+          setSharedBatchMessage(`“${batch.name}”仍有 ${missing.length.toLocaleString()} 条缺失面单；请导入对应 PDF 后重试`);
+          return true;
+        }
+        setSharedLabelUpload({ uploaded: 0, total: matches.length });
+        let nextIndex = 0;
+        const recordUpload = () => setSharedLabelUpload(current => current
+          ? { ...current, uploaded: Math.min(current.total, current.uploaded + 1) }
+          : current);
+        const worker = async () => {
+          while (nextIndex < matches.length) {
+            const match = matches[nextIndex++];
+            await uploadSharedWorkBatchLabel(batch.id, match.firstLegTrackingNo, match.file);
+            recordUpload();
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, matches.length) }, () => worker()));
+        const remaining = await loadAllMissingItems(batch.id);
+        setSharedLabelUpload(null);
+        setSharedBatchStatus('active');
+        setSharedBatchMessage(`“${batch.name}”已补传 ${matches.length.toLocaleString()} 个面单，当前仍缺 ${remaining.length.toLocaleString()} 条`);
+        if (missingItemsBatch?.id === batch.id) setMissingItems(remaining);
+        await refreshActiveSharedBatches();
+        return true;
+      } catch (cause) {
+        setSharedLabelUpload(null);
+        setSharedBatchStatus('error');
+        setSharedBatchMessage(cause instanceof Error ? cause.message : '缺失面单补传失败');
+        return false;
+      }
+    })();
+    sharedLabelUploadPromiseRef.current = pending;
+    try {
+      return await pending;
+    } finally {
+      sharedLabelUploadPromiseRef.current = null;
+    }
+  };
 
   const ensureSharedDraft = async () => {
-    if (!canCreateSharedBatch) throw new Error('当前角色没有创建共享批次的权限。');
+    if (!canCreateSharedBatch) throw new Error('当前角色没有创建共享批次的权限');
     if (sharedBatchIdRef.current) return sharedBatchIdRef.current;
     if (sharedBatchPromiseRef.current) return sharedBatchPromiseRef.current;
     const pending = (async () => {
@@ -511,47 +656,68 @@ export default function App() {
       return true;
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享映射同步失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享映射同步失败');
       return false;
     }
   };
 
   const syncSharedLabels = async (nextMapping: Record<string, string>, nextPdfFiles: Record<string, File>) => {
     if (!canCreateSharedBatch || Object.keys(nextMapping).length === 0 || Object.keys(nextPdfFiles).length === 0) return true;
-    setSharedBatchStatus('syncing');
-    setSharedBatchMessage('正在上传共享 PDF 面单…');
-    try {
-      const batchId = await ensureSharedDraft();
-      if (!await syncSharedMappings(nextMapping)) return false;
-      const searchIndex = createPdfSearchIndex(nextPdfFiles);
-      const matches = Object.entries(nextMapping).flatMap(([firstLeg, exchange]) => {
-        const normalized = normalizeBarcode(firstLeg);
-        if (sharedUploadedLabelsRef.current.has(normalized)) return [];
-        const match = findPdfMatch(searchIndex, [firstLeg, exchange]);
-        const file = match.key ? nextPdfFiles[match.key] : null;
-        return file && !match.ambiguous ? [{ firstLeg, normalized, file }] : [];
-      });
-      let nextIndex = 0;
-      let completed = 0;
-      const worker = async () => {
-        while (nextIndex < matches.length) {
-          const match = matches[nextIndex++];
-          await uploadSharedWorkBatchLabel(batchId, match.firstLeg, match.file);
-          sharedUploadedLabelsRef.current.add(match.normalized);
-          completed += 1;
-          if (completed % 25 === 0 || completed === matches.length) {
-            setSharedBatchMessage(`共享面单已上传 ${completed.toLocaleString()} / ${matches.length.toLocaleString()} 个`);
-          }
+    if (sharedLabelUploadPromiseRef.current) return sharedLabelUploadPromiseRef.current;
+    const pending = (async () => {
+      setSharedBatchStatus('syncing');
+      setSharedBatchMessage('正在上传共享 PDF 面单…');
+      try {
+        const batchId = await ensureSharedDraft();
+        if (!await syncSharedMappings(nextMapping)) return false;
+        setSharedBatchStatus('syncing');
+        const searchIndex = createPdfSearchIndex(nextPdfFiles);
+        const matches = Object.entries(nextMapping).flatMap(([firstLeg, exchange]) => {
+          const normalized = normalizeBarcode(firstLeg);
+          if (sharedUploadedLabelsRef.current.has(normalized)) return [];
+          const match = findPdfMatch(searchIndex, [firstLeg, exchange]);
+          const file = match.key ? nextPdfFiles[match.key] : null;
+          return file && !match.ambiguous ? [{ firstLeg, normalized, file }] : [];
+        });
+        if (matches.length === 0) {
+          setSharedBatchStatus('draft');
+          setSharedBatchMessage(`共享批次草稿已就绪：${sharedUploadedLabelsRef.current.size.toLocaleString()} 个 PDF`);
+          return true;
         }
-      };
-      await Promise.all(Array.from({ length: Math.min(4, matches.length) }, () => worker()));
-      setSharedBatchStatus('draft');
-      setSharedBatchMessage(`共享批次草稿已就绪：${sharedUploadedLabelsRef.current.size.toLocaleString()} 个 PDF`);
-      return true;
-    } catch (cause) {
-      setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享面单上传失败。');
-      return false;
+        // React state is the only progress source. Each worker records a successful
+        // response through a functional update, so concurrent completions cannot
+        // reuse a stale closure or advance past this upload's fixed total.
+        setSharedLabelUpload({ uploaded: 0, total: matches.length });
+        let nextIndex = 0;
+        const recordUpload = () => {
+          setSharedLabelUpload(current => current
+            ? { ...current, uploaded: Math.min(current.total, current.uploaded + 1) }
+            : current
+          );
+        };
+        const worker = async () => {
+          while (nextIndex < matches.length) {
+            const match = matches[nextIndex++];
+            await uploadSharedWorkBatchLabel(batchId, match.firstLeg, match.file);
+            sharedUploadedLabelsRef.current.add(match.normalized);
+            recordUpload();
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, matches.length) }, () => worker()));
+        setSharedBatchStatus('draft');
+        setSharedBatchMessage(`共享批次草稿已就绪：${sharedUploadedLabelsRef.current.size.toLocaleString()} 个 PDF`);
+        return true;
+      } catch (cause) {
+        setSharedBatchStatus('error');
+        setSharedBatchMessage(cause instanceof Error ? cause.message : '共享面单上传失败');
+        return false;
+      }
+    })();
+    sharedLabelUploadPromiseRef.current = pending;
+    try {
+      return await pending;
+    } finally {
+      sharedLabelUploadPromiseRef.current = null;
     }
   };
 
@@ -561,12 +727,15 @@ export default function App() {
     setSharedBatchMessage('正在完成共享数据同步…');
     try {
       if (!await syncSharedMappings(mappingRef.current) || !await syncSharedLabels(mappingRef.current, pdfFilesRef.current)) {
-        throw new Error('共享数据尚未完整同步，已取消发布。');
+        throw new Error('共享数据尚未完整同步，已取消发布');
       }
       const batchId = sharedBatchIdRef.current || await ensureSharedDraft();
       await publishSharedWorkBatch(batchId);
       setSharedBatchStatus('active');
-      setSharedBatchMessage('共享批次已发布；其他工作站现在无需重复导入即可扫码。');
+      setSharedLabelUpload(null);
+      setSupplementTargetBatchId(batchId);
+      const missingCount = Math.max(0, Object.keys(mappingRef.current).length - sharedUploadedLabelsRef.current.size);
+      setSharedBatchMessage(`共享批次已发布：${sharedUploadedLabelsRef.current.size.toLocaleString()} / ${Object.keys(mappingRef.current).length.toLocaleString()} 个面单可打印${missingCount ? `，${missingCount.toLocaleString()} 条待补` : ''}`);
       sharedBatchIdRef.current = '';
       if (sharedDraftStorageKey) sessionStorage.removeItem(sharedDraftStorageKey);
       sharedUploadedItemsRef.current = new Set();
@@ -574,7 +743,7 @@ export default function App() {
       await refreshActiveSharedBatches();
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次发布失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次发布失败');
     }
   };
 
@@ -585,12 +754,13 @@ export default function App() {
     try {
       await closeSharedWorkBatch(sharedBatchId);
       setSharedBatchId('');
+      setSupplementTargetBatchId('');
       setSharedBatchStatus('idle');
-      setSharedBatchMessage('共享批次已关闭，该批次不再参与新的扫码匹配。');
+      setSharedBatchMessage('共享批次已关闭，该批次不再参与新的扫码匹配');
       await refreshActiveSharedBatches();
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次关闭失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '共享批次关闭失败');
     }
   };
 
@@ -603,11 +773,12 @@ export default function App() {
         setSharedBatchId('');
         setSharedBatchStatus('idle');
       }
-      setSharedBatchMessage(`共享批次“${batch.name}”已关闭。`);
+      if (batch.id === supplementTargetBatchId) setSupplementTargetBatchId('');
+      setSharedBatchMessage(`共享批次“${batch.name}”已关闭`);
       await refreshActiveSharedBatches();
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '关闭共享批次失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '关闭共享批次失败');
     } finally {
       setClosingSharedBatchId('');
     }
@@ -624,15 +795,47 @@ export default function App() {
         setSharedBatchId('');
         setSharedBatchStatus('idle');
       }
-      setSharedBatchMessage(`已删除共享批次“${batch.name}”：${result.mappingCount.toLocaleString()} 条映射、${result.pdfCount.toLocaleString()} 个 PDF。`);
+      if (batch.id === supplementTargetBatchId) setSupplementTargetBatchId('');
+      setSharedBatchMessage(`已删除共享批次“${batch.name}”：${result.mappingCount.toLocaleString()} 条映射、${result.pdfCount.toLocaleString()} 个 PDF`);
       setSharedBatchPendingDelete(null);
       await refreshActiveSharedBatches();
     } catch (cause) {
       setSharedBatchStatus('error');
-      setSharedBatchMessage(cause instanceof Error ? cause.message : '删除共享批次失败。');
+      setSharedBatchMessage(cause instanceof Error ? cause.message : '删除共享批次失败');
     } finally {
       setDeletingSharedBatchId('');
     }
+  };
+
+  const removeCurrentImport = async () => {
+    const target = importRemovalTarget;
+    if (!target) return;
+
+    setImportRemovalTarget(null);
+    if (target === 'excel') {
+      mappingRef.current = {};
+      mappingIndexRef.current = createMappingIndex({});
+      excelSourceCountRef.current = 0;
+      setMapping({});
+      setExcelSourceCount(0);
+      setExcelFile(null);
+      setStats(previous => ({ ...previous, excelCount: 0 }));
+      const persisted = await clearExcelMapping();
+      addLog('System', 'Excel 映射', persisted ? '已移除当前 Excel 映射' : '已移除当前 Excel 映射，但本机缓存清理失败', persisted ? 'success' : 'error', 'import');
+      return;
+    }
+
+    pdfFilesRef.current = {};
+    pdfSearchIndexRef.current = createPdfSearchIndex({});
+    directoryHandlesRef.current = [];
+    directoryPdfKeysRef.current = new Set();
+    pdfSourceCountRef.current = 0;
+    setPdfFiles({});
+    setPdfSourceCount(0);
+    setPdfFolder(null);
+    setStats(previous => ({ ...previous, pdfCount: 0 }));
+    const persisted = await clearPdfFiles();
+    addLog('System', '面单库', persisted ? '已移除当前 PDF 面单库' : '已移除当前 PDF 面单库，但本机缓存清理失败', persisted ? 'success' : 'error', 'import');
   };
 
   const commitExcelImport = (
@@ -658,7 +861,12 @@ export default function App() {
       count: Object.keys(nextMapping).length,
       sourceCount: nextSourceCount
     });
-    void syncSharedMappings(nextMapping).then(ok => ok && syncSharedLabels(nextMapping, pdfFilesRef.current));
+    if (supplementTargetBatchId) {
+      const target = activeSharedBatches.find(batch => batch.id === supplementTargetBatchId);
+      if (target) void supplementActiveBatch(target, pdfFilesRef.current);
+    } else {
+      void syncSharedMappings(nextMapping).then(ok => ok && syncSharedLabels(nextMapping, pdfFilesRef.current));
+    }
   };
 
   const ensureMappingWorker = () => {
@@ -683,15 +891,15 @@ export default function App() {
         return;
       }
 
-      const message = event.data.message || 'Excel 解析失败。';
+      const message = event.data.message || 'Excel 解析失败';
       addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变` });
     };
     worker.onerror = () => {
       const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
-      const message = 'Excel 解析线程异常，请重新上传。';
+      const message = 'Excel 解析线程异常，请重新上传';
       addLog('System', fileName, message, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变` });
     };
     mappingWorkerRef.current = worker;
     return worker;
@@ -708,7 +916,7 @@ export default function App() {
         try {
           const fileMapping = parseMappingWorkbook(await file.arrayBuffer());
 
-          if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。支持“头程单号→快递单号”或“运单号→参考单号”。');
+          if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系支持“头程单号→快递单号”或“运单号→参考单号”');
           Object.assign(importedMapping, fileMapping);
           sourceCount += 1;
         } catch {
@@ -716,13 +924,13 @@ export default function App() {
         }
       }
 
-      if (Object.keys(importedMapping).length === 0) throw new Error('无法从文件中解析出有效的单号映射关系。');
+      if (Object.keys(importedMapping).length === 0) throw new Error('无法从文件中解析出有效的单号映射关系');
       commitExcelImport(importedMapping, sourceCount, skippedFileNames);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Excel 解析失败。';
+      const message = error instanceof Error ? error.message : 'Excel 解析失败';
       const fileName = pendingExcelFileNameRef.current || 'Excel 文件';
       addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变` });
     }
   };
 
@@ -732,10 +940,10 @@ export default function App() {
       return message;
     }
     if (/connection|connect|websocket|socket|refused|timed out|closed/i.test(message)) {
-      return 'QZ Tray 未连接。请确认 QZ Tray 已安装并在右下角托盘保持运行，然后刷新列表。';
+      return 'QZ Tray 未连接请确认 QZ Tray 已安装并在右下角托盘保持运行，然后刷新列表';
     }
     if (/certificate|signature|security|denied|reject|permission|unauthorized/i.test(message)) {
-      return 'QZ Tray 授权或官方证书签名未完成。请确认 Vercel 已配置 QZ_CERTIFICATE 与 QZ_PRIVATE_KEY，并重新部署。';
+      return 'QZ Tray 授权或官方证书签名未完成请确认 Vercel 已配置 QZ_CERTIFICATE 与 QZ_PRIVATE_KEY，并重新部署';
     }
     return `QZ Tray 连接失败：${message}`;
   };
@@ -880,7 +1088,7 @@ export default function App() {
     if (inventory.preferredPrinter) return inventory.preferredPrinter;
     if (inventory.directPrinters.length === 1) return inventory.directPrinters[0];
 
-    throw new Error('检测到多台真实打印机，请先在系统设置中选择一台。');
+    throw new Error('检测到多台真实打印机，请先在系统设置中选择一台');
   };
 
   const printPdfWithQz = async (pdfBase64: string) => {
@@ -906,7 +1114,7 @@ export default function App() {
 
     await new Promise<void>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
-        reject(new Error('QZ Tray 超过 30 秒未返回结果；任务可能已进入打印队列，请先检查打印机后再决定是否重打。'));
+        reject(new Error('QZ Tray 超过 30 秒未返回结果；任务可能已进入打印队列，请先检查打印机后再决定是否重打'));
       }, QZ_PRINT_TIMEOUT_MS);
 
       qz.print(config, data).then(
@@ -1054,7 +1262,7 @@ export default function App() {
     try {
       const qzInventory = await getQzPrinterInventory();
       if (qzInventory.directPrinters.length === 0) {
-        throw new Error('QZ Tray 已连接，但未检测到可直打的真实打印机。');
+        throw new Error('QZ Tray 已连接，但未检测到可直打的真实打印机');
       }
 
       setQzConnectionHealth('healthy');
@@ -1433,8 +1641,8 @@ export default function App() {
       firstLeg: 'System',
       exchange: '拦截名单',
       message: interceptStorageStatus === 'corrupted'
-        ? '拦截库读取异常，当前扫码已改为阻断打印。'
-        : '拦截库无法写入本机缓存，当前扫码已改为阻断打印。',
+        ? '拦截库读取异常，当前扫码已改为阻断打印'
+        : '拦截库无法写入本机缓存，当前扫码已改为阻断打印',
       status: 'error',
       type: 'system'
     });
@@ -1443,7 +1651,7 @@ export default function App() {
   const importExcelFiles = async (files: File[]) => {
     const excelFiles = files.filter(file => /\.(xlsx|xls)$/i.test(file.name));
     if (excelFiles.length === 0) {
-      setExcelFile({ name: '选择的文件', status: 'error', message: '请导入一个或多个 .xlsx / .xls 格式的 Excel 文件。' });
+      setExcelFile({ name: '选择的文件', status: 'error', message: '请导入一个或多个 .xlsx / .xls 格式的 Excel 文件' });
       return;
     }
 
@@ -1461,9 +1669,9 @@ export default function App() {
       const parsedFiles = await Promise.all(excelFiles.map(async file => ({ name: file.name, buffer: await file.arrayBuffer() })));
       ensureMappingWorker().postMessage({ type: 'parse', files: parsedFiles }, parsedFiles.map(file => file.buffer));
     } catch (error) {
-      const message = error instanceof Error ? error.message : '读取文件失败。';
+      const message = error instanceof Error ? error.message : '读取文件失败';
       addLog('System', fileName, `Excel 导入失败: ${message}`, 'error', 'import');
-      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变。` });
+      setExcelFile({ name: fileName, status: 'error', message: `${message}；当前已导入的数据保持不变` });
     }
   };
 
@@ -1486,7 +1694,7 @@ export default function App() {
     });
 
     if (Object.keys(importedPdfFiles).length === 0) {
-      const message = '未找到有效的 PDF 文件。';
+      const message = '未找到有效的 PDF 文件';
       addLog('System', options.sourceLabel, message, 'error', 'import');
       setPdfFolder({ name: options.sourceLabel, status: 'error', message });
       return;
@@ -1513,7 +1721,7 @@ export default function App() {
       const allConflicts = new Set([...duplicateKeys, ...normalizedConflicts, ...existingConflicts]);
       const conflictCount = allConflicts.size;
       const examples = Array.from(allConflicts).slice(0, 3).join('、');
-      const message = `发现 ${conflictCount} 个重复或规范化后同名的 PDF（如 ${examples}），为防止面单被静默覆盖，本次导入已取消。请先处理重名文件。`;
+      const message = `发现 ${conflictCount} 个重复或规范化后同名的 PDF（如 ${examples}），为防止面单被静默覆盖，本次导入已取消请先处理重名文件`;
       addLog('System', options.sourceLabel, message, 'error', 'import');
       setPdfFolder({ name: options.sourceLabel, status: 'error', message });
       return;
@@ -1523,7 +1731,7 @@ export default function App() {
       .length;
     const nextPdfFileCount = Object.keys(currentPdfFiles).length + addedFileCount;
     if (nextPdfFileCount > MAX_PDF_FILES) {
-      const message = `面单库最多可保留 ${MAX_PDF_FILES.toLocaleString()} 个 PDF；当前已有 ${Object.keys(currentPdfFiles).length.toLocaleString()} 个，请减少本次导入数量。`;
+      const message = `面单库最多可保留 ${MAX_PDF_FILES.toLocaleString()} 个 PDF；当前已有 ${Object.keys(currentPdfFiles).length.toLocaleString()} 个，请减少本次导入数量`;
       addLog('System', options.sourceLabel, message, 'error', 'import');
       setPdfFolder({ name: options.sourceLabel, status: 'error', message });
       return;
@@ -1558,7 +1766,12 @@ export default function App() {
     setPdfFiles(nextPdfFiles);
     setPdfSourceCount(nextSourceCount);
     setStats(s => ({ ...s, pdfCount: Object.keys(nextPdfFiles).length }));
-    void syncSharedLabels(mappingRef.current, nextPdfFiles);
+    if (supplementTargetBatchId) {
+      const target = activeSharedBatches.find(batch => batch.id === supplementTargetBatchId);
+      if (target) void supplementActiveBatch(target, nextPdfFiles);
+    } else {
+      void syncSharedLabels(mappingRef.current, nextPdfFiles);
+    }
     setPdfFolder({
       name: sourceName,
       status: 'loading',
@@ -1581,7 +1794,7 @@ export default function App() {
       return;
     }
 
-    const cacheMessage = 'PDF 已载入当前页面，但本机缓存未完整保存；请勿刷新，并重新选择文件夹或释放浏览器存储空间后再试。';
+    const cacheMessage = 'PDF 已载入当前页面，但本机缓存未完整保存；请勿刷新，并重新选择文件夹或释放浏览器存储空间后再试';
     addLog('System', options.sourceLabel, cacheMessage, 'error', 'import');
     setPdfFolder({ name: sourceName, status: 'error', message: cacheMessage });
   };
@@ -1605,7 +1818,7 @@ export default function App() {
     for (const archive of archives) {
       try {
         const archivePdfFiles = await extractPdfFilesFromArchive(archive);
-        if (archivePdfFiles.length === 0) throw new Error('压缩包中未找到 PDF 文件。');
+        if (archivePdfFiles.length === 0) throw new Error('压缩包中未找到 PDF 文件');
         extractedPdfFiles.push(...archivePdfFiles);
       } catch {
         skippedArchiveNames.push(archive.name);
@@ -1649,7 +1862,7 @@ export default function App() {
     setActiveImportDropTarget(null);
     const files = Array.from(event.dataTransfer.files).filter(candidate => /\.(xlsx|xls)$/i.test(candidate.name));
     if (files.length === 0) {
-      setExcelFile({ name: '拖入的文件', status: 'error', message: '请拖入一个或多个 .xlsx / .xls 格式的 Excel 文件。' });
+      setExcelFile({ name: '拖入的文件', status: 'error', message: '请拖入一个或多个 .xlsx / .xls 格式的 Excel 文件' });
       return;
     }
     void importExcelFiles(files);
@@ -1663,13 +1876,13 @@ export default function App() {
     void getDroppedFiles(dataTransfer)
       .then(files => {
         if (files.length === 0) {
-          setPdfFolder({ name: '拖入的文件夹', status: 'error', message: '未识别到 PDF 或 ZIP 文件，请拖入包含 PDF 的文件夹、多个 PDF 或 ZIP 压缩包。' });
+          setPdfFolder({ name: '拖入的文件夹', status: 'error', message: '未识别到 PDF 或 ZIP 文件，请拖入包含 PDF 的文件夹、多个 PDF 或 ZIP 压缩包' });
           return;
         }
         void importPdfSources(files, '拖入的文件');
       })
       .catch(error => {
-        const message = error instanceof Error ? error.message : '读取拖入的 PDF 文件失败。';
+        const message = error instanceof Error ? error.message : '读取拖入的 PDF 文件失败';
         setPdfFolder({ name: '拖入的文件夹', status: 'error', message });
       });
   };
@@ -1692,15 +1905,37 @@ export default function App() {
       await importPdfSources(Object.values(fileMap), directoryHandle.name || 'PDF 文件夹', { directoryHandle });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
-      const message = error instanceof Error ? error.message : '读取 PDF 文件夹失败，请重新选择。';
+      const message = error instanceof Error ? error.message : '读取 PDF 文件夹失败，请重新选择';
       addLog('System', 'PDF 文件夹', message, 'error', 'import');
       setPdfFolder({ name: 'PDF 文件夹', status: 'error', message });
     }
   };
 
+  const dismissTransientScanResult = useCallback(() => {
+    if (transientScanResultTimerRef.current) {
+      window.clearTimeout(transientScanResultTimerRef.current);
+      transientScanResultTimerRef.current = null;
+    }
+    setTransientScanResult(null);
+  }, []);
+
+  const showTransientScanResult = useCallback((result: PrintLog) => {
+    if (transientScanResultTimerRef.current) window.clearTimeout(transientScanResultTimerRef.current);
+    setTransientScanResult(result);
+    transientScanResultTimerRef.current = window.setTimeout(() => {
+      setTransientScanResult(null);
+      transientScanResultTimerRef.current = null;
+    }, 5_000);
+  }, []);
+
+  useEffect(() => () => {
+    if (transientScanResultTimerRef.current) window.clearTimeout(transientScanResultTimerRef.current);
+  }, []);
+
   const processScan = (rawScannedValue: string, bypassDuplicateCheck = false, isDuplicateOverride = false) => {
     const scannedValue = sanitizeBarcode(rawScannedValue);
     if (!scannedValue) return;
+    dismissTransientScanResult();
     const cleanedScannedValue = normalizeBarcode(scannedValue);
     const cloudTarget = cloudLibrary.byBarcode.get(cleanedScannedValue) ?? null;
 
@@ -1736,20 +1971,20 @@ export default function App() {
 
     if (!uploadSessionReadyRef.current) {
       announceScanFeedback('processing');
-      addLog(scannedValue, '-', '本次会话文件正在恢复，请在状态恢复完成后重试扫码。', 'error', 'system');
+      addLog(scannedValue, '-', '本次会话文件正在恢复，请在状态恢复完成后重试扫码', 'error', 'system');
       return;
     }
 
     if (interceptStorageStatus === 'loading') {
       announceScanFeedback('processing');
-      addLog(scannedValue, '-', '拦截名单正在恢复，请稍候重试扫码。', 'error', 'system');
+      addLog(scannedValue, '-', '拦截名单正在恢复，请稍候重试扫码', 'error', 'system');
       return;
     }
 
     if (interceptStorageStatus !== 'ready' && !emergencyOfflineEnabled) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      addLog(scannedValue, '-', '全局拦截名单不可用，为避免漏拦截已阻断打印。主管可在现场确认后启用单机应急模式。', 'error', 'system');
+      addLog(scannedValue, '-', '全局拦截名单不可用，为避免漏拦截已阻断打印主管可在现场确认后启用单机应急模式', 'error', 'system');
       return;
     }
 
@@ -1760,15 +1995,15 @@ export default function App() {
       setInterceptedScan({ code: scannedValue, rule: interceptedRule });
       announceScanFeedback('error');
       void playInterceptAlert();
-      addLog(scannedValue, '-', '命中拦截名单，已阻断当前扫描与打印任务。', 'error', 'system');
-      if (cloudTarget) void reportCloudAttempt(cloudTarget, crypto.randomUUID(), 'BLOCKED', { message: '命中本机拦截名单。' });
+      addLog(scannedValue, '-', '命中拦截名单，已阻断当前扫描与打印任务', 'error', 'system');
+      if (cloudTarget) void reportCloudAttempt(cloudTarget, crypto.randomUUID(), 'BLOCKED', { message: '命中本机拦截名单' });
       return;
     }
 
     if (inFlightScansRef.current.has(cleanedScannedValue)) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      addLog(scannedValue, '-', '同一单号已有打印任务正在提交，请等待当前任务返回后再操作。', 'error', 'system');
+      addLog(scannedValue, '-', '同一单号已有打印任务正在提交，请等待当前任务返回后再操作', 'error', 'system');
       return;
     }
 
@@ -1803,7 +2038,7 @@ export default function App() {
     if (pdfMatch.ambiguous) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      addLog(scannedValue, finalExchangeNumber ?? '-', '匹配到多个相似 PDF，为避免错打已阻断。请使用唯一文件名或清理面单库。', 'error', 'print');
+      addLog(scannedValue, finalExchangeNumber ?? '-', '匹配到多个相似 PDF，为避免错打已阻断请使用唯一文件名或清理面单库', 'error', 'print');
       return;
     }
 
@@ -1867,7 +2102,7 @@ export default function App() {
             announceScanFeedback('error');
             void playInterceptAlert();
             addLog(scannedValue, finalExchangeNumber, `命中实时全局拦截${liveIntercept.reason ? `：${liveIntercept.reason}` : ''}`, 'error', 'system');
-            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '命中实时全局拦截名单。' });
+            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '命中实时全局拦截名单' });
             return;
           }
         } catch (interceptError) {
@@ -1875,10 +2110,10 @@ export default function App() {
             announceScanFeedback('error');
             void playScanFeedback('failure');
             addLog(scannedValue, finalExchangeNumber, `实时拦截校验失败，已阻断打印：${interceptError instanceof Error ? interceptError.message : '云端不可用'}`, 'error', 'system');
-            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '实时全局拦截校验不可用，按安全策略阻断。' });
+            if (cloudTarget) await reportCloudAttempt(cloudTarget, clientAttemptId, 'BLOCKED', { message: '实时全局拦截校验不可用，按安全策略阻断' });
             return;
           }
-          addLog(scannedValue, finalExchangeNumber, '实时拦截校验不可用，已按主管启用的单机应急模式继续使用最后同步缓存。', 'error', 'system');
+          addLog(scannedValue, finalExchangeNumber, '实时拦截校验不可用，已按主管启用的单机应急模式继续使用最后同步缓存', 'error', 'system');
         }
         const pdfFile = cloudTarget && activeWarehouse?.warehouseId
           ? await readCloudLabelFile(activeWarehouse.warehouseId, cloudTarget)
@@ -1933,7 +2168,7 @@ export default function App() {
             : cause instanceof TypeError;
           if (emergencyOfflineEnabled && cloudUnavailable) {
             inFlightScansRef.current.delete(cleanedScannedValue);
-            addLog(scannedValue, '-', '云端共享服务不可用，已按主管启用的单机应急模式使用本机已验证数据。', 'error', 'system');
+            addLog(scannedValue, '-', '云端共享服务不可用，已按主管启用的单机应急模式使用本机已验证数据', 'error', 'system');
             processLegacyScan();
             return;
           }
@@ -2023,7 +2258,7 @@ export default function App() {
       } catch (cause) {
         announceScanFeedback('error');
         void playScanFeedback('failure');
-        const message = cause instanceof Error ? cause.message : '共享批次处理失败。';
+        const message = cause instanceof Error ? cause.message : '共享批次处理失败';
         addLog(scannedValue, '-', message, 'error', 'system');
       } finally {
         inFlightScansRef.current.delete(cleanedScannedValue);
@@ -2065,7 +2300,7 @@ export default function App() {
     type: PrintLogType,
     outcome?: PrintOutcome
   ) => {
-    appendLog({
+    const log = appendLog({
       firstLeg,
       exchange,
       status,
@@ -2073,6 +2308,7 @@ export default function App() {
       type,
       outcome
     });
+    if (type === 'print') showTransientScanResult(log);
   };
 
   useEffect(() => {
@@ -2092,52 +2328,29 @@ export default function App() {
     return () => document.removeEventListener('keydown', confirmDuplicatePrint);
   }, [duplicateInfo]);
 
-  useEffect(() => {
-    const tabList = logTabListRef.current;
-    const pill = logTabPillRef.current;
-    const activeTabButton = tabList?.querySelector<HTMLButtonElement>(`[data-log-tab="${activeTab}"]`);
-    if (!tabList || !pill || !activeTabButton) return;
-
-    const movePill = (shouldAnimate: boolean) => {
-      const originalTransition = pill.style.transition;
-      if (!shouldAnimate) pill.style.transition = 'none';
-      pill.style.transform = `translateX(${activeTabButton.offsetLeft}px)`;
-      pill.style.width = `${activeTabButton.offsetWidth}px`;
-
-      if (!shouldAnimate) {
-        void pill.offsetWidth;
-        pill.style.transition = originalTransition;
-      }
-    };
-
-    const frameId = window.requestAnimationFrame(() => {
-      movePill(logTabMotionInitializedRef.current);
-      logTabMotionInitializedRef.current = true;
-    });
-    const handleResize = () => movePill(false);
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [activeTab]);
-
-  const scanFeedbackCopy = SCAN_FEEDBACK_COPY[scanFeedback];
   const isWorkspacePreparing = uploadCacheStatus === 'restoring' || interceptStorageStatus === 'loading';
-  const scanStatusCopy = isWorkspacePreparing ? '正在准备本机数据' : scanFeedbackCopy;
-  const qzReadiness = qzConnectionHealth === 'healthy' ? '已连接' : qzConnectionHealth === 'offline' ? '需处理' : '检测中';
-  const libraryReadiness = cloudLibrary.status === 'ready' ? '已同步' : cloudLibrary.status === 'error' ? '需同步' : '准备中';
+  const qzReadinessState = qzConnectionHealth === 'healthy' ? 'ready' : qzConnectionHealth === 'offline' ? 'issue' : 'pending';
+  const libraryReadinessState = cloudLibrary.status === 'ready' ? 'ready' : cloudLibrary.status === 'error' ? 'issue' : 'pending';
+  const scanReadinessState = qzReadinessState === 'issue' || libraryReadinessState === 'issue'
+    ? 'issue'
+    : qzReadinessState === 'ready' && libraryReadinessState === 'ready'
+      ? 'ready'
+      : 'pending';
+  const scanReadinessLabel = scanReadinessState === 'ready'
+    ? '准备就绪'
+    : scanReadinessState === 'issue'
+      ? '需要处理'
+      : '正在准备';
 
   useEffect(() => {
     if (isWorkspacePreparing || interceptedScan || duplicateInfo?.show) return;
 
     const focusTimer = window.setTimeout(() => {
-      document.getElementById('cmhub-scan-input')?.focus();
+      document.querySelector<HTMLInputElement>('.cmhub-scan-input input')?.focus();
     }, 0);
 
     return () => window.clearTimeout(focusTimer);
-  }, [duplicateInfo?.show, interceptedScan, isWorkspacePreparing, latestPrintLog?.id]);
+  }, [duplicateInfo?.show, interceptedScan, isWorkspacePreparing, transientScanResult?.id]);
 
   useWorkbenchMotion(motionScopeRef, { tabKey: activeTab });
 
@@ -2154,108 +2367,127 @@ export default function App() {
 
         {/* Duplicate Scan Modal */}
         {duplicateInfo?.show && (
-          <ArcoModal
+          <Dialog
             visible
             className="cmhub-confirm-modal"
-            title={<ArcoSpace><AlertTriangle size={20} /><span>重复扫描警告</span></ArcoSpace>}
-            onCancel={() => setDuplicateInfo(null)}
+            width={600}
+            header={<Space><AlertTriangle size={20} /><span>重复扫描警告</span></Space>}
+            onClose={() => setDuplicateInfo(null)}
             footer={
-              <ArcoSpace>
-                <ArcoButton onClick={() => setDuplicateInfo(null)}>取消</ArcoButton>
-                <ArcoButton status="danger" type="primary" autoFocus onClick={() => forcePrint(duplicateInfo.code)}>
+              <Space>
+                <Button onClick={() => setDuplicateInfo(null)}>取消</Button>
+                <Button theme="danger" onClick={() => forcePrint(duplicateInfo.code)}>
                   确认强制打印（Enter）
-                </ArcoButton>
-              </ArcoSpace>
+                </Button>
+              </Space>
             }
           >
             <Typography.Paragraph>
-              单号 <Typography.Text bold>{duplicateInfo.code}</Typography.Text> 在最近 5 分钟内已被打印。您确定要强制重复打印吗？
+              单号 <strong>{duplicateInfo.code}</strong> 在最近 5 分钟内已被打印您确定要强制重复打印吗？
             </Typography.Paragraph>
-          </ArcoModal>
+          </Dialog>
         )}
 
         {sharedBatchPendingDelete && (
-          <ArcoModal
+          <Dialog
             visible
             className="cmhub-confirm-modal"
-            title={<ArcoSpace><Trash2 size={20} /><span>删除共享批次</span></ArcoSpace>}
-            onCancel={() => !deletingSharedBatchId && setSharedBatchPendingDelete(null)}
+            width={600}
+            header={<Space><Trash2 size={20} /><span>删除共享批次</span></Space>}
+            onClose={() => { if (!deletingSharedBatchId) setSharedBatchPendingDelete(null); }}
             footer={
-              <ArcoSpace>
-                <ArcoButton disabled={Boolean(deletingSharedBatchId)} onClick={() => setSharedBatchPendingDelete(null)}>取消</ArcoButton>
-                <ArcoButton status="danger" type="primary" loading={deletingSharedBatchId === sharedBatchPendingDelete.id} onClick={() => void deleteListedSharedBatch()}>
+              <Space>
+                <Button disabled={Boolean(deletingSharedBatchId)} onClick={() => setSharedBatchPendingDelete(null)}>取消</Button>
+                <Button theme="danger" loading={deletingSharedBatchId === sharedBatchPendingDelete.id} onClick={() => void deleteListedSharedBatch()}>
                   删除映射与 PDF
-                </ArcoButton>
-              </ArcoSpace>
+                </Button>
+              </Space>
             }
           >
             <Typography.Paragraph>
-              将永久删除“<Typography.Text bold>{sharedBatchPendingDelete.name}</Typography.Text>”及其
-              {` ${sharedBatchPendingDelete.mappingCount.toLocaleString()} 条映射、${sharedBatchPendingDelete.pdfCount.toLocaleString()} 个私有 PDF。此操作不可恢复。`}
+              将永久删除“<strong>{sharedBatchPendingDelete.name}</strong>”及其
+              {` ${sharedBatchPendingDelete.mappingCount.toLocaleString()} 条映射、${sharedBatchPendingDelete.pdfCount.toLocaleString()} 个私有 PDF此操作不可恢复`}
             </Typography.Paragraph>
-          </ArcoModal>
+          </Dialog>
+        )}
+
+        {importRemovalTarget && (
+          <Dialog
+            visible
+            className="cmhub-confirm-modal"
+            width={600}
+            header={<Space><Trash2 size={20} /><span>移除当前上传</span></Space>}
+            onClose={() => setImportRemovalTarget(null)}
+            footer={
+              <Space>
+                <Button onClick={() => setImportRemovalTarget(null)}>取消</Button>
+                <Button theme="danger" onClick={() => void removeCurrentImport()}>
+                  确认移除
+                </Button>
+              </Space>
+            }
+          >
+            <Typography.Paragraph>
+              将移除当前页面的{importRemovalTarget === 'excel' ? ' Excel 映射' : ' PDF 面单库'}及本机会话缓存已发布的共享批次不会被删除
+            </Typography.Paragraph>
+          </Dialog>
         )}
 
         {(qzConnectionHealth === 'offline' || cloudLibrary.status === 'error' || interceptStorageStatus === 'corrupted' || interceptStorageStatus === 'unavailable' || (uploadCacheStatus === 'unavailable' && uploadCacheMessage) || (canEnableEmergencyOffline && emergencyOfflineEnabled)) && (
           <aside className="cmhub-scan-notice-dock" aria-label="扫码打单系统提醒" aria-live="polite">
             {qzConnectionHealth === 'offline' && (
-              <ArcoAlert
-                type="warning"
-                showIcon
-                content="QZ Tray 连接已中断，正在自动重连。请确认它仍在当前电脑运行。"
+              <Alert
+                theme="warning"
+                message="QZ Tray 连接已中断，正在自动重连请确认它仍在当前电脑运行"
               />
             )}
 
             {cloudLibrary.status === 'error' && (
-              <ArcoAlert
-                type="warning"
-                showIcon
-                content={`云端同步未完成：${cloudLibrary.message}`}
-                action={<ArcoButton size="small" onClick={() => void cloudLibrary.sync()}>重新同步</ArcoButton>}
+              <Alert
+                theme="warning"
+                message={`云端同步未完成：${cloudLibrary.message}`}
+                operation={<Button size="small" onClick={() => void cloudLibrary.sync()}>重新同步</Button>}
               />
             )}
 
             {interceptStorageStatus === 'corrupted' && (
-              <ArcoAlert
-                type="warning"
-                showIcon
-                content="拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号。"
+              <Alert
+                theme="warning"
+                message="拦截名单读取异常，当前扫码将跳过拦截判断；请在“拦截名单”中重新添加单号"
               />
             )}
 
             {interceptStorageStatus === 'unavailable' && (
-              <ArcoAlert
-                type="warning"
-                showIcon
-                content="拦截名单无法保存到本机缓存，本次会话关闭后将失效。"
+              <Alert
+                theme="warning"
+                message="拦截名单无法保存到本机缓存，本次会话关闭后将失效"
               />
             )}
 
             {uploadCacheStatus === 'unavailable' && uploadCacheMessage && (
-              <ArcoAlert type="warning" showIcon content={`会话文件缓存不可用：${uploadCacheMessage}`} />
+              <Alert theme="warning" message={`会话文件缓存不可用：${uploadCacheMessage}`} />
             )}
 
             {canEnableEmergencyOffline && emergencyOfflineEnabled && (
-              <ArcoAlert
+              <Alert
                 className="cmhub-emergency-mode-alert"
-                type="warning"
-                showIcon
-                content={`单机应急模式已开启：使用本机已验证数据，待回传 ${cloudAudit.pendingCount + sharedAudit.pendingCount} 条。`}
-                action={(
-                  <ArcoSpace>
-                    <ArcoButton onClick={() => {
+                theme="warning"
+                message={`单机应急模式已开启：使用本机已验证数据，待回传 ${cloudAudit.pendingCount + sharedAudit.pendingCount} 条`}
+                operation={(
+                  <Space>
+                    <Button onClick={() => {
                       void Promise.all([
                         syncInterceptRules(),
                         cloudLibrary.sync(),
                         cloudAudit.flushPending(),
                         sharedAudit.flushPending(),
                       ]);
-                    }}>恢复连接</ArcoButton>
-                    <ArcoButton
-                      status="danger"
+                    }}>恢复连接</Button>
+                    <Button
+                      theme="danger"
                       onClick={() => setEmergencyOfflineEnabled(enabled => !enabled)}
-                    >关闭应急模式</ArcoButton>
-                  </ArcoSpace>
+                    >关闭应急模式</Button>
+                  </Space>
                 )}
               />
             )}
@@ -2265,10 +2497,10 @@ export default function App() {
         <Drawer
           visible={isQzGuideOpen}
           className="cmhub-utility-drawer"
-          width={680}
-          title={<ArcoSpace><PlugZap size={20} /><span>QZ Tray 教程与新电脑配置</span></ArcoSpace>}
+          size="680px"
+          header={<Space><PlugZap size={20} /><span>QZ Tray 教程与新电脑配置</span></Space>}
           footer={null}
-          onCancel={() => setIsQzGuideOpen(false)}
+          onClose={() => setIsQzGuideOpen(false)}
         >
           <QzSetupGuide />
         </Drawer>
@@ -2276,60 +2508,61 @@ export default function App() {
         {canViewIntercepts && <Drawer
           visible={isInterceptManagerOpen}
           className="cmhub-utility-drawer cmhub-intercept-drawer"
-          width={832}
-          title={<div className="cmhub-intercept-drawer-title"><span><ShieldAlert size={20} aria-hidden="true" />拦截名单</span><small>维护后对所有授权仓库工作站实时生效。</small></div>}
+          size="832px"
+          header={<div className="cmhub-intercept-drawer-title flex flex-col"><span className="flex items-center"><ShieldAlert size={20} aria-hidden="true" /><strong>拦截名单管理</strong></span><small>维护后对所有授权仓库工作站实时生效</small></div>}
           footer={null}
-          onCancel={() => setIsInterceptManagerOpen(false)}
+          onClose={() => setIsInterceptManagerOpen(false)}
         >
           <InterceptListPage embedded />
         </Drawer>}
 
         {/* System Settings Modal */}
         {showSettings && (
-          <ArcoModal
+          <Dialog
             visible
             className="cmhub-settings-modal"
-            title={
+            header={
               <div className="cmhub-settings-modal-title">
-                <ArcoSpace><Settings size={20} /><span>系统设置</span></ArcoSpace>
-                <ArcoButton
-                  type="text"
-                  size="mini"
+                <Space><Settings size={20} /><span>系统设置</span></Space>
+                <Button
+                  variant="text"
+                  size="small"
                   aria-label="关闭系统设置"
                   icon={<X size={18} aria-hidden="true" />}
                   onClick={() => setShowSettings(false)}
                 />
               </div>
             }
-            onCancel={() => setShowSettings(false)}
+            onClose={() => setShowSettings(false)}
             footer={null}
-            style={{ width: 620 }}
-            closable={false}
+            width={600}
+            closeBtn={false}
           >
-              <div className="space-y-6">
+              <Space direction="vertical" size={20} className="cmhub-settings-stack">
                 <Tabs
-                  activeTab={settingsPanel}
+                  value={settingsPanel}
                   onChange={(key) => setSettingsPanel(key as SettingsPanel)}
-                  type="rounded"
+                  theme="card"
                 >
-                  <Tabs.TabPane key="printer" title={<ArcoSpace size="mini"><Printer size={16} />打印机</ArcoSpace>} />
-                  <Tabs.TabPane key="audio" title={<ArcoSpace size="mini"><Volume2 size={16} />音效</ArcoSpace>} />
+                  <Tabs.TabPanel value="printer" label={<Space size="small"><Printer size={16} />打印机</Space>} />
+                  <Tabs.TabPanel value="audio" label={<Space size="small"><Volume2 size={16} />音效</Space>} />
                 </Tabs>
 
                 {settingsPanel === 'printer' ? (
                   <>
+                    <Card className="cmhub-settings-panel" headerBordered hoverShadow>
                     <div className="space-y-3">
                   <label className="text-sm font-semibold text-text-primary flex items-center justify-between">
                     选择打印机
-                    <ArcoButton
-                      type="text"
-                      size="mini"
+                    <Button
+                      variant="text"
+                      size="small"
                       onClick={fetchPrinters}
                       loading={isPrinterLoading}
                       icon={<RefreshCw className="w-3 h-3" />}
                     >
                       刷新列表
-                    </ArcoButton>
+                    </Button>
                   </label>
                   <div className="relative" ref={printerDropdownRef}>
                     <button
@@ -2401,7 +2634,7 @@ export default function App() {
 
                           {!isPrinterLoading && printers.length === 0 && (
                             <div className="px-3 pb-3 pt-2 text-xs text-text-secondary/70">
-                              暂未检测到可直打打印机，请先连接或安装标签打印机。
+                              暂未检测到可直打打印机，请先连接或安装标签打印机
                             </div>
                           )}
                         </div>
@@ -2417,7 +2650,7 @@ export default function App() {
                       {qzConnectionHealth === 'healthy'
                         ? 'QZ Tray 已连接，可直接调用本机打印机'
                         : qzConnectionHealth === 'offline'
-                          ? 'QZ Tray 未连接。请确认已安装并在系统托盘中运行后刷新。'
+                          ? 'QZ Tray 未连接请确认已安装并在系统托盘中运行后刷新'
                           : '请通过 QZ Tray 刷新并选择本机打印机'}
                     </span>
                     {excludedPrinterCount > 0 && (
@@ -2437,26 +2670,28 @@ export default function App() {
                     </span>
                     {qzSecurityStatus.state !== 'signed' && qzSecurityStatus.state !== 'unknown' && (
                       <span className="block mt-1 text-text-secondary/50">
-                        管理员需在 Vercel 配置 QZ 官方 certificate/private key 后重新部署，才能消除每次打印授权弹窗。
+                        管理员需在 Vercel 配置 QZ 官方 certificate/private key 后重新部署，才能消除每次打印授权弹窗
                       </span>
                     )}
                   </p>
-                </div>
+                    </div>
 
-                <div className="pt-4">
-                  <ArcoButton
-                    type="primary"
-                    long
+                    <div className="pt-4">
+                  <Button
+                    theme="primary"
+                    block
                     onClick={savePrinter}
                     icon={<Save className="w-5 h-5" />}
                   >
                     保存打印机设置
-                  </ArcoButton>
-                </div>
+                  </Button>
+                    </div>
+                    </Card>
                   </>
                 ) : (
                   <>
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 space-y-5">
+                    <Card className="cmhub-settings-panel" headerBordered hoverShadow>
+                    <div className="space-y-5">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-xl bg-brand-green/10 flex items-center justify-center">
@@ -2473,7 +2708,7 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <Switch checked={audioEnabled} onChange={toggleAudioEnabled} />
+                        <Switch value={audioEnabled} onChange={toggleAudioEnabled} />
                       </div>
 
                       <div className="space-y-3">
@@ -2501,13 +2736,13 @@ export default function App() {
                       <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
                         <div>
                           <div className="font-semibold text-text-primary">现场强力模式</div>
-                          <div className="mt-1 text-xs text-text-secondary/60">将浏览器输出增益提高约 +3dB，适用于嘈杂作业区。</div>
+                          <div className="mt-1 text-xs text-text-secondary/60">将浏览器输出增益提高约 +3dB，适用于嘈杂作业区</div>
                         </div>
-                        <Switch checked={audioBoostEnabled} onChange={toggleAudioBoost} aria-label="现场强力模式" />
+                        <Switch value={audioBoostEnabled} onChange={toggleAudioBoost} aria-label="现场强力模式" />
                       </div>
 
-                      <ArcoButton
-                        long
+                      <Button
+                        block
                         icon={<PlayCircle className="w-5 h-5" />}
                         onPointerDown={startAudioPreviewPress}
                         onPointerUp={finishAudioPreviewPress}
@@ -2521,117 +2756,232 @@ export default function App() {
                         }}
                       >
                         试听音效
-                        <Typography.Text type="secondary">点击成功（约 380ms）/ 长按失败（约 760ms）</Typography.Text>
-                      </ArcoButton>
+                        <Typography.Text theme="secondary">点击成功（约 380ms）/ 长按失败（约 760ms）</Typography.Text>
+                      </Button>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3 text-xs">
-                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                    <Row gutter={[20, 20]} className="cmhub-audio-status-grid">
+                      <Col xs={12} sm={4}><Card bordered hoverShadow className="cmhub-audio-status-card">
                         <div className="text-text-secondary/60">音频状态</div>
                         <div className="mt-1 font-semibold text-text-primary">
                           {audioFocusState === 'playing' ? '播放中' : audioFocusState === 'failed' ? '异常' : '就绪'}
                         </div>
-                      </div>
-                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                      </Card></Col>
+                      <Col xs={12} sm={4}><Card bordered hoverShadow className="cmhub-audio-status-card">
                         <div className="text-text-secondary/60">截断次数</div>
                         <div className="mt-1 font-semibold text-text-primary">{audioInterruptCount}</div>
-                      </div>
-                      <div className="rounded-xl bg-white/[0.04] border border-white/10 px-3 py-3">
+                      </Card></Col>
+                      <Col xs={12} sm={4}><Card bordered hoverShadow className="cmhub-audio-status-card">
                         <div className="text-text-secondary/60">最近音效</div>
                         <div className="mt-1 font-semibold text-text-primary">
                           {lastAudioResult ? `${lastAudioResult === 'success' ? '成功' : '失败'} · ${lastAudioDuration}ms` : '暂无'}
                         </div>
-                      </div>
-                    </div>
+                      </Card></Col>
+                    </Row>
+                    </Card>
                   </>
                 )}
-              </div>
-          </ArcoModal>
+              </Space>
+          </Dialog>
         )}
 
         <Drawer
           visible={isDataImportOpen && canCreateSharedBatch}
           className="cmhub-utility-drawer"
-          width={680}
-          title={<ArcoSpace><FileSpreadsheet size={20} /><span>数据导入与面单库</span></ArcoSpace>}
+          size="680px"
+          header={<div className="cmhub-data-import-drawer-title flex items-center"><FileSpreadsheet size={20} aria-hidden="true" /><span>数据导入与面单库</span></div>}
           footer={null}
-          onCancel={() => setIsDataImportOpen(false)}
+          onClose={() => setIsDataImportOpen(false)}
         >
           <section id="data-import" className="cmhub-data-import-drawer" aria-label="数据导入与面单库">
-            <div className="cmhub-data-import-summary cmhub-data-import-drawer-summary" aria-live="polite">
-              <span>{excelFile ? `${excelSourceCount} 个 Excel · ${stats.excelCount.toLocaleString()} 条映射` : '未导入 Excel'}</span>
-              <span>{pdfFolder ? `${pdfSourceCount} 个来源 · ${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹或 ZIP'}</span>
-            </div>
+            <section className="cmhub-batch-management-panel" data-state={sharedBatchStatus} aria-label="共享批次概览与操作">
+              <div className="cmhub-batch-management-header">
+                <div className="cmhub-batch-management-heading">
+                  <span className="cmhub-batch-management-kicker">共享批次</span>
+                  {sharedBatchStatus === 'active' && <span className="cmhub-batch-management-state"><CheckCircle2 size={14} aria-hidden="true" /> 已发布</span>}
+                </div>
+                <div className="cmhub-data-import-summary cmhub-data-import-drawer-summary" aria-live="polite">
+                  <span>{excelFile ? `${excelSourceCount} 个 Excel · ${stats.excelCount.toLocaleString()} 条映射` : '未导入 Excel'}</span>
+                  <span>{pdfFolder ? `${pdfSourceCount} 个来源 · ${stats.pdfCount.toLocaleString()} 个 PDF` : '未选择 PDF 文件夹或 ZIP'}</span>
+                </div>
+              </div>
             {canCreateSharedBatch && (
-              <div className="cmhub-shared-batch-status">
-                <ArcoAlert
-                  type={sharedBatchStatus === 'error' ? 'error' : sharedBatchStatus === 'active' ? 'success' : 'info'}
-                  showIcon
-                  content={sharedBatchMessage || '发布后其它电脑可直接扫码'}
-                />
-                {canPublishSharedBatch && (
-                  <ArcoSpace>
-                    <ArcoButton
-                      type="primary"
-                      loading={sharedBatchStatus === 'syncing'}
-                      disabled={!sharedBatchId || stats.excelCount === 0 || stats.pdfCount === 0 || sharedBatchStatus === 'active'}
+              <div
+                className="cmhub-shared-batch-status"
+                data-state={sharedBatchStatus}
+                data-upload-state={sharedLabelUpload ? (isSharedLabelUploadActive ? 'uploading' : 'complete') : undefined}
+              >
+                <div className="cmhub-shared-batch-banner" role="status" aria-live="polite" aria-atomic="true">
+                  {sharedLabelUpload ? (
+                    <svg className="cmhub-shared-batch-progress" viewBox="0 0 36 36" aria-label={`上传进度 ${sharedLabelUploadPercent}%`}>
+                      <circle className="cmhub-shared-batch-progress-track" cx="18" cy="18" r="15.5" pathLength="100" />
+                      <circle className="cmhub-shared-batch-progress-value" cx="18" cy="18" r="15.5" pathLength="100" strokeDasharray={`${sharedLabelUploadPercent} 100`} />
+                    </svg>
+                  ) : sharedBatchStatus === 'error' ? <AlertCircle aria-hidden="true" /> : sharedBatchStatus === 'active' ? <CheckCircle2 aria-hidden="true" /> : <Upload aria-hidden="true" />}
+                  <div>
+                    {sharedBatchStatus === 'active' && <span className="cmhub-shared-batch-eyebrow">当前批次</span>}
+                    <strong>{sharedBatchStatus === 'active' ? `${publishedPdfCount.toLocaleString()} / ${publishedMappingCount.toLocaleString()} 个面单已可打印` : sharedBatchProgressLabel}</strong>
+                    {!sharedLabelUpload && sharedBatchStatus !== 'error' && (
+                      <small>{sharedBatchStatus === 'active'
+                        ? publishedMissingCount ? `仍有 ${publishedMissingCount.toLocaleString()} 条待补传，补传后会自动加入该批次` : '全部映射均已具备可打印面单'
+                        : '共享草稿会自动同步到授权工作站'}</small>
+                    )}
+                  </div>
+                </div>
+                {sharedBatchStatus === 'active' && (
+                  <div className="cmhub-batch-actions" role="group" aria-label="当前批次操作">
+                    {publishedSharedBatch && publishedMissingCount > 0 && canCreateSharedBatch && (
+                      <Button
+                        className="cmhub-batch-primary-action"
+                        theme="primary"
+                        icon={<Upload size={16} aria-hidden="true" />}
+                        onClick={() => void supplementActiveBatch(publishedSharedBatch)}
+                      >补传 {publishedMissingCount.toLocaleString()} 条面单</Button>
+                    )}
+                    <div className="cmhub-batch-text-actions">
+                      {publishedSharedBatch && publishedMissingCount > 0 && (
+                        <Button
+                          variant="text"
+                          className="cmhub-batch-view-missing-button"
+                          aria-pressed={missingItemsBatch?.id === publishedSharedBatch.id}
+                          aria-controls="shared-batch-missing-items"
+                          loading={missingItemsLoading && missingItemsBatch?.id === publishedSharedBatch.id}
+                          onClick={() => {
+                            if (missingItemsBatch?.id === publishedSharedBatch.id) {
+                              setMissingItemsBatch(null);
+                              setMissingItems([]);
+                              return;
+                            }
+                            void viewMissingItems(publishedSharedBatch);
+                          }}
+                        >{missingItemsBatch?.id === publishedSharedBatch.id ? '收起缺失' : '查看缺失'}</Button>
+                      )}
+                      {canCloseSharedBatch && (
+                        <Button className="cmhub-batch-close-button" variant="text" onClick={() => void closeCurrentSharedBatch()}>关闭批次</Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {canPublishSharedBatch && sharedBatchStatus !== 'active' && (
+                  <Space className="cmhub-shared-batch-primary-actions">
+                    <Button
+                      theme="primary"
+                      loading={sharedBatchStatus === 'syncing' || isSharedLabelUploadActive}
+                      disabled={!sharedBatchId || stats.excelCount === 0 || sharedBatchStatus === 'syncing' || isSharedLabelUploadActive}
                       onClick={() => void publishCurrentSharedBatch()}
                     >
-                      {sharedBatchStatus === 'active' ? '共享批次已发布' : '发布共享批次'}
-                    </ArcoButton>
-                    {canCloseSharedBatch && sharedBatchStatus === 'active' && (
-                      <ArcoButton status="warning" onClick={() => void closeCurrentSharedBatch()}>关闭当前批次</ArcoButton>
-                    )}
-                  </ArcoSpace>
-                )}
-                {(canCloseSharedBatch || canDeleteSharedBatch) && activeSharedBatches.length > 0 && (
-                  <div className="cmhub-active-shared-batches" aria-label="共享批次管理">
-                    <div className="cmhub-active-shared-batches-title">共享批次管理</div>
-                    {activeSharedBatches.map(batch => (
-                      <div className="cmhub-active-shared-batch" key={batch.id}>
-                        <div>
-                          <strong>{batch.name}</strong>
-                          <span>{batch.status === 'DRAFT' ? '草稿' : batch.status === 'ACTIVE' ? '生效中' : '已关闭'} · {batch.mappingCount.toLocaleString()} 条映射 · {batch.pdfCount.toLocaleString()} 个 PDF</span>
-                        </div>
-                        <ArcoSpace className="cmhub-active-shared-batch-actions">
-                          {canCloseSharedBatch && batch.status === 'ACTIVE' && (
-                            <ArcoButton
-                              size="mini"
-                              status="warning"
-                              loading={closingSharedBatchId === batch.id}
-                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
-                              onClick={() => void closeListedSharedBatch(batch)}
-                            >关闭</ArcoButton>
-                          )}
-                          {canDeleteSharedBatch && (
-                            <ArcoButton
-                              size="mini"
-                              status="danger"
-                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
-                              onClick={() => setSharedBatchPendingDelete(batch)}
-                            >删除</ArcoButton>
-                          )}
-                        </ArcoSpace>
-                      </div>
-                    ))}
-                  </div>
+                      {isSharedLabelUploadActive
+                          ? '面单上传中'
+                          : sharedLabelUpload
+                            ? '已完成，发布共享批次'
+                            : '发布共享批次'}
+                    </Button>
+                  </Space>
                 )}
               </div>
             )}
+            {(additionalSharedBatches.length > 0 || missingItemsBatch) && (
+              <section className="cmhub-other-batches-panel" aria-label="其他共享批次">
+                {additionalSharedBatches.length > 0 && (
+                  <button
+                    type="button"
+                    className="cmhub-other-batches-toggle"
+                    aria-expanded={isAdditionalSharedBatchesExpanded}
+                    onClick={() => setIsAdditionalSharedBatchesExpanded(current => !current)}
+                  ><span>其他批次</span><span className="cmhub-other-batches-count">{additionalSharedBatches.length}</span><ChevronDown size={15} aria-hidden="true" /></button>
+                )}
+                {(canCreateSharedBatch || canCloseSharedBatch || canDeleteSharedBatch) && (isAdditionalSharedBatchesExpanded || missingItemsBatch) && (
+                  <div className="cmhub-active-shared-batches" aria-label="共享批次管理">
+                    {isAdditionalSharedBatchesExpanded && additionalSharedBatches.length > 0 && <div className="cmhub-active-shared-batches-title">其他批次</div>}
+                    {isAdditionalSharedBatchesExpanded && additionalSharedBatches.map(batch => (
+                      <div className="cmhub-active-shared-batch" key={batch.id}>
+                        <div>
+                          <strong>{batch.name}</strong>
+                          <span>{batch.status === 'DRAFT' ? '草稿' : batch.status === 'ACTIVE' ? '生效中' : '已关闭'} · {batch.pdfCount.toLocaleString()} / {batch.mappingCount.toLocaleString()} 个面单可打印{batch.mappingCount > batch.pdfCount ? ` · ${Math.max(0, batch.mappingCount - batch.pdfCount).toLocaleString()} 条待补` : ''}</span>
+                        </div>
+                        <Space className="cmhub-active-shared-batch-actions">
+                          {batch.status === 'ACTIVE' && batch.mappingCount > batch.pdfCount && (
+                            <>
+                              <Button
+                                size="small"
+                                variant="text"
+                                className="cmhub-listed-batch-view-button"
+                                loading={missingItemsLoading && missingItemsBatch?.id === batch.id}
+                                onClick={() => void viewMissingItems(batch)}
+                              >查看缺失</Button>
+                              {canCreateSharedBatch && (
+                                <Button
+                                  size="small"
+                                  theme={supplementTargetBatchId === batch.id ? 'primary' : 'default'}
+                                  className="cmhub-listed-batch-supplement-button"
+                                  loading={sharedBatchStatus === 'syncing' && supplementTargetBatchId === batch.id}
+                                  onClick={() => void supplementActiveBatch(batch)}
+                                >补传面单</Button>
+                              )}
+                            </>
+                          )}
+                          {canCloseSharedBatch && batch.status === 'ACTIVE' && (
+                            <Button
+                              size="small"
+                              variant="text"
+                              className="cmhub-listed-batch-close-button"
+                              loading={closingSharedBatchId === batch.id}
+                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
+                              onClick={() => void closeListedSharedBatch(batch)}
+                            >关闭</Button>
+                          )}
+                          {canDeleteSharedBatch && (
+                            <Button
+                              size="small"
+                              variant="text"
+                              className="cmhub-listed-batch-delete-button"
+                              disabled={Boolean(closingSharedBatchId) || Boolean(deletingSharedBatchId)}
+                              onClick={() => setSharedBatchPendingDelete(batch)}
+                            >删除</Button>
+                          )}
+                        </Space>
+                      </div>
+                    ))}
+                    {missingItemsBatch && (
+                      <div className="cmhub-import-precheck" id="shared-batch-missing-items" aria-live="polite">
+                        <Space>
+                          <strong>“{missingItemsBatch.name}”缺失面单：{missingItems.length.toLocaleString()} 条</strong>
+                          <Button size="small" icon={<Download size={14} />} disabled={missingItemsLoading || missingItems.length === 0} onClick={() => exportMissingWaybills(missingItems, missingItemsBatch.name, 'xlsx')}>导出 Excel</Button>
+                          <Button size="small" icon={<Download size={14} />} disabled={missingItemsLoading || missingItems.length === 0} onClick={() => exportMissingWaybills(missingItems, missingItemsBatch.name, 'csv')}>导出 CSV</Button>
+                          <Button size="small" variant="text" onClick={() => setMissingItemsBatch(null)}>收起</Button>
+                        </Space>
+                        {missingItemsLoading ? <span>正在读取缺失单号…</span> : (
+                          <>
+                            {missingItems.length > 500 && <small>为保持页面流畅，仅展示前 500 条；导出包含全部缺失单号</small>}
+                            <ul className="cmhub-import-precheck-list" aria-label="共享批次缺失面单单号">
+                              {missingItems.slice(0, 500).map(item => <li key={item.firstLegTrackingNo}>{item.firstLegTrackingNo}</li>)}
+                            </ul>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+            </section>
             {importPrecheck && (
               <div className="cmhub-import-precheck" aria-live="polite">
-                <ArcoAlert
-                  type={importPrecheck.isDeferred ? 'info' : importPrecheck.missingWaybills.length === 0 ? 'success' : 'warning'}
-                  showIcon
-                  content={importPrecheck.isDeferred
-                    ? `已导入 ${stats.pdfCount.toLocaleString()} 个 PDF。为保证高容量面单库导入流畅，已跳过全量预检；扫码仍会按文件名匹配规则处理。`
-                    : `导入匹配预检：已导入 ${stats.excelCount.toLocaleString()} 条 Excel 映射，匹配成功 ${importPrecheck.matchedCount.toLocaleString()} 个 PDF 面单${importPrecheck.missingWaybills.length ? `，${importPrecheck.missingWaybills.length.toLocaleString()} 个面单缺失。` : '。'}`}
+                <Alert
+                  theme={importPrecheck.isDeferred ? 'info' : importPrecheck.missingWaybills.length === 0 ? 'success' : 'warning'}
+                  message={importPrecheck.isDeferred
+                    ? `已导入 ${stats.pdfCount.toLocaleString()} 个 PDF为保证高容量面单库导入流畅，已跳过全量预检；扫码仍会按文件名匹配规则处理`
+                    : `导入匹配预检：已导入 ${stats.excelCount.toLocaleString()} 条 Excel 映射，匹配成功 ${importPrecheck.matchedCount.toLocaleString()} 个 PDF 面单${importPrecheck.missingWaybills.length ? `，${importPrecheck.missingWaybills.length.toLocaleString()} 个面单缺失` : ''}`}
                 />
                 {importPrecheck.missingWaybills.length > 0 && (
                   <>
-                    <ArcoButton type="text" size="mini" onClick={() => setIsPrecheckListOpen(current => !current)}>
-                      {isPrecheckListOpen ? '收起缺失单号' : '查看缺失单号'}
-                    </ArcoButton>
+                    <Space>
+                      <Button variant="text" size="small" onClick={() => setIsPrecheckListOpen(current => !current)}>
+                        {isPrecheckListOpen ? '收起缺失单号' : '查看缺失单号'}
+                      </Button>
+                      <Button variant="text" size="small" icon={<Download size={14} />} onClick={() => exportMissingWaybills(precheckMissingItems, sharedBatchId ? '共享批次草稿' : '本次导入', 'xlsx')}>导出 Excel</Button>
+                      <Button variant="text" size="small" icon={<Download size={14} />} onClick={() => exportMissingWaybills(precheckMissingItems, sharedBatchId ? '共享批次草稿' : '本次导入', 'csv')}>导出 CSV</Button>
+                    </Space>
                     {isPrecheckListOpen && (
                       <ul className="cmhub-import-precheck-list" aria-label="未匹配 PDF 的头程单号">
                         {importPrecheck.missingWaybills.map(waybill => <li key={waybill}>{waybill}</li>)}
@@ -2647,9 +2997,10 @@ export default function App() {
                   <div className="cmhub-import-source-heading">
                     <span><FileSpreadsheet size={18} aria-hidden="true" /> Excel 映射</span>
                     {excelFile && (
-                      <ArcoButton type="text" size="mini" onClick={() => document.getElementById('excel-input')?.click()}>
-                        继续添加
-                      </ArcoButton>
+                      <Space className="cmhub-import-source-actions">
+                        <Button variant="text" size="small" onClick={() => document.getElementById('excel-input')?.click()}>继续添加</Button>
+                        <Button className="cmhub-import-remove-button" variant="text" size="small" disabled={excelFile.status === 'loading'} onClick={() => setImportRemovalTarget('excel')}>移除当前上传</Button>
+                      </Space>
                     )}
                   </div>
                   <label
@@ -2679,7 +3030,10 @@ export default function App() {
                 <div className="cmhub-import-source">
                   <div className="cmhub-import-source-heading">
                     <span><FileText size={18} aria-hidden="true" /> 面单库</span>
-                    <span className="cmhub-import-capacity">最多 {MAX_PDF_FILES.toLocaleString()} 个</span>
+                    <Space className="cmhub-import-source-actions">
+                      <span className="cmhub-import-capacity">最多 {MAX_PDF_FILES.toLocaleString()} 个</span>
+                      {pdfFolder && <Button className="cmhub-import-remove-button" variant="text" size="small" disabled={pdfFolder.status === 'loading'} onClick={() => setImportRemovalTarget('pdf')}>移除当前上传</Button>}
+                    </Space>
                   </div>
                   <div className="cmhub-import-pdf-workspace">
                     <button
@@ -2704,18 +3058,18 @@ export default function App() {
                           {pdfFolder.status === 'loading' ? <RefreshCw size={24} className="animate-spin" aria-hidden="true" /> : pdfFolder.status === 'success' ? <CheckCircle2 size={24} aria-hidden="true" /> : <AlertCircle size={24} aria-hidden="true" />}
                           <strong>{pdfFolder.name}</strong>
                           <small>{pdfFolder.message}</small>
-                          {pdfFolder.status === 'error' && <em>请在右侧操作区重新选择。</em>}
+                          {pdfFolder.status === 'error' && <em>请在右侧操作区重新选择</em>}
                         </>
                       )}
                     </button>
-                    <div className="cmhub-import-pdf-actions" aria-label="面单库导入操作">
+                    <div className="cmhub-import-pdf-actions" role="group" aria-label="面单库导入操作">
                       <span>继续添加</span>
-                      <ArcoButton type="secondary" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => void handlePdfFolderSelection()}>
+                      <Button theme="default" variant="outline" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => void handlePdfFolderSelection()}>
                         文件夹
-                      </ArcoButton>
-                      <ArcoButton type="outline" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => document.getElementById('pdf-archive-input')?.click()}>
+                      </Button>
+                      <Button variant="outline" size="small" disabled={pdfFolder?.status === 'loading'} onClick={() => document.getElementById('pdf-archive-input')?.click()}>
                         ZIP 包
-                      </ArcoButton>
+                      </Button>
                     </div>
                   </div>
                   {/* @ts-ignore Chromium directory picker fallback */}
@@ -2724,212 +3078,175 @@ export default function App() {
                 </div>
                 </div>
                 <p className="cmhub-data-import-note">
-                  <AlertCircle size={15} aria-hidden="true" /> Excel 支持“头程单号→快递单号”及“运单号→参考单号”；单次/累计最多 {MAX_PDF_FILES.toLocaleString()} 个 PDF。使用“文件夹”导入会保存本机访问授权，刷新后可恢复大批量面单；也可连续添加多个文件夹或 ZIP，同名单以后导入为准。
+                  <AlertCircle size={15} aria-hidden="true" /> Excel 支持“头程单号→快递单号”及“运单号→参考单号”；单次/累计最多 {MAX_PDF_FILES.toLocaleString()} 个 PDF使用“文件夹”导入会保存本机访问授权，刷新后可恢复大批量面单；也可连续添加多个文件夹或 ZIP，同名单以后导入为准
                 </p>
             </div>
           </section>
         </Drawer>
 
-        <section className="cmhub-scan-utility-bar" data-motion-enter aria-label="扫码打单准备信息与工具">
-          <div className="cmhub-scan-utility-status" aria-label="准备状态">
-            <span data-state={qzConnectionHealth === 'healthy' ? 'ready' : qzConnectionHealth === 'offline' ? 'issue' : 'pending'}>
-              <i aria-hidden="true" /><b>QZ</b><small>{qzReadiness}</small>
-            </span>
-            <span data-state={qzConnectionHealth === 'offline' ? 'issue' : 'ready'}>
-              <i aria-hidden="true" /><b>打印机</b><small>{selectedPrinter ? selectedPrinterLabel : '自动选择'}</small>
-            </span>
-            <span data-state={cloudLibrary.status === 'ready' ? 'ready' : cloudLibrary.status === 'error' ? 'issue' : 'pending'}>
-              <i aria-hidden="true" /><b>面单</b><small>{libraryReadiness}</small>
-            </span>
-            <span><b>{(stats.pdfCount + cloudLibrary.count).toLocaleString()}</b><small>可打印</small></span>
-            {emergencyOfflineEnabled && <span data-state="issue"><i aria-hidden="true" /><b>应急</b><small>本机模式</small></span>}
-          </div>
-          <div className="cmhub-scan-utility-actions" role="toolbar" aria-label="扫码打单工具">
-            <Tooltip content="QZ Tray 教程与新电脑配置">
-              <ArcoButton size="small" aria-label="打开 QZ Tray 教程与新电脑配置" icon={<PlugZap size={15} />} onClick={() => setIsQzGuideOpen(true)}>QZ 配置</ArcoButton>
-            </Tooltip>
-            {canViewIntercepts && <Tooltip content="拦截名单管理">
-              <ArcoButton size="small" aria-label="打开拦截名单管理" icon={<ShieldAlert size={15} />} onClick={() => setIsInterceptManagerOpen(true)}>拦截名单</ArcoButton>
-            </Tooltip>}
-            {canCreateSharedBatch && <Tooltip content="导入 Excel 映射与 PDF 面单">
-              <ArcoButton size="small" aria-label="打开数据导入" icon={<FileSpreadsheet size={15} />} onClick={openDataImport}>数据导入</ArcoButton>
-            </Tooltip>}
-            <Tooltip content="打印机与音效设置">
-              <ArcoButton size="small" aria-label="打开打印机与音效设置" icon={<Settings size={15} />} onClick={() => openSettings('printer')}>打印与音效</ArcoButton>
-            </Tooltip>
-            {canEnableEmergencyOffline && !emergencyOfflineEnabled && <Tooltip content="共享模式断网时，主管可临时使用本机已验证数据">
-              <ArcoButton size="small" type="text" aria-label="启用单机应急模式" onClick={() => setEmergencyOfflineEnabled(true)}>单机应急</ArcoButton>
-            </Tooltip>}
-          </div>
-        </section>
-
-        <div className="cmhub-operating-stack">
+        <section className="cmhub-scan-command-flow" aria-label="扫码并打印工作台">
             {/* Scanner Input */}
-            <ArcoCard
+            <Card
               className="cmhub-operating-card cmhub-scanner-card"
               data-motion-enter
               data-state={scanFeedback}
               aria-busy={isWorkspacePreparing}
               bordered
+              hoverShadow
             >
-              <div className="cmhub-scan-entry-summary">
-                <div className="cmhub-scan-entry-icon"><Printer size={22} aria-hidden="true" /></div>
-                <div className="cmhub-scan-entry-copy">
-                  <span className="cmhub-scan-entry-eyebrow">快速打印</span>
-                  <h2>扫码并打印</h2>
-                </div>
-                <div className="cmhub-scan-status" role="status" aria-live="polite">
-                  <span className="cmhub-scan-status-dot" aria-hidden="true" />
-                  {scanStatusCopy}
-                </div>
-              </div>
               <ScanCommandInput
                 feedback={scanFeedback}
                 isPreparing={isWorkspacePreparing}
+                readiness={
+                  <div className="cmhub-scan-overview">
+                    <span className="cmhub-scan-readiness" data-state={scanReadinessState} role="status">
+                      <i aria-hidden="true" /><b>{scanReadinessLabel}</b>
+                    </span>
+                    <span className="cmhub-scan-availability" aria-label={`可打印 ${(stats.pdfCount + cloudLibrary.count).toLocaleString()} 张`}>
+                      可打印 <strong>{(stats.pdfCount + cloudLibrary.count).toLocaleString()}</strong> 张
+                    </span>
+                  </div>
+                }
                 onCandidate={handleScanCandidate}
                 onSubmit={submitScanInput}
                 onWarmAudio={audioEnabled ? () => { void getAudioContext().catch(() => undefined); } : undefined}
               />
-            </ArcoCard>
-
-            <ArcoCard className="cmhub-operating-card cmhub-scan-result-card" data-motion-enter bordered>
-              <div className="cmhub-scan-result-heading">
-                <span>本次处理结果</span>
-                <small>{latestPrintLog ? latestPrintLog.time : '等待首次扫描'}</small>
+              <div className="cmhub-scan-primary-tools" role="toolbar" aria-label="扫码打单工具">
+                {canCreateSharedBatch && <Button className="cmhub-scan-import-button" size="small" variant="outline" icon={<FileSpreadsheet size={16} />} onClick={openDataImport}>导入数据</Button>}
+                <Popup
+                  visible={isScanToolsOpen}
+                  trigger="click"
+                  placement="bottom-left"
+                  destroyOnClose
+                  overlayClassName="cmhub-scan-tools-popup"
+                  content={
+                    <div className="cmhub-scan-tools-menu" role="group" aria-label="扫码辅助工具">
+                      <Button variant="text" icon={<PlugZap size={16} />} onClick={() => { setIsScanToolsOpen(false); setIsQzGuideOpen(true); }}>QZ Tray 配置</Button>
+                      {canViewIntercepts && <Button variant="text" icon={<ShieldAlert size={16} />} onClick={() => { setIsScanToolsOpen(false); setIsInterceptManagerOpen(true); }}>拦截名单</Button>}
+                      <Button variant="text" icon={<Settings size={16} />} onClick={() => { setIsScanToolsOpen(false); openSettings('printer'); }}>打印与音效</Button>
+                      {canEnableEmergencyOffline && !emergencyOfflineEnabled && <Button variant="text" icon={<AlertTriangle size={16} />} onClick={() => { setIsScanToolsOpen(false); setEmergencyOfflineEnabled(true); }}>启用单机应急</Button>}
+                    </div>
+                  }
+                  onVisibleChange={visible => setIsScanToolsOpen(visible)}
+                >
+                  <Button className="cmhub-scan-tools-button" size="small" variant="outline" icon={<Settings size={16} />} aria-expanded={isScanToolsOpen}>工具</Button>
+                </Popup>
               </div>
-              {latestPrintLog ? (
-                <div className="cmhub-scan-result-content" data-status={latestPrintLog.status}>
-                  <div><small>扫描单号</small><strong>{latestPrintLog.firstLeg}</strong></div>
-                  <ArrowRight size={20} aria-hidden="true" />
-                  <div><small>匹配末端单号</small><strong>{latestPrintLog.exchange || '-'}</strong></div>
-                  <span>{latestPrintLog.status === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}{latestPrintLog.status === 'success' ? '已提交到打印机' : latestPrintLog.message}</span>
-                </div>
-              ) : (
-                <div className="cmhub-scan-result-empty"><Scan size={20} /><span>扫描完成后将在这里显示本次匹配与提交结果</span></div>
-              )}
-            </ArcoCard>
+            </Card>
+
+            {transientScanResult && (
+              <div className="cmhub-scan-outcome-grid cmhub-transient-scan-result" aria-live="polite">
+                <Card className="cmhub-operating-card cmhub-scan-result-card" bordered hoverShadow>
+                  <div className="cmhub-scan-result-summary" data-status={transientScanResult.status} role="status" aria-live="polite">
+                    <div className="cmhub-scan-result-context">
+                      {transientScanResult.status === 'success' ? <CheckCircle2 size={18} aria-hidden="true" /> : <AlertCircle size={18} aria-hidden="true" />}
+                      <span>本次处理</span>
+                    </div>
+                    <div className="cmhub-scan-result-route" aria-label={`扫描单号 ${transientScanResult.firstLeg}，${transientScanResult.status === 'success' ? '匹配单号' : '匹配结果'} ${transientScanResult.exchange || '未匹配'}`}>
+                      <strong>{transientScanResult.firstLeg}</strong>
+                      <ArrowRight size={16} aria-hidden="true" />
+                      <strong>{transientScanResult.exchange || '未匹配'}</strong>
+                    </div>
+                    <Tag className="cmhub-scan-result-tag" size="small" theme={transientScanResult.status === 'success' ? 'success' : 'danger'} variant="light">
+                      {transientScanResult.status === 'success' ? '已提交' : '未匹配'}
+                    </Tag>
+                    <span className="cmhub-scan-result-message">{transientScanResult.status === 'success' ? '已提交到打印机' : transientScanResult.message}</span>
+                    <time className="cmhub-scan-result-time">{transientScanResult.time}</time>
+                  </div>
+                </Card>
+              </div>
+            )}
 
             {/* Logs */}
             <section id="operation-log" ref={logSectionRef} data-motion-enter tabIndex={-1} aria-label="操作日志">
-              <ArcoCard className="cmhub-operating-card cmhub-log-card" bordered bodyStyle={{ padding: 0 }}>
+              <Card className="cmhub-operating-card cmhub-log-card" bordered hoverShadow bodyStyle={{ padding: 0 }}>
               <div className="cmhub-log-card-header">
                 <div className="cmhub-log-card-heading">
                   <div className="cmhub-log-title">
-                    <span className="cmhub-log-title-icon" aria-hidden="true"><History size={19} /></span>
                     <h2>操作日志</h2>
-                  </div>
-                  <div ref={logTabListRef} className="t-tabs cmhub-log-tabs" role="tablist" aria-label="操作日志分类">
-                    <span ref={logTabPillRef} className="t-tabs-pill" aria-hidden="true" />
-                    {PRINT_LOG_TABS.map(tab => (
-                      <button
-                        key={tab.key}
-                        type="button"
-                        className="t-tab"
-                        data-log-tab={tab.key}
-                        role="tab"
-                        aria-selected={activeTab === tab.key}
-                        aria-controls="cmhub-log-table"
-                        tabIndex={activeTab === tab.key ? 0 : -1}
-                        onClick={() => {
-                          setActiveTab(tab.key);
-                          setLogPage(1);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-
-                          event.preventDefault();
-                          const currentIndex = PRINT_LOG_TABS.findIndex(item => item.key === activeTab);
-                          const nextIndex = event.key === 'ArrowRight'
-                            ? (currentIndex + 1) % PRINT_LOG_TABS.length
-                            : (currentIndex - 1 + PRINT_LOG_TABS.length) % PRINT_LOG_TABS.length;
-                          const nextTab = PRINT_LOG_TABS[nextIndex];
-                          setActiveTab(nextTab.key);
-                          setLogPage(1);
-                          window.requestAnimationFrame(() => {
-                            logTabListRef.current
-                              ?.querySelector<HTMLButtonElement>(`[data-log-tab="${nextTab.key}"]`)
-                              ?.focus();
-                          });
-                        }}
-                      >
-                        {tab.title}
-                      </button>
-                    ))}
+                    <span className="cmhub-log-record-count">{logQuery.total.toLocaleString()} 条</span>
                   </div>
                 </div>
-                <div className="cmhub-log-card-actions">
-                  <ArcoButton
-                    type="text"
-                    size="mini"
-                    status="danger"
-                    className="cmhub-log-clear-button"
-                    onClick={() => {
-                      clearLogsByType(activeTab);
+                <div className="cmhub-log-toolbar" role="search" aria-label="筛选操作日志">
+                  <Input
+                    value={logSearch}
+                    onChange={value => {
+                      setLogSearch(String(value));
                       setLogPage(1);
                     }}
-                  >
-                    <X className="w-3 h-3" /> 清空当前记录
-                  </ArcoButton>
+                    clearable
+                    size="small"
+                    className="cmhub-log-search"
+                    prefixIcon={<Search size={15} aria-hidden="true" />}
+                    placeholder="搜索单号或详情"
+                    aria-label="搜索单号或详情"
+                  />
+                  <Select
+                    className="cmhub-log-view-select"
+                    size="small"
+                    value={activeTab}
+                    aria-label="查看记录类型"
+                    onChange={value => {
+                      setActiveTab(String(value) as PrintLogTab);
+                      setLogPage(1);
+                    }}
+                    options={PRINT_LOG_TABS.map(tab => ({ label: tab.title, value: tab.key }))}
+                  />
+                  {activeLogEntries.length > 0 && (
+                    <Tooltip content="清空当前分类记录">
+                      <Button
+                        variant="outline"
+                        size="small"
+                        theme="default"
+                        className="cmhub-log-clear-button"
+                        aria-label="清空当前分类记录"
+                        icon={<Trash2 size={16} />}
+                        onClick={() => setIsLogClearConfirmOpen(true)}
+                      />
+                    </Tooltip>
+                  )}
                 </div>
-              </div>
-              <div className="cmhub-log-card-meta">
-                <span>当前分类已保存 <b className="text-text-primary">{logQuery.total.toLocaleString()}</b> / {MAX_PRINT_LOG_ENTRIES.toLocaleString()} 条</span>
-                <span className="whitespace-nowrap">每页 {LOGS_PER_PAGE} 条 · 最新优先</span>
               </div>
               <div id="cmhub-log-table" key={activeTab} className="cmhub-log-content" data-motion-tab role="tabpanel">
                 <PrintLogTable logs={logQuery.logs} latestLogId={lastLogId} />
               </div>
-              {logQuery.total > 0 && (
+              {totalLogPages > 1 && (
                 <div className="cmhub-log-card-footer">
-                  <span>第 {currentLogPage.toLocaleString()} / {totalLogPages.toLocaleString()} 页</span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setLogPage(page => Math.max(1, page - 1))}
-                      disabled={currentLogPage === 1}
-                      aria-label="上一页"
-                      className="rounded-md border border-white/10 px-2.5 py-1.5 text-text-primary transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      &lt;
-                    </button>
-                    {paginationItems.map(page => {
-                      if (typeof page !== 'number') {
-                        return <span key={page} className="px-1 text-text-secondary/70" aria-hidden="true">…</span>;
-                      }
-
-                      return (
-                        <button
-                          key={page}
-                          type="button"
-                          onClick={() => setLogPage(page)}
-                          aria-label={`第 ${page} 页`}
-                          aria-current={currentLogPage === page ? 'page' : undefined}
-                          className={cn(
-                            "min-w-8 rounded-md border px-2 py-1.5 transition-colors",
-                            currentLogPage === page
-                              ? "border-brand-green/60 bg-brand-green/15 text-brand-green"
-                              : "border-white/10 text-text-primary hover:bg-white/10"
-                          )}
-                        >
-                          {page}
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => setLogPage(page => Math.min(totalLogPages, page + 1))}
-                      disabled={currentLogPage === totalLogPages}
-                      aria-label="下一页"
-                      className="rounded-md border border-white/10 px-2.5 py-1.5 text-text-primary transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      &gt;
-                    </button>
-                  </div>
+                  <span>{logQuery.total.toLocaleString()} 条记录 · 最新优先</span>
+                  {totalLogPages > 1 && <Pagination
+                    current={currentLogPage}
+                    pageSize={LOGS_PER_PAGE}
+                    total={logQuery.total}
+                    size="small"
+                    theme="default"
+                    showPageSize={false}
+                    showJumper={false}
+                    totalContent={false}
+                    onCurrentChange={page => setLogPage(page)}
+                  />}
                 </div>
               )}
-              </ArcoCard>
+              </Card>
+              {isLogClearConfirmOpen && (
+                <Dialog
+                  visible
+                  theme="danger"
+                  className="cmhub-confirm-modal"
+                  header={`清空${PRINT_LOG_TABS.find(tab => tab.key === activeTab)?.title ?? '当前记录'}`}
+                  cancelBtn="取消"
+                  confirmBtn={{ content: '确认清空', theme: 'danger' }}
+                  onClose={() => setIsLogClearConfirmOpen(false)}
+                  onConfirm={() => {
+                    clearLogsByType(activeTab);
+                    setLogPage(1);
+                    setIsLogClearConfirmOpen(false);
+                  }}
+                >
+                  此操作仅清空当前分类的本地操作记录，无法恢复。
+                </Dialog>
+              )}
             </section>
-        </div>
+        </section>
       </div>
     </div>
   );

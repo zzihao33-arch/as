@@ -41,6 +41,7 @@ try {
       join(outputDirectory, 'test', 'sharedWarehouseWork.test.js'),
       join(outputDirectory, 'test', 'airPickupOperations.test.js'),
       join(outputDirectory, 'test', 'inboundBatchIngest.test.js'),
+      join(outputDirectory, 'test', 'tygV11.test.js'),
       join(outputDirectory, 'test', 'attendanceCalculations.test.js'),
     ], { cwd: packageDirectory, stdio: 'inherit' });
     process.exitCode = tests.status ?? 1;

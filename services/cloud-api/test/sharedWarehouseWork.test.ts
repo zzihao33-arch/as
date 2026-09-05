@@ -27,6 +27,56 @@ describe('shared warehouse work safety rules', () => {
     assert.equal(completionStatus('FAILED'), 'FAILED');
   });
 
+  it('allows a mapped draft to publish even while some labels are still missing', async () => {
+    let publishSql = '';
+    const work = createSharedWarehouseWork({
+      mysql: {
+        execute: async (query: string) => {
+          if (query.includes('UPDATE warehouse_work_batches')) {
+            publishSql = query;
+            return [{ affectedRows: 1 }];
+          }
+          return [{ affectedRows: 1 }];
+        },
+      } as never,
+      storage: {} as never,
+    });
+
+    const result = await work.publishBatch({} as never, '00000000-0000-4000-8000-000000000001');
+
+    assert.equal(result.status, 'ACTIVE');
+    assert.match(publishSql, /mapping_count > 0/);
+    assert.doesNotMatch(publishSql, /pdf_count\s*=\s*mapping_count/);
+  });
+
+  it('does not let an active batch replace an already-ready label', async () => {
+    let stored = false;
+    const connection = {
+      beginTransaction: async () => undefined,
+      commit: async () => undefined,
+      rollback: async () => undefined,
+      release: () => undefined,
+      execute: async (query: string) => {
+        if (query.includes('FROM warehouse_work_batch_items')) return [[{
+          id: 'item-a', batch_status: 'ACTIVE', label_asset_id: 'asset-a', asset_status: 'READY',
+        }]];
+        return [[{ affectedRows: 1 }]];
+      },
+    };
+    const work = createSharedWarehouseWork({
+      mysql: { getConnection: async () => connection } as never,
+      storage: { put: async () => { stored = true; } } as never,
+    });
+
+    await assert.rejects(
+      () => work.storeItemLabel({ userId: 'user-a' } as never, '00000000-0000-4000-8000-000000000001', 'FIRST123', 'FIRST123.pdf', {
+        content: Buffer.from('%PDF-1.4'), sha256: 'a'.repeat(64), byteSize: 8,
+      }),
+      /不能替换已有可用面单/,
+    );
+    assert.equal(stored, false);
+  });
+
   it('removes private PDF bytes before deleting a shared batch and its mappings', async () => {
     const removedKeys: string[] = [];
     const executed: string[] = [];

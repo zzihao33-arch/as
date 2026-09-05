@@ -86,9 +86,9 @@ export function createLabelAssetModule(dependencies: { mysql: Pool; storage: Lab
           [request.client.id, request.firstLegTrackingNo],
         );
         shipment = shipmentRows[0];
-        if (!shipment) throw new ApiError(404, 'SHIPMENT_NOT_FOUND', '未找到对应物流单据。');
+        if (!shipment) throw new ApiError(404, 'SHIPMENT_NOT_FOUND', '未找到对应物流单据');
         if (shipment.label_sha256 && shipment.label_sha256 !== request.pdf.sha256) {
-          throw new ApiError(422, 'LABEL_HASH_MISMATCH', 'PDF 内容与物流单据声明的 labelSha256 不一致。');
+          throw new ApiError(422, 'LABEL_HASH_MISMATCH', 'PDF 内容与物流单据声明的 labelSha256 不一致');
         }
 
         const [assetRows] = await connection.execute<LabelAssetRow[]>(
@@ -123,7 +123,7 @@ export function createLabelAssetModule(dependencies: { mysql: Pool; storage: Lab
             existing?.asset_status === 'STORING'
             && Date.now() - existing.updated_at.getTime() < staleUploadMilliseconds
           ) {
-            throw new ApiError(409, 'LABEL_UPLOAD_IN_PROGRESS', '相同 PDF 面单正在保存，请稍后重试。');
+            throw new ApiError(409, 'LABEL_UPLOAD_IN_PROGRESS', '相同 PDF 面单正在保存，请稍后重试');
           }
 
           assetId = existing?.id ?? randomUUID();
@@ -188,7 +188,7 @@ export function createLabelAssetModule(dependencies: { mysql: Pool; storage: Lab
           }
         }
         console.error('Failed to write private label asset.', { requestId: request.requestId, assetId, error });
-        throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单存储暂时不可用，请稍后重试。');
+        throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单存储暂时不可用，请稍后重试');
       }
 
       if (reused) {
@@ -221,7 +221,7 @@ export function createLabelAssetModule(dependencies: { mysql: Pool; storage: Lab
             [assetId],
           );
           await finalize.commit();
-          throw new ApiError(409, 'LABEL_SUPERSEDED', '物流单据已声明更新的面单，请上传最新文件。');
+          throw new ApiError(409, 'LABEL_SUPERSEDED', '物流单据已声明更新的面单，请上传最新文件');
         }
         const nextStatus = readyStatus(currentShipment.status);
         await finalize.execute(

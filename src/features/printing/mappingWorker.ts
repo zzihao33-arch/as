@@ -33,7 +33,7 @@ self.onmessage = (event: MessageEvent<MappingWorkerRequest>) => {
       try {
         const fileMapping = parseMappingWorkbook(file.buffer);
 
-        if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系。支持“头程单号→快递单号”或“运单号→参考单号”。');
+        if (Object.keys(fileMapping).length === 0) throw new Error('未找到有效的单号映射关系支持“头程单号→快递单号”或“运单号→参考单号”');
         Object.assign(mapping, fileMapping);
         sourceCount += 1;
       } catch {
@@ -43,7 +43,7 @@ self.onmessage = (event: MessageEvent<MappingWorkerRequest>) => {
 
     const count = Object.keys(mapping).length;
     if (count === 0) {
-      throw new Error('无法从文件中解析出有效的单号映射关系。');
+      throw new Error('无法从文件中解析出有效的单号映射关系');
     }
 
     const result: MappingWorkerSuccess = { type: 'success', mapping, count, sourceCount, skippedFileNames };
@@ -51,7 +51,7 @@ self.onmessage = (event: MessageEvent<MappingWorkerRequest>) => {
   } catch (error) {
     const result: MappingWorkerFailure = {
       type: 'error',
-      message: error instanceof Error ? error.message : 'Excel 解析失败。'
+      message: error instanceof Error ? error.message : 'Excel 解析失败'
     };
     self.postMessage(result);
   }

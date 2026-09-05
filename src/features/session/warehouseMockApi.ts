@@ -2,8 +2,10 @@ import {
   WarehouseApiError,
   type GlobalInterceptView,
   type AirHandoverBatch,
+  type AirPickupDocument,
   type AirPickupOrder,
   type AirWeightUnit,
+  type CustomerProfile,
   type AttendanceAppeal,
   type AttendanceDailyResult,
   type AttendanceLocation,
@@ -49,6 +51,7 @@ type MockState = {
   intercepts: MockIntercept[];
   interceptRevision: number;
   airPickups: MockAirPickup[];
+  customers: CustomerProfile[];
   airHandoverBatches: AirHandoverBatch[];
   attendanceDaily: AttendanceDailyResult[];
   attendanceAppeals: AttendanceAppeal[];
@@ -74,9 +77,11 @@ const permissionDefinitions: WarehousePermissionView[] = [
   ['print_logs.clear_local', 'print_logs', '清理本机日志', 'MEDIUM'],
   ['intercepts.view', 'intercepts', '查看全局拦截条目', 'MEDIUM'],
   ['intercepts.manage', 'intercepts', '维护全局拦截条目', 'HIGH'],
+  ['customers.view', 'customers', '查看客户档案', 'LOW'],
+  ['customers.manage', 'customers', '新增和维护客户档案', 'HIGH'],
   ['air_pickups.view', 'air_pickups', '查看空运提货单', 'LOW'],
   ['air_pickups.create', 'air_pickups', '录入空运提货单', 'MEDIUM'],
-  ['air_pickups.edit', 'air_pickups', '编辑已录入提货单', 'MEDIUM'],
+  ['air_pickups.edit', 'air_pickups', '编辑已录入提单', 'MEDIUM'],
   ['air_pickups.receive', 'air_pickups', '确认提货单入库', 'MEDIUM'],
   ['air_pickups.handover', 'air_pickups', '创建并确认交仓批次', 'HIGH'],
   ['air_pickups.evidence.add', 'air_pickups', '补充交仓凭证', 'MEDIUM'],
@@ -122,6 +127,7 @@ const operatorPermissions = ['dashboard.view', 'shipments.view', 'scan.use', 'ba
 const supervisorPermissions = allPermissions.filter(permission => !permission.startsWith('accounts.') && !permission.startsWith('roles.') && permission !== 'security_audit.view' && !permission.startsWith('payroll.'));
 const labelFiles = new Map<string, Blob>();
 const evidenceFiles = new Map<string, Blob>();
+const pickupDocumentFiles = new Map<string, Blob>();
 
 function now() {
   return new Date().toISOString();
@@ -145,8 +151,8 @@ function initialState(): MockState {
   return {
     sessionActive: true,
     roles: [
-      { id: OPERATOR_ROLE_ID, code: 'OPERATOR', name: '仓库操作员', description: '扫码、首次打印和基础工作站设置。', kind: 'DEFAULT', version: 1, employeeCount: 1, permissions: operatorPermissions, createdAt, updatedAt: createdAt },
-      { id: SUPERVISOR_ROLE_ID, code: 'SUPERVISOR', name: '仓库主管', description: '共享批次、拦截和现场异常处理。', kind: 'DEFAULT', version: 1, employeeCount: 1, permissions: supervisorPermissions, createdAt, updatedAt: createdAt },
+      { id: OPERATOR_ROLE_ID, code: 'OPERATOR', name: '仓库操作员', description: '扫码、首次打印和基础工作站设置', kind: 'DEFAULT', version: 1, employeeCount: 1, permissions: operatorPermissions, createdAt, updatedAt: createdAt },
+      { id: SUPERVISOR_ROLE_ID, code: 'SUPERVISOR', name: '仓库主管', description: '共享批次、拦截和现场异常处理', kind: 'DEFAULT', version: 1, employeeCount: 1, permissions: supervisorPermissions, createdAt, updatedAt: createdAt },
     ],
     accounts: [
       { id: ADMIN_USER_ID, loginName: MOCK_LOGIN_NAME, displayName: '本地测试管理员', email: 'mock@cmhub.local', phone: null, status: 'ACTIVE', platformRole: 'SYSTEM_ADMIN', passwordState: 'ACTIVE', lastLoginAt: createdAt, createdAt, memberships: [] },
@@ -157,6 +163,10 @@ function initialState(): MockState {
     intercepts: [],
     interceptRevision: 0,
     airPickups: [],
+    customers: [{
+      id: MOCK_CLIENT_ID, code: 'MOCK-CLIENT', name: '本地测试上游客户', type: 'UPSTREAM', status: 'ACTIVE', integrationStatus: 'INTEGRATED', integrationClientId: MOCK_CLIENT_ID,
+      contactName: null, contactPhone: null, contactEmail: null, createdAt, updatedAt: createdAt,
+    }],
     airHandoverBatches: [],
     attendanceDaily: [],
     attendanceAppeals: [],
@@ -177,11 +187,15 @@ function readState(): MockState {
       ...order,
       sourceClientId: order.sourceClientId ?? MOCK_CLIENT_ID,
       sourceClientName: order.sourceClientName ?? '本地测试客户',
+      customerId: order.customerId ?? MOCK_CLIENT_ID,
+      customerName: order.customerName ?? order.sourceClientName ?? '本地测试上游客户',
+      customerType: order.customerType ?? 'UPSTREAM' as const,
       sourceType: order.sourceType ?? 'MANUAL' as const,
       externalBatchId: order.externalBatchId ?? null,
       exchangeProgress: order.exchangeProgress ?? { total: 0, changed: 0, intercepted: 0, exceptions: 0, processed: 0, pending: 0 },
       receiptEvidence: order.receiptEvidence ?? [],
       handoverEvidence: order.handoverEvidence ?? [],
+      pickupDocuments: order.pickupDocuments ?? [],
     }));
     const attendanceDaily = (parsed.attendanceDaily ?? []).map(result => {
       const normalizedWorkDate = result.clockInAt
@@ -195,6 +209,7 @@ function readState(): MockState {
       ...fallback,
       ...parsed,
       airPickups,
+      customers: parsed.customers ?? fallback.customers,
       airHandoverBatches: parsed.airHandoverBatches ?? [],
       attendanceDaily,
       attendanceAppeals: parsed.attendanceAppeals ?? [],
@@ -232,7 +247,7 @@ function parseBody(init: RequestInit): Record<string, unknown> {
 }
 
 function requireSession(state: MockState) {
-  if (!state.sessionActive) throw new WarehouseApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。');
+  if (!state.sessionActive) throw new WarehouseApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台');
 }
 
 function segment(pathname: string, index: number) {
@@ -243,7 +258,7 @@ function normalizeAirBillNo(value: unknown) {
   const raw = String(value ?? '').trim();
   const candidate = raw.replace(/[\s\u3000]+/g, '').replace(/[－—–]/g, '-').toUpperCase();
   if (!candidate || candidate.length > 32 || !/^[A-Z0-9-]+$/.test(candidate)) {
-    throw new WarehouseApiError(400, 'INVALID_AIR_BILL_NO', '提货单号仅允许字母、数字和连字符。');
+    throw new WarehouseApiError(400, 'INVALID_AIR_BILL_NO', '提货单号仅允许字母、数字和连字符');
   }
   const normalized = candidate.replace(/-/g, '');
   const standard = /^\d{11}$/.test(normalized);
@@ -328,7 +343,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
 
   if (pathname === '/warehouse/v1/sessions' && method === 'POST') {
     if (body.loginName !== MOCK_LOGIN_NAME || body.password !== MOCK_PASSWORD) {
-      throw new WarehouseApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误。');
+      throw new WarehouseApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误');
     }
     state.sessionActive = true;
     writeState(state);
@@ -355,14 +370,48 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname === '/warehouse/v1/air-pickup-clients' && method === 'GET') {
     return { data: [{ id: MOCK_CLIENT_ID, code: 'mock-client', name: '本地测试客户' }] } as T;
   }
+  if (pathname === '/warehouse/v1/customers' && method === 'GET') {
+    const type = url.searchParams.get('type');
+    const includeDisabled = url.searchParams.get('includeDisabled') === 'true';
+    return { data: state.customers.filter(customer => (!type || customer.type === type) && (includeDisabled || customer.status === 'ACTIVE')) } as T;
+  }
+  if (pathname === '/warehouse/v1/customers' && method === 'POST') {
+    const code = String(body.customerCode ?? '').trim().toUpperCase();
+    const name = String(body.name ?? '').trim();
+    const type = body.type === 'UPSTREAM' ? 'UPSTREAM' : body.type === 'BUSINESS' ? 'BUSINESS' : null;
+    if (!code || !name || !type) throw new WarehouseApiError(400, 'VALIDATION_ERROR', '客户名称、编码和类型为必填项');
+    if (state.customers.some(customer => customer.code === code)) throw new WarehouseApiError(409, 'CUSTOMER_CODE_EXISTS', '客户编码已存在，请使用其他编码');
+    const createdAt = now();
+    const customer: CustomerProfile = {
+      id: crypto.randomUUID(), code, name, type, status: 'ACTIVE',
+      integrationStatus: type === 'UPSTREAM' ? (body.integrationStatus === 'INTEGRATING' ? 'INTEGRATING' : 'PENDING') : 'NOT_APPLICABLE',
+      integrationClientId: null, contactName: body.contactName ? String(body.contactName) : null,
+      contactPhone: body.contactPhone ? String(body.contactPhone) : null, contactEmail: body.contactEmail ? String(body.contactEmail) : null,
+      createdAt, updatedAt: createdAt,
+    };
+    state.customers.push(customer); writeState(state); return { data: customer } as T;
+  }
+  const customerDeleteMatch = pathname.match(/^\/warehouse\/v1\/customers\/([^/]+)$/);
+  if (customerDeleteMatch && method === 'DELETE') {
+    const customerId = customerDeleteMatch[1];
+    const customer = state.customers.find(item => item.id === customerId);
+    if (!customer) throw new WarehouseApiError(404, 'CUSTOMER_NOT_FOUND', '未找到客户档案');
+    if (customer.integrationClientId) throw new WarehouseApiError(409, 'CUSTOMER_INTEGRATION_CONNECTED', '已绑定系统对接的上游客户不能删除');
+    if (state.airPickups.some(order => order.customerId === customerId)) throw new WarehouseApiError(409, 'CUSTOMER_IN_USE', '该客户已有提货单记录，不能删除');
+    state.customers = state.customers.filter(item => item.id !== customerId);
+    writeState(state);
+    return undefined as T;
+  }
 
   if (pathname === '/warehouse/v1/air-pickups' && method === 'GET') {
     const search = (url.searchParams.get('search') ?? '').replace(/[\s\u3000-]+/g, '').toUpperCase();
     const status = url.searchParams.get('status');
+    const customerId = url.searchParams.get('customerId');
     const evidenceStatus = url.searchParams.get('evidenceStatus');
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
     const pageSize = Math.max(1, Number(url.searchParams.get('pageSize') ?? 20));
-    const filtered = state.airPickups.filter(order => (!search || order.billNoNormalized.includes(search) || (order.cargoName ?? '').includes(search) || order.sourceClientName.toUpperCase().includes(search))
+    const filtered = state.airPickups.filter(order => (!search || order.billNoNormalized.includes(search) || (order.cargoName ?? '').includes(search) || order.customerName.toUpperCase().includes(search))
+      && (!customerId || order.customerId === customerId)
       && (!status || order.status === status) && (!evidenceStatus || order.evidenceStatus === evidenceStatus));
     const summary = {
       recorded: state.airPickups.filter(order => order.status === 'RECORDED').length,
@@ -376,11 +425,13 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname === '/warehouse/v1/air-pickups' && method === 'POST') {
     const bill = normalizeAirBillNo(body.billNo);
     if (state.airPickups.some(order => order.billNoNormalized === bill.normalized)) {
-      throw new WarehouseApiError(409, 'AIR_BILL_ALREADY_EXISTS', '该提货单号已存在；空格、大小写和连字符不影响唯一性。');
+      throw new WarehouseApiError(409, 'AIR_BILL_ALREADY_EXISTS', '该提货单号已存在；空格、大小写和连字符不影响唯一性');
     }
     const createdAt = now();
+    const customer = state.customers.find(item => item.id === body.customerId && item.status === 'ACTIVE');
+    if (!customer) throw new WarehouseApiError(400, 'INVALID_CUSTOMER', '请选择有效的归属客户');
     const order: MockAirPickup = {
-      id: crypto.randomUUID(), sourceClientId: MOCK_CLIENT_ID, sourceClientName: '本地测试客户', sourceType: 'MANUAL', externalBatchId: null,
+      id: crypto.randomUUID(), sourceClientId: null, sourceClientName: customer.name, customerId: customer.id, customerName: customer.name, customerType: customer.type, sourceType: 'MANUAL', externalBatchId: null,
       billNoRaw: bill.raw, billNo: bill.display, billNoNormalized: bill.normalized,
       billNoIsStandard: bill.standard, cargoName: body.cargoName ? String(body.cargoName) : null,
       forecastCartons: Number(body.forecastCartons), forecastPackages: Number(body.forecastPackages),
@@ -390,7 +441,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
       receiptBatchId: null, receiptBatchNo: null, handoverBatchId: null, handoverBatchNo: null,
       receivedAt: null, handedOverAt: null, version: 1, voidReason: null, createdAt, updatedAt: createdAt,
       exchangeProgress: { total: 0, changed: 0, intercepted: 0, exceptions: 0, processed: 0, pending: 0 },
-      receiptEvidence: [], handoverEvidence: [],
+      receiptEvidence: [], handoverEvidence: [], pickupDocuments: [],
       events: [mockAirEvent('ORDER_RECORDED')],
     };
     state.airPickups.unshift(order); writeState(state); return { data: order } as T;
@@ -398,7 +449,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname === '/warehouse/v1/air-pickup-receipt-batches' && method === 'POST') {
     const entries = Array.isArray(body.orders) ? body.orders as Array<Record<string, unknown>> : [];
     const targets = entries.map(entry => state.airPickups.find(order => order.id === entry.orderId));
-    if (!entries.length || targets.some(order => !order || order.status !== 'RECORDED')) throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_RECEIVABLE', '批次包含不存在或已处理的提货单，整批未保存。');
+    if (!entries.length || targets.some(order => !order || order.status !== 'RECORDED')) throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_RECEIVABLE', '批次包含不存在或已处理的提货单，整批未保存');
     const id = crypto.randomUUID(); const receiptBatchNo = `IN-${Date.now()}`; const receivedAt = body.receivedAt ? String(body.receivedAt) : now();
     entries.forEach((entry, index) => {
       const order = targets[index]!;
@@ -406,7 +457,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
       const actualWeight = Number(entry.actualWeight); const actualWeightUnit = String(entry.actualWeightUnit) as AirWeightUnit;
       const differs = actualCartons !== order.forecastCartons || actualPackages !== order.forecastPackages
         || actualWeight !== order.forecastWeight || actualWeightUnit !== order.forecastWeightUnit;
-      if (differs && !entry.differenceReason) throw new WarehouseApiError(400, 'DIFFERENCE_REASON_REQUIRED', `${order.billNo} 的实际值有差异，必须填写差异说明。`);
+      if (differs && !entry.differenceReason) throw new WarehouseApiError(400, 'DIFFERENCE_REASON_REQUIRED', `${order.billNo} 的实际值有差异，必须填写差异说明`);
     });
     entries.forEach((entry, index) => {
       const order = targets[index]!; order.status = 'RECEIVED'; order.actualCartons = Number(entry.actualCartons);
@@ -421,7 +472,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname === '/warehouse/v1/air-handover-batches' && method === 'POST') {
     const orderIds = Array.isArray(body.orderIds) ? body.orderIds.map(String) : [];
     const targets = orderIds.map(id => state.airPickups.find(order => order.id === id));
-    if (!orderIds.length || targets.some(order => !order || order.status !== 'RECEIVED' || order.handoverBatchId)) throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '批次包含未入库或已加入其他交仓批次的提货单。');
+    if (!orderIds.length || targets.some(order => !order || order.status !== 'RECEIVED' || order.handoverBatchId)) throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '批次包含未入库或已加入其他交仓批次的提货单');
     const createdAt = now();
     const batch: AirHandoverBatch = { id: crypto.randomUUID(), batchNo: `HO-${Date.now()}`, status: 'DRAFT',
       vehicleNo: body.vehicleNo ? String(body.vehicleNo) : null, driverName: body.driverName ? String(body.driverName) : null,
@@ -434,10 +485,10 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/air-handover-batches/')) {
     const batchId = segment(pathname, 3);
     const batch = state.airHandoverBatches.find(item => item.id === batchId);
-    if (!batch) throw new WarehouseApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
+    if (!batch) throw new WarehouseApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
     batch.orders = state.airPickups.filter(order => order.handoverBatchId === batch.id);
     if (pathname.endsWith('/confirm') && method === 'POST') {
-      if (batch.status !== 'DRAFT') throw new WarehouseApiError(409, 'HANDOVER_ALREADY_CONFIRMED', '该交仓批次已经确认。');
+      if (batch.status !== 'DRAFT') throw new WarehouseApiError(409, 'HANDOVER_ALREADY_CONFIRMED', '该交仓批次已经确认');
       const evidenceStatus = mockEvidenceStatus(batch); batch.status = 'CONFIRMED'; batch.confirmedAt = now(); batch.version += 1;
       batch.orders.forEach(order => {
         order.status = 'HANDED_OVER'; order.handedOverAt = batch.handedOverAt; order.evidenceStatus = evidenceStatus;
@@ -447,11 +498,11 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
       writeState(state); return { data: batch } as T;
     }
     if (method === 'PATCH') {
-      if (Number(body.expectedVersion) !== batch.version) throw new WarehouseApiError(409, 'HANDOVER_VERSION_CONFLICT', '交仓批次已被其他人修改，请刷新。');
+      if (Number(body.expectedVersion) !== batch.version) throw new WarehouseApiError(409, 'HANDOVER_VERSION_CONFLICT', '交仓批次已被其他人修改，请刷新');
       const orderIds = Array.isArray(body.orderIds) ? body.orderIds.map(String) : [];
       const targets = orderIds.map(id => state.airPickups.find(order => order.id === id));
       if (!orderIds.length || targets.some(order => !order || (order!.handoverBatchId !== batch.id && (order!.status !== 'RECEIVED' || order!.handoverBatchId)))) {
-        throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '成员变更包含未入库或已加入其他交仓批次的提货单。');
+        throw new WarehouseApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '成员变更包含未入库或已加入其他交仓批次的提货单');
       }
       state.airPickups.filter(order => order.handoverBatchId === batch.id && !orderIds.includes(order.id)).forEach(order => {
         order.handoverBatchId = null; order.handoverBatchNo = null; order.handedOverAt = null; order.status = 'RECEIVED';
@@ -472,12 +523,12 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/air-pickups/')) {
     const orderId = segment(pathname, 3);
     const order = state.airPickups.find(item => item.id === orderId);
-    if (!order) throw new WarehouseApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单。');
+    if (!order) throw new WarehouseApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单');
     if (pathname.endsWith('/void') && method === 'POST') {
       order.status = 'VOIDED'; order.voidReason = String(body.reason ?? ''); order.version += 1; order.updatedAt = now(); order.events.unshift(mockAirEvent('ORDER_VOIDED', order.voidReason)); writeState(state); return undefined as T;
     }
     if (method === 'PATCH') {
-      if (order.status !== 'RECORDED' || order.version !== Number(body.expectedVersion)) throw new WarehouseApiError(409, 'AIR_PICKUP_VERSION_CONFLICT', '提货单已被修改，请刷新。');
+      if (order.status !== 'RECORDED' || order.version !== Number(body.expectedVersion)) throw new WarehouseApiError(409, 'AIR_PICKUP_VERSION_CONFLICT', '提货单已被修改，请刷新');
       Object.assign(order, { cargoName: body.cargoName ? String(body.cargoName) : null, forecastCartons: Number(body.forecastCartons),
         forecastPackages: Number(body.forecastPackages), forecastWeight: Number(body.forecastWeight),
         forecastWeightUnit: String(body.forecastWeightUnit), remarks: body.remarks ? String(body.remarks) : null });
@@ -488,7 +539,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/air-evidence-assets/') && method === 'DELETE') {
     const assetId = segment(pathname, 3);
     const batch = state.airHandoverBatches.find(item => item.evidence.some(asset => asset.id === assetId));
-    if (!batch) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除。');
+    if (!batch) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除');
     batch.evidence = batch.evidence.filter(asset => asset.id !== assetId);
     evidenceFiles.delete(assetId);
     await deleteLocalFirstValue('airEvidence', assetId).catch(() => undefined);
@@ -498,6 +549,16 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
       order.events.unshift(mockAirEvent('EVIDENCE_REMOVED', String(body.reason ?? '')));
     });
     writeState(state); return { data: { evidenceStatus } } as T;
+  }
+  if (pathname.startsWith('/warehouse/v1/air-pickup-documents/') && method === 'DELETE') {
+    const assetId = segment(pathname, 3);
+    const order = state.airPickups.find(item => item.pickupDocuments?.some(document => document.id === assetId));
+    if (!order) throw new WarehouseApiError(404, 'PICKUP_DOCUMENT_NOT_FOUND', '提货文件不存在或已移除');
+    order.pickupDocuments = order.pickupDocuments?.filter(document => document.id !== assetId) ?? [];
+    pickupDocumentFiles.delete(assetId);
+    await deleteLocalFirstValue('airPickupDocuments', assetId).catch(() => undefined);
+    order.updatedAt = now(); order.version += 1; order.events.unshift(mockAirEvent('PICKUP_DOCUMENT_REMOVED', String(body.reason ?? '')));
+    writeState(state); return undefined as T;
   }
 
   if (pathname === '/warehouse/v1/attendance/context' && method === 'GET') {
@@ -543,7 +604,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
 
   if (pathname.startsWith('/warehouse/v1/attendance/appeals/') && pathname.endsWith('/review') && method === 'PATCH') {
     const appeal = state.attendanceAppeals.find(item => item.id === segment(pathname, 4));
-    if (!appeal) throw new WarehouseApiError(404, 'APPEAL_NOT_FOUND', '未找到申诉。');
+    if (!appeal) throw new WarehouseApiError(404, 'APPEAL_NOT_FOUND', '未找到申诉');
     appeal.status = body.decision as AttendanceAppeal['status']; appeal.reviewNote = String(body.reviewNote || '') || null;
     appeal.reviewedByReference = `user:${ADMIN_USER_ID}`; appeal.reviewedAt = now(); appeal.updatedAt = now(); writeState(state);
     return { data: appeal } as T;
@@ -607,7 +668,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   }
   if (pathname === '/warehouse/v1/accounts' && method === 'POST') {
     const role = state.roles.find(item => item.id === body.roleId);
-    if (!role) throw new WarehouseApiError(400, 'INVALID_ACCOUNT_ASSIGNMENT', '请选择有效角色。');
+    if (!role) throw new WarehouseApiError(400, 'INVALID_ACCOUNT_ASSIGNMENT', '请选择有效角色');
     const id = crypto.randomUUID();
     const account: WarehouseAccount = {
       id, loginName: String(body.loginName), displayName: String(body.displayName), email: body.email ? String(body.email) : null,
@@ -624,10 +685,10 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/accounts/')) {
     const accountId = segment(pathname, 3);
     const account = state.accounts.find(item => item.id === accountId);
-    if (!account) throw new WarehouseApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户。');
+    if (!account) throw new WarehouseApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户');
     if (pathname.endsWith('/role') && method === 'PUT') {
       const role = state.roles.find(item => item.id === body.roleId);
-      if (!role) throw new WarehouseApiError(404, 'ROLE_NOT_FOUND', '未找到角色。');
+      if (!role) throw new WarehouseApiError(404, 'ROLE_NOT_FOUND', '未找到角色');
       account.memberships = [{ id: account.memberships[0]?.id ?? crypto.randomUUID(), warehouseId: WAREHOUSE_ID,
         warehouseCode: 'jfk-warehouse', warehouseName: 'JFK 测试仓', employeeNo: body.employeeNo ? String(body.employeeNo) : null,
         status: 'ACTIVE', roleId: role.id, roleName: role.name }];
@@ -665,9 +726,9 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/roles/')) {
     const roleId = segment(pathname, 3);
     const role = state.roles.find(item => item.id === roleId);
-    if (!role) throw new WarehouseApiError(404, 'ROLE_NOT_FOUND', '未找到角色。');
+    if (!role) throw new WarehouseApiError(404, 'ROLE_NOT_FOUND', '未找到角色');
     if (method === 'PATCH') {
-      if (Number(body.expectedVersion) !== role.version) throw new WarehouseApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被修改，请刷新。');
+      if (Number(body.expectedVersion) !== role.version) throw new WarehouseApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被修改，请刷新');
       if (body.name) role.name = String(body.name);
       if (body.description !== undefined) role.description = body.description ? String(body.description) : null;
       if (Array.isArray(body.permissions)) role.permissions = body.permissions.map(String);
@@ -700,8 +761,23 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/work-batches/')) {
     const batchId = segment(pathname, 3);
     const batch = state.batches.find(item => item.id === batchId);
-    if (!batch) throw new WarehouseApiError(404, 'BATCH_NOT_FOUND', '未找到共享批次。');
+    if (!batch) throw new WarehouseApiError(404, 'BATCH_NOT_FOUND', '未找到共享批次');
+    if (pathname.endsWith('/missing-items') && method === 'GET') {
+      const missingItems = batch.items.filter(item => !item.labelAssetId);
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      const limit = Number(url.searchParams.get('limit') ?? 500);
+      return { data: {
+        total: missingItems.length,
+        items: missingItems.slice(offset, offset + limit).map(item => ({
+          firstLegTrackingNo: item.firstLegTrackingNo,
+          courierTrackingNo: item.courierTrackingNo,
+          reason: '未匹配面单',
+          updatedAt: batch.updatedAt,
+        })),
+      } } as T;
+    }
     if (pathname.endsWith('/items') && method === 'POST') {
+      if (batch.status !== 'DRAFT') throw new WarehouseApiError(409, 'BATCH_NOT_EDITABLE', '只有草稿批次可以继续导入');
       const items = Array.isArray(body.items) ? body.items as Array<Record<string, unknown>> : [];
       items.forEach(item => {
         const firstLeg = String(item.firstLegTrackingNo).toUpperCase();
@@ -717,7 +793,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
       return { data: { importedCount: items.length } } as T;
     }
     if (pathname.endsWith('/publish') && method === 'POST') {
-      if (batch.mappingCount < 1 || batch.mappingCount !== batch.pdfCount) throw new WarehouseApiError(409, 'BATCH_INCOMPLETE', '映射数量与 PDF 数量必须一致。');
+      if (batch.mappingCount < 1) throw new WarehouseApiError(409, 'BATCH_INCOMPLETE', '至少需要一条 Excel 映射');
       batch.status = 'ACTIVE'; batch.publishedAt = now(); batch.version += 1; writeState(state);
       return { data: batch } as T;
     }
@@ -733,13 +809,13 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
     const matches = state.batches.filter(batch => batch.status === 'ACTIVE').flatMap(batch => batch.items
       .filter(item => item.firstLegTrackingNo === trackingNo || item.courierTrackingNo === trackingNo)
       .map(item => ({ batch, item })));
-    if (matches.length === 0) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '当前生效批次中未找到该单号。');
-    if (matches.length > 1) throw new WarehouseApiError(409, 'AMBIGUOUS_BATCH_ITEM', '该单号同时存在于多个活动批次。');
+    if (matches.length === 0) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '当前生效批次中未找到该单号');
+    if (matches.length > 1) throw new WarehouseApiError(409, 'AMBIGUOUS_BATCH_ITEM', '该单号同时存在于多个活动批次');
     const { batch, item } = matches[0];
     const mappedBlocked = state.intercepts.find(intercept => intercept.status === 'ACTIVE'
       && [item.firstLegTrackingNo, item.courierTrackingNo].includes(intercept.trackingNo));
     if (mappedBlocked) return { data: { blocked: true, trackingNo: mappedBlocked.trackingNo, reason: mappedBlocked.reason } } as T;
-    if (!item.labelAssetId) throw new WarehouseApiError(409, 'LABEL_NOT_READY', '该单号尚无可用面单。');
+    if (!item.labelAssetId) throw new WarehouseApiError(409, 'LABEL_NOT_READY', '该单号尚无可用面单');
     item.claimToken = crypto.randomUUID(); item.status = 'CLAIMED'; writeState(state);
     return { data: { blocked: false, claimToken: item.claimToken, item: { id: item.id, batchId: batch.id, batchName: batch.name,
       firstLegTrackingNo: item.firstLegTrackingNo, courierTrackingNo: item.courierTrackingNo, labelAssetId: item.labelAssetId,
@@ -748,7 +824,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/work-batch-items/') && pathname.endsWith('/complete') && method === 'POST') {
     const itemId = segment(pathname, 3);
     const item = state.batches.flatMap(batch => batch.items).find(candidate => candidate.id === itemId);
-    if (!item) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '未找到批次单号。');
+    if (!item) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '未找到批次单号');
     item.status = String(body.outcome) as MockBatchItem['status'];
     writeState(state);
     return { data: { id: crypto.randomUUID(), outcome: item.status } } as T;
@@ -780,7 +856,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname.startsWith('/warehouse/v1/intercepts/') && method === 'DELETE') {
     const trackingNo = segment(pathname, 3).toUpperCase();
     const intercept = state.intercepts.find(item => item.trackingNo === trackingNo);
-    if (!intercept) throw new WarehouseApiError(404, 'INTERCEPT_NOT_FOUND', '未找到拦截单号。');
+    if (!intercept) throw new WarehouseApiError(404, 'INTERCEPT_NOT_FOUND', '未找到拦截单号');
     state.interceptRevision += 1; intercept.status = 'REMOVED'; intercept.revision = state.interceptRevision; intercept.updatedAt = now();
     writeState(state);
     return undefined as T;
@@ -804,23 +880,23 @@ export async function mockSubmitAttendancePunch(input: {
   const openShift = findOpenAttendanceShift(state, timestamp);
   if (!input.gesturePassed || input.gestureScore < 0.005) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
-      reasonCode: 'GESTURE_NOT_VERIFIED', message: '动作验证未通过，请重试或提交例外申请。', serverTime: timestamp } };
+      reasonCode: 'GESTURE_NOT_VERIFIED', message: '动作验证未通过，请重试或提交例外申请', serverTime: timestamp } };
   }
   if (input.channel === 'MOBILE' && (input.latitude === undefined || input.accuracy === undefined || input.accuracy > 50)) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
-      reasonCode: 'LOCATION_REQUIRED', message: '手机打卡需要有效的浏览器位置。', serverTime: timestamp } };
+      reasonCode: 'LOCATION_REQUIRED', message: '手机打卡需要有效的浏览器位置', serverTime: timestamp } };
   }
   if (input.punchType === 'IN' && openShift) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'REJECTED',
-      reasonCode: 'OPEN_SHIFT_EXISTS', message: '仍有18小时内的上班记录，请先完成下班打卡。', serverTime: timestamp } };
+      reasonCode: 'OPEN_SHIFT_EXISTS', message: '仍有18小时内的上班记录，请先完成下班打卡', serverTime: timestamp } };
   }
   if (input.punchType === 'IN' && existing) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'REJECTED',
-      reasonCode: 'CLOCK_IN_ALREADY_EXISTS', message: '今天已经存在上班打卡。', serverTime: timestamp } };
+      reasonCode: 'CLOCK_IN_ALREADY_EXISTS', message: '今天已经存在上班打卡', serverTime: timestamp } };
   }
   if (input.punchType === 'OUT' && !openShift) {
     return { data: { attemptId: crypto.randomUUID(), accepted: false, result: 'EXCEPTION_REQUIRED',
-      reasonCode: 'OPEN_SHIFT_NOT_FOUND', message: '未找到18小时内的上班打卡。', serverTime: timestamp } };
+      reasonCode: 'OPEN_SHIFT_NOT_FOUND', message: '未找到18小时内的上班打卡', serverTime: timestamp } };
   }
   let daily: AttendanceDailyResult;
   if (input.punchType === 'IN') {
@@ -845,7 +921,9 @@ export async function mockUploadSharedWorkBatchLabel(batchId: string, firstLegTr
   const state = readState();
   const batch = state.batches.find(item => item.id === batchId);
   const item = batch?.items.find(candidate => candidate.firstLegTrackingNo === firstLegTrackingNo.replaceAll(/\s+/g, '').toUpperCase());
-  if (!batch || !item) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '请先导入对应 Excel 映射。');
+  if (!batch || !item) throw new WarehouseApiError(404, 'BATCH_ITEM_NOT_FOUND', '请先导入对应 Excel 映射');
+  if (batch.status !== 'DRAFT' && batch.status !== 'ACTIVE') throw new WarehouseApiError(409, 'BATCH_NOT_EDITABLE', '只有草稿或生效中的批次可以上传面单');
+  if (batch.status === 'ACTIVE' && item.labelAssetId) throw new WarehouseApiError(409, 'LABEL_ALREADY_READY', '生效批次只允许补传缺失面单，不能替换已有可用面单');
   const assetId = crypto.randomUUID();
   item.labelAssetId = assetId;
   labelFiles.set(assetId, file);
@@ -865,8 +943,8 @@ export async function mockUploadAirHandoverEvidence(batchId: string, input: {
 }) {
   const state = readState();
   const batch = state.airHandoverBatches.find(item => item.id === batchId);
-  if (!batch) throw new WarehouseApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
-  if (batch.evidence.filter(item => item.type === input.type).length >= 9) throw new WarehouseApiError(409, 'EVIDENCE_LIMIT_REACHED', '每类凭证最多 9 张。');
+  if (!batch) throw new WarehouseApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
+  if (batch.evidence.filter(item => item.type === input.type).length >= 9) throw new WarehouseApiError(409, 'EVIDENCE_LIMIT_REACHED', '每类凭证最多 9 张');
   const id = crypto.randomUUID();
   const createdAt = now();
   const asset = { id, type: input.type, filename: input.file.name, contentType: input.file.type as 'image/jpeg' | 'image/png',
@@ -889,9 +967,9 @@ export async function mockUploadAirReceiptEvidence(batchId: string, input: {
 }) {
   const state = readState();
   const orders = state.airPickups.filter(order => order.receiptBatchId === batchId);
-  if (!orders.length) throw new WarehouseApiError(404, 'RECEIPT_BATCH_NOT_FOUND', '未找到入库批次。');
+  if (!orders.length) throw new WarehouseApiError(404, 'RECEIPT_BATCH_NOT_FOUND', '未找到入库批次');
   const existing = orders[0].receiptEvidence ?? [];
-  if (existing.length >= 9) throw new WarehouseApiError(409, 'RECEIPT_EVIDENCE_LIMIT_REACHED', '入库照最多 9 张。');
+  if (existing.length >= 9) throw new WarehouseApiError(409, 'RECEIPT_EVIDENCE_LIMIT_REACHED', '入库照最多 9 张');
   const id = crypto.randomUUID();
   const createdAt = now();
   const asset = { id, type: 'RECEIPT' as const, filename: input.file.name,
@@ -913,8 +991,41 @@ export async function mockUploadAirReceiptEvidence(batchId: string, input: {
 export async function mockDownloadAirEvidence(downloadPath: string): Promise<Blob> {
   const assetId = downloadPath.split('/').at(-2) ?? '';
   const blob = evidenceFiles.get(assetId) ?? await readLocalFirstValue<Blob>('airEvidence', assetId).catch(() => null);
-  if (!blob) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证文件不可用，请重新上传后再预览。');
+  if (!blob) throw new WarehouseApiError(404, 'EVIDENCE_NOT_FOUND', '凭证文件不可用，请重新上传后再预览');
   evidenceFiles.set(assetId, blob);
+  return blob;
+}
+
+export async function mockUploadAirPickupDocument(orderId: string, file: File) {
+  const state = readState();
+  const order = state.airPickups.find(item => item.id === orderId);
+  if (!order) throw new WarehouseApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单');
+  if (order.status === 'VOIDED') throw new WarehouseApiError(409, 'AIR_PICKUP_VOIDED', '已作废的提货单不能新增提货文件');
+  const documents = order.pickupDocuments ?? [];
+  if (documents.length >= 10) throw new WarehouseApiError(409, 'PICKUP_DOCUMENT_LIMIT_REACHED', '每张提货单最多上传 10 个提货文件');
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  const types: Record<string, AirPickupDocument['contentType']> = {
+    pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv',
+  };
+  if (!extension || !types[extension]) throw new WarehouseApiError(415, 'UNSUPPORTED_PICKUP_DOCUMENT', '仅支持 PDF、Word、Excel 或 CSV 提货文件');
+  const id = crypto.randomUUID();
+  const asset: AirPickupDocument = { id, filename: file.name, contentType: types[extension], byteSize: file.size,
+    downloadPath: `/warehouse/v1/air-pickup-documents/${id}/content`, createdAt: now() };
+  pickupDocumentFiles.set(id, file);
+  await writeLocalFirstValue('airPickupDocuments', id, file).catch(() => undefined);
+  order.pickupDocuments = [...documents, asset];
+  order.events.unshift(mockAirEvent('PICKUP_DOCUMENT_ADDED'));
+  order.updatedAt = asset.createdAt;
+  writeState(state);
+  return { data: asset };
+}
+
+export async function mockDownloadAirPickupDocument(downloadPath: string): Promise<Blob> {
+  const assetId = downloadPath.split('/').at(-2) ?? '';
+  const blob = pickupDocumentFiles.get(assetId) ?? await readLocalFirstValue<Blob>('airPickupDocuments', assetId).catch(() => null);
+  if (!blob) throw new WarehouseApiError(404, 'PICKUP_DOCUMENT_NOT_FOUND', '提货文件不可用，请重新上传');
+  pickupDocumentFiles.set(assetId, blob);
   return blob;
 }
 

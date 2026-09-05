@@ -9,8 +9,10 @@ import { validateLabelPdf } from './labelPdf.js';
 import { createCosLabelStorage, createFilesystemLabelStorage } from './labelStorage.js';
 import { createShipmentIngestor } from './shipmentIngest.js';
 import { createInboundBatchIngestor } from './inboundBatchIngest.js';
+import { createTygV11Integration } from './tygV11.js';
 import { createSharedWarehouseWork } from './sharedWarehouseWork.js';
 import { createAirPickupOperations } from './airPickupOperations.js';
+import { createCustomerProfiles } from './customerProfiles.js';
 import { createAttendanceOperations } from './attendanceOperations.js';
 import { createOutboundWebhooks } from './outboundWebhooks.js';
 import { toShipment, type ShipmentRow } from './shipmentRecord.js';
@@ -33,20 +35,21 @@ app.use((req, res, next) => {
 
 const jsonBodyParser = express.json({ limit: config.jsonLimit });
 const inboundBatchBodyParser = express.json({ limit: config.inboundBatchJsonLimit });
+const tygLabelPushBodyParser = express.json({ limit: config.tygLabelPushJsonLimit });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && req.path === '/api/v1/inbound-batches') return next();
+  if (req.method === 'POST' && (req.path === '/api/v1/inbound-batches' || req.path === '/api/v1/label-pushes')) return next();
   return jsonBodyParser(req, res, next);
 });
 
 function text(value: unknown, field: string, maxLength = 128, required = false): string | undefined {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return undefined;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const result = value.trim();
   if (!result || result.length > maxLength) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   }
   return result;
 }
@@ -60,6 +63,7 @@ const labelAssets = createLabelAssetModule({
   mysql,
   storage: labelStorage,
 });
+const tygV11 = createTygV11Integration({ mysql, redis, storage: labelStorage });
 const warehouseIdentity = createWarehouseIdentity({
   mysql,
   redis,
@@ -76,6 +80,7 @@ const outboundWebhooks = createOutboundWebhooks({
 const warehouseOperations = createWarehouseOperations({ mysql, storage: labelStorage, outboundWebhooks });
 const sharedWarehouseWork = createSharedWarehouseWork({ mysql, storage: labelStorage });
 const airPickupOperations = createAirPickupOperations({ mysql, storage: labelStorage });
+const customerProfiles = createCustomerProfiles({ mysql });
 const attendanceOperations = createAttendanceOperations({ mysql, storage: labelStorage });
 const warehouseBoundary = createWarehouseHttpBoundary({
   identity: warehouseIdentity,
@@ -84,6 +89,7 @@ const warehouseBoundary = createWarehouseHttpBoundary({
 });
 const pdfBodyParser = express.raw({ type: 'application/pdf', limit: config.labelPdfLimit });
 const evidenceBodyParser = express.raw({ type: ['image/jpeg', 'image/png'], limit: '10mb' });
+const pickupDocumentBodyParser = express.raw({ type: '*/*', limit: '20mb' });
 const attendancePhotoBodyParser = express.raw({ type: ['image/jpeg', 'image/png'], limit: '1mb' });
 
 app.get('/healthz', async (_req, res, next) => {
@@ -93,7 +99,7 @@ app.get('/healthz', async (_req, res, next) => {
     await labelStorage.healthCheck();
     res.json({ ok: true, outboundWebhooks: { enabled: config.outboundWebhooks.enabled } });
   } catch (error) {
-    next(new ApiError(503, 'DEPENDENCY_UNAVAILABLE', '数据库或缓存暂时不可用。'));
+    next(new ApiError(503, 'DEPENDENCY_UNAVAILABLE', '数据库或缓存暂时不可用'));
   }
 });
 
@@ -128,6 +134,23 @@ upstreamRouter.post('/inbound-batches', requireScope('shipments:write'), inbound
   }
 });
 
+// TYG v1.1 is deliberately separate from the legacy shipment and raw-PDF
+// routes below. Its 7 MiB JSON limit applies only to Base64 label pushes.
+upstreamRouter.post('/air-shipments', requireScope('shipments:write'), async (req, res, next) => {
+  try {
+    const result = await tygV11.upsertAirShipment({ client: req.client!, requestId: req.requestId, idempotencyKey: req.header('idempotency-key'), body: req.body });
+    res.status(result.status).json(result.body);
+  } catch (error) { next(error); }
+});
+
+upstreamRouter.post('/label-pushes', requireScope('labels:write'), tygLabelPushBodyParser, async (req, res, next) => {
+  try {
+    if (!req.is('application/json')) throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', 'TYG v1.1 面单推送必须使用 Content-Type: application/json');
+    const result = await tygV11.pushLabel({ client: req.client!, requestId: req.requestId, idempotencyKey: req.header('idempotency-key'), body: req.body });
+    res.status(result.status).json(result.body);
+  } catch (error) { next(error); }
+});
+
 upstreamRouter.put(
   '/shipments/by-first-leg/:firstLegTrackingNo/label',
   requireScope('labels:write'),
@@ -135,7 +158,7 @@ upstreamRouter.put(
   async (req, res, next) => {
     try {
       if (!req.is('application/pdf')) {
-        throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', '面单上传必须使用 Content-Type: application/pdf。');
+        throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', '面单上传必须使用 Content-Type: application/pdf');
       }
       const firstLegTrackingNo = text(req.params.firstLegTrackingNo, 'firstLegTrackingNo', 128, true)!;
       const pdf = validateLabelPdf(req.body, req.header('x-label-sha256'));
@@ -159,7 +182,7 @@ upstreamRouter.get('/shipments/by-first-leg/:firstLegTrackingNo', requireScope('
       `SELECT * FROM shipments WHERE client_id = ? AND first_leg_tracking_no = ? LIMIT 1`,
       [req.client!.id, firstLegTrackingNo],
     );
-    if (!rows[0]) throw new ApiError(404, 'SHIPMENT_NOT_FOUND', '未找到对应物流单据。');
+    if (!rows[0]) throw new ApiError(404, 'SHIPMENT_NOT_FOUND', '未找到对应物流单据');
     res.json({ data: toShipment(rows[0]), requestId: req.requestId });
   } catch (error) {
     next(error);
@@ -428,6 +451,15 @@ warehouseRouter.get('/work-batches/:batchId/items', warehouseBoundary.session, r
   }
 });
 
+warehouseRouter.get('/work-batches/:batchId/missing-items', warehouseBoundary.session, requireWarehousePermission('batches.view'), async (req, res, next) => {
+  try {
+    const items = await sharedWarehouseWork.listMissingItems(req.params.batchId, { offset: req.query.offset, limit: req.query.limit });
+    res.json({ data: items, requestId: req.requestId });
+  } catch (error) {
+    next(error);
+  }
+});
+
 warehouseRouter.post('/work-batches/:batchId/items', warehouseBoundary.session, requireWarehousePermission('batches.create'), async (req, res, next) => {
   try {
     const result = await sharedWarehouseWork.upsertItems(req.warehouseSession!, req.params.batchId, { items: req.body?.items });
@@ -444,7 +476,7 @@ warehouseRouter.put(
   pdfBodyParser,
   async (req, res, next) => {
     try {
-      if (!req.is('application/pdf')) throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', '面单上传必须使用 Content-Type: application/pdf。');
+      if (!req.is('application/pdf')) throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', '面单上传必须使用 Content-Type: application/pdf');
       const pdf = validateLabelPdf(req.body, req.header('x-label-sha256'));
       const asset = await sharedWarehouseWork.storeItemLabel(
         req.warehouseSession!, req.params.batchId, req.params.firstLegTrackingNo, req.query.filename, pdf,
@@ -562,6 +594,7 @@ warehouseRouter.get('/air-pickups', warehouseBoundary.session, requireWarehouseP
   try {
     const result = await airPickupOperations.listOrders({
       search: req.query.search,
+      customerId: req.query.customerId,
       status: req.query.status,
       evidenceStatus: req.query.evidenceStatus,
       page: req.query.page,
@@ -575,6 +608,32 @@ warehouseRouter.get('/air-pickups', warehouseBoundary.session, requireWarehouseP
 warehouseRouter.get('/air-pickup-clients', warehouseBoundary.session, requireWarehousePermission('air_pickups.create'), async (req, res, next) => {
   try {
     res.json({ data: await airPickupOperations.listClients(), requestId: req.requestId });
+  } catch (error) { next(error); }
+});
+
+warehouseRouter.get('/customers', warehouseBoundary.session, requireWarehouseAnyPermission(['customers.view', 'air_pickups.create']), async (req, res, next) => {
+  try {
+    const includeDisabled = req.query.includeDisabled === 'true';
+    res.json({ data: await customerProfiles.list({ type: req.query.type, includeDisabled }), requestId: req.requestId });
+  } catch (error) { next(error); }
+});
+
+warehouseRouter.post('/customers', warehouseBoundary.session, requireWarehousePermission('customers.manage'), async (req, res, next) => {
+  try {
+    res.status(201).json({ data: await customerProfiles.create(req.warehouseSession!, req.body ?? {}), requestId: req.requestId });
+  } catch (error) { next(error); }
+});
+
+warehouseRouter.patch('/customers/:customerId', warehouseBoundary.session, requireWarehousePermission('customers.manage'), async (req, res, next) => {
+  try {
+    res.json({ data: await customerProfiles.update(req.warehouseSession!, String(req.params.customerId), req.body ?? {}), requestId: req.requestId });
+  } catch (error) { next(error); }
+});
+
+warehouseRouter.delete('/customers/:customerId', warehouseBoundary.session, requireWarehousePermission('customers.manage'), async (req, res, next) => {
+  try {
+    await customerProfiles.remove(String(req.params.customerId));
+    res.status(204).end();
   } catch (error) { next(error); }
 });
 
@@ -598,6 +657,46 @@ warehouseRouter.patch('/air-pickups/:orderId', warehouseBoundary.session, requir
   } catch (error) { next(error); }
 });
 
+warehouseRouter.put(
+  '/air-pickups/:orderId/documents',
+  warehouseBoundary.session,
+  requireWarehousePermission('air_pickups.create'),
+  pickupDocumentBodyParser,
+  async (req, res, next) => {
+    try {
+      const asset = await airPickupOperations.storePickupDocument(req.warehouseSession!, warehouseAudit(req), req.params.orderId, {
+        filename: req.query.filename,
+        contentType: req.header('content-type'),
+        sha256: req.header('x-document-sha256'),
+        content: req.body,
+      });
+      res.status(201).json({ data: asset, requestId: req.requestId });
+    } catch (error) { next(error); }
+  },
+);
+
+warehouseRouter.get('/air-pickup-documents/:assetId/content', warehouseBoundary.session, requireWarehousePermission('air_pickups.view'), async (req, res, next) => {
+  try {
+    const result = await airPickupOperations.openPickupDocument(req.params.assetId);
+    const safeFilename = result.metadata.original_filename.replace(/[\r\n"]/g, '_');
+    const fallbackFilename = safeFilename.replace(/[^\x20-\x7e]/g, '_');
+    const encodedFilename = encodeURIComponent(safeFilename).replace(/[!'()]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader('Content-Type', result.metadata.content_type);
+    res.setHeader('Content-Length', String(result.object.byteSize));
+    res.setHeader('Content-Disposition', `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    result.object.stream.on('error', next).pipe(res);
+  } catch (error) { next(error); }
+});
+
+warehouseRouter.delete('/air-pickup-documents/:assetId', warehouseBoundary.session, requireWarehousePermission('air_pickups.correct'), async (req, res, next) => {
+  try {
+    await airPickupOperations.removePickupDocument(req.warehouseSession!, warehouseAudit(req), req.params.assetId, req.body ?? {});
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
+
 warehouseRouter.post('/air-pickup-receipt-batches', warehouseBoundary.session, requireWarehousePermission('air_pickups.receive'), async (req, res, next) => {
   try {
     const batch = await airPickupOperations.createReceiptBatch(req.warehouseSession!, warehouseAudit(req), req.body ?? {});
@@ -612,7 +711,7 @@ warehouseRouter.put(
   evidenceBodyParser,
   async (req, res, next) => {
     try {
-      if (!req.is('image/jpeg') && !req.is('image/png')) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持 JPG、JPEG 或 PNG 图片。');
+      if (!req.is('image/jpeg') && !req.is('image/png')) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持 JPG、JPEG 或 PNG 图片');
       const warningsHeader = req.header('x-image-quality-warnings');
       const asset = await airPickupOperations.storeReceiptEvidence(req.warehouseSession!, warehouseAudit(req), req.params.batchId, {
         filename: req.query.filename,
@@ -673,7 +772,7 @@ warehouseRouter.put(
   evidenceBodyParser,
   async (req, res, next) => {
     try {
-      if (!req.is('image/jpeg') && !req.is('image/png')) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持 JPG、JPEG 或 PNG 图片。');
+      if (!req.is('image/jpeg') && !req.is('image/png')) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持 JPG、JPEG 或 PNG 图片');
       const warningsHeader = req.header('x-image-quality-warnings');
       const asset = await airPickupOperations.storeEvidence(req.warehouseSession!, warehouseAudit(req), req.params.batchId, {
         type: req.query.type,
@@ -729,7 +828,7 @@ warehouseRouter.put(
   async (req, res, next) => {
     try {
       if (!req.is('image/jpeg') && !req.is('image/png')) {
-        throw new ApiError(415, 'UNSUPPORTED_ATTENDANCE_PHOTO', '打卡照片仅支持 JPG、JPEG 或 PNG。');
+        throw new ApiError(415, 'UNSUPPORTED_ATTENDANCE_PHOTO', '打卡照片仅支持 JPG、JPEG 或 PNG');
       }
       const result = await attendanceOperations.submitPunch(req.warehouseSession!, warehouseAudit(req), {
         ...req.query,
@@ -893,12 +992,18 @@ warehouseRouter.post('/outbound-events/:eventId/retry', warehouseBoundary.sessio
 app.use('/warehouse/v1', warehouseRouter);
 
 app.use((_req, _res, next) => {
-  next(new ApiError(404, 'ROUTE_NOT_FOUND', '接口不存在。'));
+  next(new ApiError(404, 'ROUTE_NOT_FOUND', '接口不存在'));
 });
 
 app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
   const apiError = normalizeApiError(error);
   if (!(error instanceof ApiError) && apiError.status >= 500) console.error(error);
+  // v1.1 was agreed with a root-level code/message envelope. Keep the legacy
+  // error envelope unchanged for every pre-existing endpoint.
+  if (req.path === '/api/v1/air-shipments' || req.path === '/api/v1/label-pushes') {
+    res.status(apiError.status).json({ code: apiError.code, message: apiError.message, requestId: req.requestId });
+    return;
+  }
   res.status(apiError.status).json({
     error: { code: apiError.code, message: apiError.message, requestId: req.requestId },
   });

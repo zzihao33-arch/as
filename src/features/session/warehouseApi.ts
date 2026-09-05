@@ -63,7 +63,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '云端请求失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '云端请求失败');
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
@@ -126,7 +126,7 @@ export async function downloadWarehouseLabel(downloadPath: string): Promise<Blob
   const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_DOWNLOAD_FAILED', payload?.error?.message ?? '面单下载失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_DOWNLOAD_FAILED', payload?.error?.message ?? '面单下载失败');
   }
   return response.blob();
 }
@@ -264,6 +264,13 @@ export interface SharedWorkBatch {
   updatedAt: string;
 }
 
+export interface SharedWorkBatchMissingItem {
+  firstLegTrackingNo: string;
+  courierTrackingNo: string | null;
+  reason: string;
+  updatedAt: string;
+}
+
 export async function listSharedWorkBatches(status?: SharedWorkBatch['status']) {
   const query = status ? `?status=${status}` : '';
   const result = await request<{ data: SharedWorkBatch[] }>(`/warehouse/v1/work-batches${query}`);
@@ -277,6 +284,12 @@ export async function createSharedWorkBatch(name: string) {
 
 export function upsertSharedWorkBatchItems(batchId: string, items: Array<{ firstLegTrackingNo: string; courierTrackingNo: string | null; rawData?: unknown }>): Promise<unknown> {
   return request(`/warehouse/v1/work-batches/${batchId}/items`, { method: 'POST', body: JSON.stringify({ items }) });
+}
+
+export async function listMissingSharedWorkBatchItems(batchId: string, offset = 0, limit = 500) {
+  const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  const result = await request<{ data: { total: number; items: SharedWorkBatchMissingItem[] } }>(`/warehouse/v1/work-batches/${batchId}/missing-items?${query}`);
+  return result.data;
 }
 
 export async function uploadSharedWorkBatchLabel(batchId: string, firstLegTrackingNo: string, file: File) {
@@ -295,7 +308,7 @@ export async function uploadSharedWorkBatchLabel(batchId: string, firstLegTracki
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_UPLOAD_FAILED', payload?.error?.message ?? '共享面单上传失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_UPLOAD_FAILED', payload?.error?.message ?? '共享面单上传失败');
   }
   return response.json();
 }
@@ -371,6 +384,9 @@ export interface AirPickupOrder {
   id: string;
   sourceClientId: string | null;
   sourceClientName: string;
+  customerId: string | null;
+  customerName: string;
+  customerType: 'BUSINESS' | 'UPSTREAM' | null;
   sourceType: 'MANUAL' | 'UPSTREAM';
   externalBatchId: string | null;
   billNoRaw: string;
@@ -410,7 +426,17 @@ export interface AirPickupOrder {
   updatedAt: string;
   receiptEvidence?: AirHandoverEvidence[];
   handoverEvidence?: AirHandoverEvidence[];
+  pickupDocuments?: AirPickupDocument[];
   events?: AirPickupEvent[];
+}
+
+export interface AirPickupDocument {
+  id: string;
+  filename: string;
+  contentType: 'application/pdf' | 'application/msword' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' | 'application/vnd.ms-excel' | 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' | 'text/csv';
+  byteSize: number;
+  downloadPath: string;
+  createdAt: string;
 }
 
 export interface AirPickupEvent {
@@ -443,6 +469,21 @@ export interface AirPickupClient {
   name: string;
 }
 
+export interface CustomerProfile {
+  id: string;
+  code: string;
+  name: string;
+  type: 'BUSINESS' | 'UPSTREAM';
+  status: 'ACTIVE' | 'DISABLED';
+  integrationStatus: 'NOT_APPLICABLE' | 'PENDING' | 'INTEGRATING' | 'INTEGRATED' | 'SUSPENDED';
+  integrationClientId: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AirPickupSummary {
   recorded: number;
   received: number;
@@ -469,7 +510,7 @@ export interface AirHandoverBatch {
 }
 
 export async function listAirPickups(filters: {
-  search?: string; status?: AirPickupStatus | ''; evidenceStatus?: AirEvidenceStatus | ''; page?: number; pageSize?: number;
+  search?: string; customerId?: string; status?: AirPickupStatus | ''; evidenceStatus?: AirEvidenceStatus | ''; page?: number; pageSize?: number;
 } = {}) {
   const query = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
@@ -481,13 +522,34 @@ export async function listAirPickupClients() {
   return result.data;
 }
 
+export async function listCustomerProfiles(filters: { type?: CustomerProfile['type']; includeDisabled?: boolean } = {}) {
+  const query = new URLSearchParams();
+  if (filters.type) query.set('type', filters.type);
+  if (filters.includeDisabled) query.set('includeDisabled', 'true');
+  const suffix = query.size ? `?${query}` : '';
+  const result = await request<{ data: CustomerProfile[] }>(`/warehouse/v1/customers${suffix}`);
+  return result.data;
+}
+
+export async function createCustomerProfile(input: {
+  customerCode: string; name: string; type: CustomerProfile['type']; integrationStatus?: 'PENDING' | 'INTEGRATING';
+  contactName?: string; contactPhone?: string; contactEmail?: string;
+}) {
+  const result = await request<{ data: CustomerProfile }>('/warehouse/v1/customers', { method: 'POST', body: JSON.stringify(input) });
+  return result.data;
+}
+
+export function deleteCustomerProfile(customerId: string): Promise<void> {
+  return request(`/warehouse/v1/customers/${customerId}`, { method: 'DELETE' });
+}
+
 export async function getAirPickup(orderId: string) {
   const result = await request<{ data: AirPickupOrder }>(`/warehouse/v1/air-pickups/${orderId}`);
   return result.data;
 }
 
 export async function createAirPickup(input: {
-  clientId: string; billNo: string; cargoName?: string; forecastCartons: number; forecastPackages: number;
+  customerId: string; billNo: string; cargoName?: string; forecastCartons: number; forecastPackages: number;
   forecastWeight: number; forecastWeightUnit: AirWeightUnit; remarks?: string;
 }) {
   const result = await request<{ data: AirPickupOrder }>('/warehouse/v1/air-pickups', { method: 'POST', body: JSON.stringify(input) });
@@ -516,9 +578,29 @@ export async function uploadAirReceiptEvidence(batchId: string, input: {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'RECEIPT_EVIDENCE_UPLOAD_FAILED', payload?.error?.message ?? '入库照上传失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'RECEIPT_EVIDENCE_UPLOAD_FAILED', payload?.error?.message ?? '入库照上传失败');
   }
   return response.json() as Promise<{ data: AirHandoverEvidence }>;
+}
+
+export async function uploadAirPickupDocument(orderId: string, file: File) {
+  if (WAREHOUSE_MOCK_API_ENABLED) {
+    const { mockUploadAirPickupDocument } = await import('./warehouseMockApi');
+    return mockUploadAirPickupDocument(orderId, file);
+  }
+  const query = new URLSearchParams({ filename: file.name });
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/air-pickups/${orderId}/documents?${query}`, {
+    method: 'PUT', credentials: 'include',
+    headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Document-SHA256': sha256 },
+    body: file,
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'PICKUP_DOCUMENT_UPLOAD_FAILED', payload?.error?.message ?? '提货文件上传失败');
+  }
+  return response.json() as Promise<{ data: AirPickupDocument }>;
 }
 
 export async function updateAirPickup(orderId: string, input: {
@@ -587,7 +669,7 @@ export async function uploadAirHandoverEvidence(batchId: string, input: {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'EVIDENCE_UPLOAD_FAILED', payload?.error?.message ?? '凭证上传失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'EVIDENCE_UPLOAD_FAILED', payload?.error?.message ?? '凭证上传失败');
   }
   return response.json() as Promise<{ data: AirHandoverEvidence & { evidenceStatus: AirEvidenceStatus } }>;
 }
@@ -598,8 +680,22 @@ export async function downloadAirEvidence(downloadPath: string): Promise<Blob> {
     return mockDownloadAirEvidence(downloadPath);
   }
   const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
-  if (!response.ok) throw new WarehouseApiError(response.status, 'EVIDENCE_DOWNLOAD_FAILED', '凭证读取失败。');
+  if (!response.ok) throw new WarehouseApiError(response.status, 'EVIDENCE_DOWNLOAD_FAILED', '凭证读取失败');
   return response.blob();
+}
+
+export async function downloadAirPickupDocument(downloadPath: string): Promise<Blob> {
+  if (WAREHOUSE_MOCK_API_ENABLED) {
+    const { mockDownloadAirPickupDocument } = await import('./warehouseMockApi');
+    return mockDownloadAirPickupDocument(downloadPath);
+  }
+  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
+  if (!response.ok) throw new WarehouseApiError(response.status, 'PICKUP_DOCUMENT_DOWNLOAD_FAILED', '提货文件读取失败');
+  return response.blob();
+}
+
+export function removeAirPickupDocument(assetId: string, input: { password: string; reason: string }): Promise<void> {
+  return request(`/warehouse/v1/air-pickup-documents/${assetId}`, { method: 'DELETE', body: JSON.stringify(input) });
 }
 
 export function removeAirEvidence(assetId: string, input: { password: string; reason: string }): Promise<{ data: { evidenceStatus: AirEvidenceStatus } }> {
@@ -762,7 +858,7 @@ export async function submitAttendancePunch(input: {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'ATTENDANCE_PUNCH_FAILED', payload?.error?.message ?? '打卡提交失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'ATTENDANCE_PUNCH_FAILED', payload?.error?.message ?? '打卡提交失败');
   }
   return response.json() as Promise<{ data: {
     attemptId: string; accepted: boolean; result: string; reasonCode?: string; message?: string;
@@ -784,7 +880,7 @@ export async function openAttendancePunchPhoto(attemptId: string) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'ATTENDANCE_PHOTO_FAILED', payload?.error?.message ?? '打卡照片读取失败。');
+    throw new WarehouseApiError(response.status, payload?.error?.code ?? 'ATTENDANCE_PHOTO_FAILED', payload?.error?.message ?? '打卡照片读取失败');
   }
   return response.blob();
 }
@@ -851,12 +947,12 @@ const payrollNumber = (value: unknown) => {
 
 function normalizeAttendancePayrollResult(value: unknown): AttendancePayrollResult {
   if (!value || typeof value !== 'object') {
-    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬数据格式不完整，请刷新后重试。');
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬数据格式不完整，请刷新后重试');
   }
 
   const source = value as Partial<AttendancePayrollResult>;
   if (!Array.isArray(source.rows)) {
-    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬明细缺失，请刷新后重试。');
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬明细缺失，请刷新后重试');
   }
 
   const rows = source.rows.map(rawRow => {
@@ -908,12 +1004,12 @@ function normalizeAttendancePayrollResult(value: unknown): AttendancePayrollResu
   });
 
   if (!source.rule || typeof source.rule !== 'object') {
-    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则缺失，请刷新后重试。');
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则缺失，请刷新后重试');
   }
   const rule = source.rule;
   const ruleNumbers = [rule.lunchDeductionMinutes, rule.weeklyRegularMinutes, rule.overtimeMultiplier, rule.fuelAllowancePerDay];
   if (ruleNumbers.some(item => payrollNumber(item) === null)) {
-    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则格式异常，请刷新后重试。');
+    throw new WarehouseApiError(502, 'PAYROLL_RESPONSE_INVALID', '薪酬计算规则格式异常，请刷新后重试');
   }
   return {
     from: String(source.from ?? ''),

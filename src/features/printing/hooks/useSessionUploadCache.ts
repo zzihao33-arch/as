@@ -56,13 +56,13 @@ let databasePromise: Promise<IDBDatabase> | null = null;
 
 const requestAsPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error ?? new Error('浏览器本地缓存操作失败。'));
+  request.onerror = () => reject(request.error ?? new Error('浏览器本地缓存操作失败'));
 });
 
 const transactionAsPromise = (transaction: IDBTransaction) => new Promise<void>((resolve, reject) => {
   transaction.oncomplete = () => resolve();
-  transaction.onabort = () => reject(transaction.error ?? new Error('浏览器本地缓存写入失败。'));
-  transaction.onerror = () => reject(transaction.error ?? new Error('浏览器本地缓存写入失败。'));
+  transaction.onabort = () => reject(transaction.error ?? new Error('浏览器本地缓存写入失败'));
+  transaction.onerror = () => reject(transaction.error ?? new Error('浏览器本地缓存写入失败'));
 });
 
 const openDatabase = () => {
@@ -81,7 +81,7 @@ const openDatabase = () => {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('浏览器不支持本地文件会话缓存。'));
+    request.onerror = () => reject(request.error ?? new Error('浏览器不支持本地文件会话缓存'));
   });
 
   return databasePromise;
@@ -169,7 +169,7 @@ export const collectPdfFilesFromDirectory = async (directory: FileSystemDirector
       );
       for (const [key, file] of Object.entries(nestedFiles)) {
         if (Object.hasOwn(files, key)) {
-          throw new Error(`文件夹中存在同名 PDF：${key}.pdf。为避免错打，请先重命名后再导入。`);
+          throw new Error(`文件夹中存在同名 PDF：${key}.pdf为避免错打，请先重命名后再导入`);
         }
         files[key] = file;
       }
@@ -180,7 +180,7 @@ export const collectPdfFilesFromDirectory = async (directory: FileSystemDirector
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) continue;
     const key = file.name.replace(/\.[^/.]+$/, '');
     if (Object.hasOwn(files, key)) {
-      throw new Error(`文件夹 ${relativePath} 中存在同名 PDF：${file.name}。为避免错打，请先重命名后再导入。`);
+      throw new Error(`文件夹 ${relativePath} 中存在同名 PDF：${file.name}为避免错打，请先重命名后再导入`);
     }
     files[key] = file;
   }
@@ -198,7 +198,7 @@ export function useSessionUploadCache() {
 
   const updateSession = useCallback(async (patch: Partial<Omit<StoredUploadSession, 'id' | 'updatedAt'>>) => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId) throw new Error('当前浏览器不允许会话缓存。');
+    if (!sessionId) throw new Error('当前浏览器不允许会话缓存');
 
     const currentSession = await getSession(sessionId);
     const directoryHandles = getDirectoryHandles(currentSession);
@@ -222,7 +222,7 @@ export function useSessionUploadCache() {
     const sessionId = sessionIdRef.current;
     if (!sessionId) {
       setStatus('unavailable');
-      setMessage('当前浏览器阻止了会话缓存；刷新后需要重新上传。');
+      setMessage('当前浏览器阻止了会话缓存；刷新后需要重新上传');
       return null;
     }
 
@@ -252,7 +252,7 @@ export function useSessionUploadCache() {
           Object.assign(restoredPdfFiles, directoryFiles);
           directoryPdfKeys.push(...Object.keys(directoryFiles));
         } else {
-          restoreMessage = '为保护本机文件访问权限，请重新选择 PDF 文件夹。';
+          restoreMessage = '为保护本机文件访问权限，请重新选择 PDF 文件夹';
         }
       }
 
@@ -269,7 +269,7 @@ export function useSessionUploadCache() {
       setStatus('ready');
       const restoredPdfFileCount = Object.keys(restoredPdfFiles).length;
       if (session.pdfFolder && restoredPdfFileCount < session.pdfFolder.count) {
-        const incompleteMessage = `本次会话仅恢复 ${restoredPdfFileCount.toLocaleString()} / ${session.pdfFolder.count.toLocaleString()} 个 PDF；请重新选择缺失的文件夹或重新导入。`;
+        const incompleteMessage = `本次会话仅恢复 ${restoredPdfFileCount.toLocaleString()} / ${session.pdfFolder.count.toLocaleString()} 个 PDF；请重新选择缺失的文件夹或重新导入`;
         restoreMessage = [restoreMessage, incompleteMessage].filter(Boolean).join(' ');
       }
       setMessage(restoreMessage);
@@ -284,7 +284,7 @@ export function useSessionUploadCache() {
         message: restoreMessage || undefined
       };
     } catch (error) {
-      const nextMessage = error instanceof Error ? error.message : '会话文件恢复失败，请重新上传。';
+      const nextMessage = error instanceof Error ? error.message : '会话文件恢复失败，请重新上传';
       setStatus('unavailable');
       setMessage(nextMessage);
       return null;
@@ -298,7 +298,20 @@ export function useSessionUploadCache() {
       setMessage('');
     } catch (error) {
       setStatus('unavailable');
-      setMessage(error instanceof Error ? error.message : 'Excel 会话缓存失败。');
+      setMessage(error instanceof Error ? error.message : 'Excel 会话缓存失败');
+    }
+  }, [updateSession]);
+
+  const clearExcelMapping = useCallback(async () => {
+    try {
+      await updateSession({ mapping: {}, excel: null });
+      setStatus('ready');
+      setMessage('');
+      return true;
+    } catch (error) {
+      setStatus('unavailable');
+      setMessage(error instanceof Error ? error.message : 'Excel 会话缓存清理失败');
+      return false;
     }
   }, [updateSession]);
 
@@ -311,7 +324,7 @@ export function useSessionUploadCache() {
       const sessionId = sessionIdRef.current;
       if (!sessionId) {
         setStatus('unavailable');
-        setMessage('当前浏览器不允许会话缓存；刷新后需要重新选择 PDF 文件夹。');
+        setMessage('当前浏览器不允许会话缓存；刷新后需要重新选择 PDF 文件夹');
         return false;
       }
 
@@ -360,7 +373,7 @@ export function useSessionUploadCache() {
         return true;
       } catch (error) {
         setStatus('unavailable');
-        setMessage(error instanceof Error ? error.message : 'PDF 会话缓存空间不足，请重新上传。');
+        setMessage(error instanceof Error ? error.message : 'PDF 会话缓存空间不足，请重新上传');
         return false;
       }
     };
@@ -370,6 +383,40 @@ export function useSessionUploadCache() {
     return queuedWrite;
   }, []);
 
+  const clearPdfFiles = useCallback(() => {
+    const clearCachedPdfFiles = async (): Promise<boolean> => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        setStatus('unavailable');
+        setMessage('当前浏览器不允许会话缓存；PDF 文件仅能在当前页面移除');
+        return false;
+      }
+
+      try {
+        const database = await openDatabase();
+        const existingFiles = await getPdfFiles(sessionId);
+        for (let start = 0; start < existingFiles.length; start += PDF_WRITE_BATCH_SIZE) {
+          const transaction = database.transaction(PDF_STORE, 'readwrite');
+          const pdfStore = transaction.objectStore(PDF_STORE);
+          existingFiles.slice(start, start + PDF_WRITE_BATCH_SIZE).forEach(file => pdfStore.delete(file.id));
+          await transactionAsPromise(transaction);
+        }
+        await updateSession({ pdfFolder: null, directoryHandles: [] });
+        setStatus('ready');
+        setMessage('');
+        return true;
+      } catch (error) {
+        setStatus('unavailable');
+        setMessage(error instanceof Error ? error.message : 'PDF 会话缓存清理失败');
+        return false;
+      }
+    };
+
+    const queuedClear = pdfSaveQueueRef.current.then(clearCachedPdfFiles, clearCachedPdfFiles);
+    pdfSaveQueueRef.current = queuedClear.then(() => undefined, () => undefined);
+    return queuedClear;
+  }, [updateSession]);
+
   return {
     hasDirectoryPicker,
     status,
@@ -377,6 +424,8 @@ export function useSessionUploadCache() {
     restore,
     collectPdfFilesFromDirectory,
     saveExcelMapping,
-    savePdfFiles
+    savePdfFiles,
+    clearExcelMapping,
+    clearPdfFiles
   };
 }

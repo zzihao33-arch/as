@@ -95,23 +95,23 @@ const DUMMY_PASSWORD_HASH = `scrypt$32768$8$1$${Buffer.alloc(16).toString('base6
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function safeText(value: unknown, field: string, maxLength: number): string {
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const normalized = value.trim();
-  if (!normalized || normalized.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+  if (!normalized || normalized.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   return normalized;
 }
 
 function loginNameValue(value: unknown): string {
   const loginName = safeText(value, 'loginName', 50).toLowerCase();
   if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(loginName)) {
-    throw new ApiError(400, 'VALIDATION_ERROR', '账号需为 3–50 位字母、数字、点、下划线或连字符。');
+    throw new ApiError(400, 'VALIDATION_ERROR', '账号需为 3–50 位字母、数字、点、下划线或连字符');
   }
   return loginName;
 }
 
 function passwordValue(value: unknown, field = 'password'): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > 256) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   }
   return value;
 }
@@ -127,10 +127,10 @@ function loginRateLimitKey(loginName: string): string {
 async function checkLoginRateLimit(redis: Redis, loginName: string): Promise<void> {
   try {
     const failures = Number(await redis.get(loginRateLimitKey(loginName)) ?? 0);
-    if (failures >= 5) throw new ApiError(429, 'LOGIN_LOCKED', '登录失败次数过多，请 30 分钟后重试或联系管理员解锁。');
+    if (failures >= 5) throw new ApiError(429, 'LOGIN_LOCKED', '登录失败次数过多，请 30 分钟后重试或联系管理员解锁');
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError(503, 'AUTH_SERVICE_UNAVAILABLE', '登录服务暂时不可用。');
+    throw new ApiError(503, 'AUTH_SERVICE_UNAVAILABLE', '登录服务暂时不可用');
   }
 }
 
@@ -140,7 +140,7 @@ async function recordLoginFailure(redis: Redis, loginName: string): Promise<void
     const failures = await redis.incr(key);
     if (failures === 1) await redis.expire(key, 30 * 60);
   } catch {
-    throw new ApiError(503, 'AUTH_SERVICE_UNAVAILABLE', '登录服务暂时不可用。');
+    throw new ApiError(503, 'AUTH_SERVICE_UNAVAILABLE', '登录服务暂时不可用');
   }
 }
 
@@ -215,7 +215,7 @@ export function createWarehouseIdentity(dependencies: {
 
   async function materializeSession(row: SessionRow): Promise<WarehouseSession> {
     if (row.selectedMembershipId && !row.membershipId && row.platformRole !== 'SYSTEM_ADMIN') {
-      throw new ApiError(401, 'SESSION_INVALID', '当前仓库成员身份已失效，请重新登录。');
+      throw new ApiError(401, 'SESSION_INVALID', '当前仓库成员身份已失效，请重新登录');
     }
     const [permissions, workspaces] = await Promise.all([
       listPermissions(row.platformRole, row.roleId),
@@ -245,7 +245,7 @@ export function createWarehouseIdentity(dependencies: {
 
   async function authenticate(token: string | null): Promise<WarehouseSession> {
     const parsed = token ? parseWarehouseSessionToken(token) : null;
-    if (!token || !parsed) throw new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。');
+    if (!token || !parsed) throw new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台');
     const [rows] = await mysql.execute<SessionRow[]>(
       `SELECT s.id AS sessionId, s.token_hash,
               u.id AS userId, u.display_name AS userName, u.login_name AS loginName,
@@ -268,7 +268,7 @@ export function createWarehouseIdentity(dependencies: {
     const row = rows[0];
     const suppliedHash = hashWarehouseSessionToken(token);
     if (!row || row.token_hash.length !== suppliedHash.length || !timingSafeEqual(row.token_hash, suppliedHash)) {
-      throw new ApiError(401, 'SESSION_INVALID', '登录会话已失效，请重新登录。');
+      throw new ApiError(401, 'SESSION_INVALID', '登录会话已失效，请重新登录');
     }
     await mysql.execute(
       `UPDATE warehouse_sessions SET last_seen_at = CURRENT_TIMESTAMP(3)
@@ -313,7 +313,7 @@ export function createWarehouseIdentity(dependencies: {
           targetId: user?.id, targetReference: loginName, reason: 'Invalid credentials',
         });
         if (rateLimitError) throw rateLimitError;
-        throw new ApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误。');
+        throw new ApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误');
       }
       if (user.user_status !== 'ACTIVE') {
         await auditIdentity(mysql, input, {
@@ -321,7 +321,7 @@ export function createWarehouseIdentity(dependencies: {
           actorReference: `user:${user.id}`, targetId: user.id, targetReference: loginName,
           reason: 'Account disabled',
         });
-        throw new ApiError(403, 'ACCOUNT_UNAVAILABLE', '账户异常，请联系管理员。');
+        throw new ApiError(403, 'ACCOUNT_UNAVAILABLE', '账户异常，请联系管理员');
       }
       await redis.del(loginRateLimitKey(loginName)).catch(() => undefined);
 
@@ -332,7 +332,7 @@ export function createWarehouseIdentity(dependencies: {
           actorReference: `user:${user.id}`, targetId: user.id, targetReference: loginName,
           reason: 'No active role assignment',
         });
-        throw new ApiError(403, 'ACCOUNT_UNAVAILABLE', '账户异常，请联系管理员。');
+        throw new ApiError(403, 'ACCOUNT_UNAVAILABLE', '账户异常，请联系管理员');
       }
       const selected = workspaces.length === 1 ? workspaces[0] : null;
       const issued = createWarehouseSessionToken();
@@ -361,7 +361,7 @@ export function createWarehouseIdentity(dependencies: {
 
     async renew(session: WarehouseSession, request: IdentityRequestAudit) {
       if (session.passwordState === 'CHANGE_REQUIRED') {
-        throw new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码。');
+        throw new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码');
       }
       const issued = createWarehouseSessionToken();
       const [result] = await mysql.execute<ResultSetHeader>(
@@ -372,7 +372,7 @@ export function createWarehouseIdentity(dependencies: {
          WHERE id = ? AND revoked_at IS NULL AND absolute_expires_at > CURRENT_TIMESTAMP(3)`,
         [issued.keyId, issued.tokenHash, sessionLifetimeHours, session.sessionId],
       );
-      if (result.affectedRows !== 1) throw new ApiError(401, 'SESSION_INVALID', '登录会话已失效，请重新登录。');
+      if (result.affectedRows !== 1) throw new ApiError(401, 'SESSION_INVALID', '登录会话已失效，请重新登录');
       await auditIdentity(mysql, request, {
         eventType: 'SESSION_RENEWED', outcome: 'SUCCESS', actorUserId: session.userId,
         actorReference: `user:${session.userId}`, targetId: session.userId,
@@ -383,10 +383,10 @@ export function createWarehouseIdentity(dependencies: {
 
     async selectWorkspace(session: WarehouseSession, warehouseIdValue: unknown, request: IdentityRequestAudit) {
       const warehouseId = safeText(warehouseIdValue, 'warehouseId', 36);
-      if (!UUID_PATTERN.test(warehouseId)) throw new ApiError(400, 'VALIDATION_ERROR', 'warehouseId 必须是 UUID。');
+      if (!UUID_PATTERN.test(warehouseId)) throw new ApiError(400, 'VALIDATION_ERROR', 'warehouseId 必须是 UUID');
       const workspaces = await listWorkspaces(session.userId, session.platformRole);
       const workspace = workspaces.find(item => item.warehouseId === warehouseId);
-      if (!workspace) throw new ApiError(403, 'WAREHOUSE_NOT_ALLOWED', '当前账号无权进入该仓库。');
+      if (!workspace) throw new ApiError(403, 'WAREHOUSE_NOT_ALLOWED', '当前账号无权进入该仓库');
       await mysql.execute(
         `UPDATE warehouse_sessions SET warehouse_id = ?, membership_id = ?, last_seen_at = CURRENT_TIMESTAMP(3)
          WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
@@ -407,13 +407,16 @@ export function createWarehouseIdentity(dependencies: {
     ) {
       const currentPassword = passwordValue(input.currentPassword, 'currentPassword');
       const newPassword = passwordValue(input.newPassword, 'newPassword');
-      if (newPassword.length < 16) throw new ApiError(400, 'WEAK_PASSWORD', '新密码至少需要 16 个字符。');
+      const minimumPasswordLength = session.passwordState === 'CHANGE_REQUIRED' ? 5 : 16;
+      if (newPassword.length < minimumPasswordLength) {
+        throw new ApiError(400, 'WEAK_PASSWORD', `新密码至少需要 ${minimumPasswordLength} 个字符`);
+      }
       const [rows] = await mysql.execute<(RowDataPacket & { password_hash: string })[]>(
         `SELECT password_hash FROM warehouse_users WHERE id = ? AND user_status = 'ACTIVE' LIMIT 1`,
         [session.userId],
       );
       if (!rows[0] || !await verifyWarehousePassword(currentPassword, rows[0].password_hash)) {
-        throw new ApiError(401, 'INVALID_CURRENT_PASSWORD', '当前密码不正确。');
+        throw new ApiError(401, 'INVALID_CURRENT_PASSWORD', '当前密码不正确');
       }
       const passwordHash = await hashWarehousePassword(newPassword);
       const connection = await mysql.getConnection();
@@ -471,10 +474,10 @@ export function createWarehouseIdentity(dependencies: {
     },
 
     async registerWorkstation(session: WarehouseSession, input: { installationId: unknown; displayName: unknown }) {
-      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库。');
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库');
       const installationId = safeText(input.installationId, 'installationId', 64);
       if (!/^[a-zA-Z0-9_-]{16,64}$/.test(installationId)) {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'installationId 格式无效。');
+        throw new ApiError(400, 'VALIDATION_ERROR', 'installationId 格式无效');
       }
       const displayName = safeText(input.displayName, 'displayName', 128);
       const proposedId = randomUUID();
@@ -489,7 +492,7 @@ export function createWarehouseIdentity(dependencies: {
          WHERE warehouse_id = ? AND installation_id = ? AND workstation_status = 'ACTIVE' LIMIT 1`,
         [session.warehouseId, installationId],
       );
-      if (!rows[0]) throw new ApiError(403, 'WORKSTATION_DISABLED', '此工作站已被停用。');
+      if (!rows[0]) throw new ApiError(403, 'WORKSTATION_DISABLED', '此工作站已被停用');
       return { id: rows[0].id, installationId: rows[0].installation_id, displayName: rows[0].display_name };
     },
   };

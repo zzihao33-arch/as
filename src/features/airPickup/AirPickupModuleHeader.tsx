@@ -17,8 +17,8 @@ export function AirPickupModuleHeader({ action, showDocumentsLink = false, showB
     <div className="cmhub-air-module-header">
       <header className="cmhub-page-heading">
         <div>
-          <h1 id="air-management-title">空提管理</h1>
-          <p>在一个工作台内处理提货单、流转记录与交仓凭证。</p>
+          <h1 id="air-management-title">提单管理</h1>
+          <p>在一个工作台内处理提单、流转记录与交仓凭证</p>
         </div>
         <div className="cmhub-air-header-actions">
           {showBackToPickups && <Link className="cmhub-air-document-link cmhub-air-back-link" to="/air-pickups">

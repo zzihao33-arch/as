@@ -1,5 +1,5 @@
-import { Alert, Button, Card, Message, Progress, Tag } from '@arco-design/web-react';
-import { Camera, CheckCircle2, Clock3, LocateFixed, MapPin, RefreshCw, ShieldCheck, Wifi } from 'lucide-react';
+import { Alert, Button, Card, Col, MessagePlugin as Message, Row, Space, Tag } from 'tdesign-react';
+import { Camera, Clock3, LocateFixed, MapPin, RefreshCw, ShieldCheck, Wifi } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import {
@@ -8,6 +8,7 @@ import {
   type AttendancePunchContext,
 } from '../session/warehouseApi';
 import { ATTENDANCE_TIME_ZONE, attendanceElapsedMinutes, attendanceWorkDate, isOpenAttendanceWithin } from './attendanceTime';
+import { cameraErrorMessage, isCameraBusyError, stopCameraStream } from './cameraStream';
 
 type PositionSnapshot = { latitude: number; longitude: number; accuracy: number };
 type GestureType = 'BLINK' | 'MOUTH_OPEN';
@@ -21,7 +22,7 @@ const mobileBrowser = () => {
 
 const requestPosition = () => new Promise<PositionSnapshot>((resolve, reject) => {
   if (!navigator.geolocation) {
-    reject(new Error('当前浏览器不支持定位。'));
+    reject(new Error('当前浏览器不支持定位'));
     return;
   }
   navigator.geolocation.getCurrentPosition(
@@ -30,13 +31,13 @@ const requestPosition = () => new Promise<PositionSnapshot>((resolve, reject) =>
       longitude: position.coords.longitude,
       accuracy: position.coords.accuracy,
     }),
-    () => reject(new Error('无法获取浏览器位置，请检查位置权限。')),
+    () => reject(new Error('无法获取浏览器位置，请检查位置权限')),
     { enableHighAccuracy: true, timeout: 5_000, maximumAge: 15_000 },
   );
 });
 
 const canvasBlob = (canvas: HTMLCanvasElement, quality: number) => new Promise<Blob>((resolve, reject) => {
-  canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('无法生成打卡照片。')), 'image/jpeg', quality);
+  canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('无法生成打卡照片')), 'image/jpeg', quality);
 });
 
 function sampleGestureFrame(video: HTMLVideoElement, gesture: GestureType) {
@@ -44,7 +45,7 @@ function sampleGestureFrame(video: HTMLVideoElement, gesture: GestureType) {
   canvas.width = 80;
   canvas.height = 60;
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('浏览器无法读取摄像头画面。');
+  if (!context) throw new Error('浏览器无法读取摄像头画面');
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   const y = gesture === 'BLINK' ? 12 : 30;
   const height = gesture === 'BLINK' ? 20 : 22;
@@ -74,13 +75,13 @@ async function captureCompressedPhoto(video: HTMLVideoElement) {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d');
-  if (!context) throw new Error('浏览器无法生成打卡照片。');
+  if (!context) throw new Error('浏览器无法生成打卡照片');
   context.drawImage(video, 0, 0, width, height);
   for (const quality of [0.82, 0.72, 0.62, 0.52]) {
     const blob = await canvasBlob(canvas, quality);
     if (blob.size <= 1024 * 1024) return blob;
   }
-  throw new Error('照片压缩后仍超过 1MB，请降低摄像头分辨率后重试。');
+  throw new Error('照片压缩后仍超过 1MB，请降低摄像头分辨率后重试');
 }
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
@@ -89,6 +90,7 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
   const warehouseSession = useWarehouseSession();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraRequestIdRef = useRef(0);
   const loadedWorkDateRef = useRef(attendanceWorkDate());
   const [context, setContext] = useState<AttendancePunchContext | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +112,7 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
     try {
       setContext(await getAttendancePunchContext());
     } catch (cause) {
-      Message.error(cause instanceof Error ? cause.message : '考勤上下文加载失败。');
+      Message.error(cause instanceof Error ? cause.message : '考勤上下文加载失败');
     } finally {
       setLoading(false);
     }
@@ -130,36 +132,72 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
     void loadContext();
   }, [currentWorkDate, loadContext]);
 
-  useEffect(() => {
-    let active = true;
+  const stopActiveCamera = useCallback(() => {
+    const video = videoRef.current;
+    if (video) video.srcObject = null;
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    const requestId = ++cameraRequestIdRef.current;
+    stopActiveCamera();
+    setCameraState('LOADING');
+    setCameraError('');
+
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraState('ERROR');
-      setCameraError('当前浏览器不支持摄像头访问，请使用最新版 Chrome 或 Edge。');
-      return () => { active = false; };
+      setCameraError('当前浏览器不支持摄像头访问，请使用最新版 Chrome 或 Edge');
+      return;
     }
-    void navigator.mediaDevices.getUserMedia({
+
+    const requestStream = () => navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 960 } },
       audio: false,
-    }).then(async stream => {
-      if (!active) {
-        stream.getTracks().forEach(track => track.stop());
+    });
+
+    try {
+      let stream: MediaStream;
+      try {
+        stream = await requestStream();
+      } catch (cause) {
+        // A route change or hot reload may release the previous stream a few
+        // frames late. One short retry covers that transition without masking
+        // a real hardware conflict.
+        if (!isCameraBusyError(cause)) throw cause;
+        await wait(360);
+        stream = await requestStream();
+      }
+
+      if (requestId !== cameraRequestIdRef.current) {
+        stopCameraStream(stream);
         return;
       }
+
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      const video = videoRef.current;
+      if (!video) {
+        stopActiveCamera();
+        return;
       }
-      setCameraState('READY');
-    }).catch(cause => {
+      video.srcObject = stream;
+      await video.play();
+      if (requestId === cameraRequestIdRef.current) setCameraState('READY');
+    } catch (cause) {
+      if (requestId !== cameraRequestIdRef.current) return;
+      stopActiveCamera();
       setCameraState('ERROR');
-      setCameraError(cause instanceof Error ? cause.message : '摄像头不可用。');
-    });
+      setCameraError(cameraErrorMessage(cause));
+    }
+  }, [stopActiveCamera]);
+
+  useEffect(() => {
+    void startCamera();
     return () => {
-      active = false;
-      streamRef.current?.getTracks().forEach(track => track.stop());
+      cameraRequestIdRef.current += 1;
+      stopActiveCamera();
     };
-  }, []);
+  }, [startCamera, stopActiveCamera]);
 
   useEffect(() => {
     if (!photo) {
@@ -178,7 +216,7 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
       setPosition(next);
       return next;
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : '无法获取位置。';
+      const message = cause instanceof Error ? cause.message : '无法获取位置';
       setPositionError(message);
       if (isMobile) throw new Error(message);
       return null;
@@ -200,10 +238,19 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
   const punchType = !activeResult?.clockInAt ? 'IN' : !activeResult.clockOutAt ? 'OUT' : null;
   const gestureLabel = gesture === 'BLINK' ? '眨眼一次' : '张嘴一次';
   const clockText = now.toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  const dateText = now.toLocaleDateString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+  const dateText = now
+    .toLocaleDateString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })
+    .replace(/日(?=周)/, '日 · ');
   const calculatedWorkedMinutes = attendanceElapsedMinutes(activeResult?.clockInAt ?? null, activeResult?.clockOutAt ?? null, now);
   const workedMinutes = Math.max(activeResult?.grossMinutes ?? 0, calculatedWorkedMinutes);
-  const workedHoursText = `${Math.floor(workedMinutes / 60)} 小时 ${String(workedMinutes % 60).padStart(2, '0')} 分`;
+  const workedHours = Math.floor(workedMinutes / 60);
+  const workedRemainingMinutes = Math.max(0, 480 - workedMinutes);
+  const workedMinuteRemainder = String(workedMinutes % 60).padStart(2, '0');
+  const attendanceState = activeResult?.clockOutAt
+    ? { label: '今日已完成', tone: 'complete' }
+    : activeResult?.clockInAt
+      ? { label: '工作进行中', tone: 'active' }
+      : { label: '等待上班打卡', tone: 'pending' };
 
   const verifyGesture = async () => {
     const video = videoRef.current;
@@ -224,7 +271,7 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
       setGestureState('PASSED');
     } catch (cause) {
       setGestureState('FAILED');
-      Message.error(cause instanceof Error ? cause.message : '动作验证失败。');
+      Message.error(cause instanceof Error ? cause.message : '动作验证失败');
     }
   };
 
@@ -240,8 +287,8 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
     setSubmitting(true);
     try {
       const currentPosition = await refreshPosition();
-      if (isMobile && !currentPosition) throw new Error('手机打卡必须取得有效位置。');
-      if (!isMobile && !warehouseSession.workstation) throw new Error('当前电脑尚未注册为仓库工作站。');
+      if (isMobile && !currentPosition) throw new Error('手机打卡必须取得有效位置');
+      if (!isMobile && !warehouseSession.workstation) throw new Error('当前电脑尚未注册为仓库工作站');
       const result = await submitAttendancePunch({
         photo,
         punchType,
@@ -253,22 +300,23 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
         clientCapturedAt: new Date().toISOString(),
         ...currentPosition,
       });
-      if (!result.data.accepted) throw new Error(result.data.message || '本次打卡未被接受。');
-      Message.success(punchType === 'IN' ? '上班打卡成功。' : '下班打卡成功。');
+      if (!result.data.accepted) throw new Error(result.data.message || '本次打卡未被接受');
+      Message.success(punchType === 'IN' ? '上班打卡成功' : '下班打卡成功');
       resetCapture();
       await loadContext();
       onChanged();
     } catch (cause) {
-      Message.error(cause instanceof Error ? cause.message : '打卡提交失败。');
+      Message.error(cause instanceof Error ? cause.message : '打卡提交失败');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="cmhub-attendance-capture-grid" aria-busy={loading}>
-      <div className="cmhub-attendance-camera-column">
-        <Card className="cmhub-attendance-camera-card">
+    <Row className="cmhub-attendance-capture-grid" gutter={[20, 20]} aria-busy={loading}>
+      <Col xs={12} lg={8}>
+        <Space direction="vertical" size={20} className="cmhub-attendance-camera-column">
+        <Card className="cmhub-attendance-camera-card" header="现场核验" headerBordered hoverShadow>
           <div className="cmhub-attendance-camera-frame">
             <video ref={videoRef} muted playsInline aria-label="打卡摄像头实时画面" />
             {photoUrl && <img src={photoUrl} alt="待提交的现场打卡照片" />}
@@ -281,87 +329,82 @@ export function AttendanceCapturePanel({ onChanged }: { onChanged(): void }) {
               </div>
             )}
           </div>
-          {cameraState === 'ERROR' && <Alert type="error" content={`摄像头不可用：${cameraError}`} />}
-          {gestureState === 'FAILED' && <Alert type="warning" content={`未检测到足够的动作变化，请正对摄像头重新${gestureLabel}。`} />}
-          {gestureState === 'PASSED' && <Alert type="success" content="动作验证已通过，现场照片已生成。" />}
+          {cameraState === 'ERROR' && <Alert
+            theme="error"
+            message={<span className="cmhub-attendance-camera-error">摄像头不可用：{cameraError}<Button variant="text" size="small" icon={<RefreshCw size={14} />} onClick={() => void startCamera()}>重新连接摄像头</Button></span>}
+          />}
+          {gestureState === 'FAILED' && <Alert theme="warning" message={`未检测到足够的动作变化，请正对摄像头重新${gestureLabel}`} />}
+          {gestureState === 'PASSED' && <Alert theme="success" message="动作验证已通过，现场照片已生成" />}
           <div className="cmhub-attendance-camera-actions">
             <Button
-              type={gestureState === 'PASSED' ? 'secondary' : 'primary'}
+              theme={gestureState === 'PASSED' ? 'default' : 'primary'}
               icon={gestureState === 'PASSED' ? <RefreshCw size={16} /> : <Camera size={16} />}
               disabled={cameraState !== 'READY' || gestureState === 'COUNTDOWN' || !punchType}
               loading={gestureState === 'COUNTDOWN'}
               onClick={gestureState === 'PASSED' ? resetCapture : () => void verifyGesture()}
             >{gestureState === 'PASSED' ? '重新拍摄' : `开始验证：${gestureLabel}`}</Button>
-            <span>照片仅用于考勤审计，按规则保留 6 个月。</span>
+            <span>照片仅用于考勤审计，按规则保留 6 个月</span>
           </div>
         </Card>
 
-        <Card className="cmhub-attendance-preflight-card">
-          <div className="cmhub-attendance-preflight-row">
-            <Camera size={18} />
-            <span><strong>摄像头</strong><small>{cameraState === 'READY' ? '画面正常' : cameraState === 'ERROR' ? '需要处理' : '正在启动'}</small></span>
-            <Tag color={cameraState === 'READY' ? 'green' : cameraState === 'ERROR' ? 'red' : 'arcoblue'}>{cameraState === 'READY' ? '正常' : cameraState === 'ERROR' ? '异常' : '检测中'}</Tag>
-          </div>
-          <div className="cmhub-attendance-preflight-row">
-            <LocateFixed size={18} />
-            <span><strong>浏览器位置</strong><small>{position ? `精度约 ${Math.round(position.accuracy)} 米` : positionError || '正在获取'}</small></span>
-            <Tag color={position ? 'green' : isMobile ? 'red' : 'orange'}>{position ? '已获取' : isMobile ? '必需' : '辅助'}</Tag>
-          </div>
-          <div className="cmhub-attendance-preflight-row">
-            <Wifi size={18} />
-            <span><strong>网络</strong><small>{navigator.onLine ? '可以连接考勤服务' : '当前设备离线'}</small></span>
-            <Tag color={navigator.onLine ? 'green' : 'red'}>{navigator.onLine ? '在线' : '离线'}</Tag>
-          </div>
-          <div className="cmhub-attendance-preflight-row">
-            <ShieldCheck size={18} />
-            <span><strong>打卡方式</strong><small>{isMobile ? '移动端位置围栏' : warehouseSession.workstation?.displayName || '固定电脑工作站'}</small></span>
-            <Tag color="arcoblue">{isMobile ? '移动端' : '工作站'}</Tag>
-          </div>
-          <Button type="text" size="small" icon={<RefreshCw size={14} />} onClick={() => void refreshPosition().catch(() => undefined)}>重新获取位置</Button>
-        </Card>
-      </div>
-
-      <div className="cmhub-attendance-check-column">
-        <Card className="cmhub-attendance-time-card">
-          <div><small>当前时间</small><strong>{clockText}</strong></div><i />
-          <div><small>日期</small><strong>{dateText}</strong></div>
-        </Card>
-        <Card
-          title={crossDayShift ? '跨日班次' : '今日进度'}
-          extra={crossDayShift ? <Tag className="cmhub-attendance-shift-chip" color="orange">从 {returnedResultWorkDate} 延续</Tag> : undefined}
-          className="cmhub-attendance-today-card"
-        >
-          <div className="cmhub-attendance-punch-state">
-            <div><span>上班</span><strong>{activeResult?.clockInAt ? new Date(activeResult.clockInAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
-            <div className="cmhub-attendance-state-line"><Progress percent={activeResult?.clockOutAt ? 100 : activeResult?.clockInAt ? 50 : 0} showText={false} /></div>
-            <div><span>下班</span><strong>{activeResult?.clockOutAt ? new Date(activeResult.clockOutAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
-          </div>
-          <div className="cmhub-attendance-working-hours"><span><small>已工作</small><strong>{workedHoursText}</strong></span><Progress percent={Math.min(100, Math.round(workedMinutes / 480 * 100))} showText={false} /><small>目标 8 小时</small></div>
-        </Card>
-        <div className="cmhub-attendance-submit-card">
-          {expiredOpenShift && (
-            <Alert
-              className="cmhub-attendance-expired-shift"
-              type="warning"
-              content="上一班次已超过 18 小时，不能直接补下班卡；请在“异常申诉”中提交修正。当前工作日可正常开始新班次。"
-            />
-          )}
-          {punchType ? (
-            <Button
-              type="primary"
-              long
-              size="large"
-              icon={punchType === 'IN' ? <MapPin size={20} /> : <Clock3 size={20} />}
-              disabled={!photo || gestureState !== 'PASSED' || cameraState !== 'READY' || (!navigator.onLine) || (isMobile && !position)}
-              loading={submitting}
-              onClick={() => void submit()}
-            ><span className="cmhub-attendance-submit-copy"><strong>{punchType === 'IN' ? '上班打卡' : '下班打卡'}</strong><small>{punchType === 'IN' ? 'CLOCK IN' : 'CLOCK OUT'}</small></span></Button>
-          ) : (
-            <Alert type="success" content={<span><CheckCircle2 size={15} /> 今日上下班打卡已完成</span>} />
-          )}
-          <small className="cmhub-attendance-server-time">以服务器时间为准 · {context?.serverTime ? new Date(context.serverTime).toLocaleString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</small>
+      <Card className="cmhub-attendance-preflight-card" header="设备检测" headerBordered hoverShadow>
+        <Space direction="vertical" size={4} className="cmhub-attendance-preflight-list">
+        <div className="cmhub-attendance-preflight-row">
+          <Camera size={18} />
+          <span><strong>摄像头</strong><small>{cameraState === 'READY' ? '画面正常' : cameraState === 'ERROR' ? '需要处理' : '正在启动'}</small></span>
+          <Tag theme={cameraState === 'READY' ? 'success' : cameraState === 'ERROR' ? 'danger' : 'primary'}>{cameraState === 'READY' ? '正常' : cameraState === 'ERROR' ? '异常' : '检测中'}</Tag>
         </div>
-      </div>
-    </div>
+        <div className="cmhub-attendance-preflight-row">
+          <LocateFixed size={18} />
+          <span><strong>浏览器位置</strong><small>{position ? `精度约 ${Math.round(position.accuracy)} 米` : positionError || '正在获取'}</small></span>
+          <Tag theme={position ? 'success' : isMobile ? 'danger' : 'warning'}>{position ? '已获取' : isMobile ? '必需' : '辅助'}</Tag>
+        </div>
+        <div className="cmhub-attendance-preflight-row">
+          <Wifi size={18} />
+          <span><strong>网络</strong><small>{navigator.onLine ? '可以连接考勤服务' : '当前设备离线'}</small></span>
+          <Tag theme={navigator.onLine ? 'success' : 'danger'}>{navigator.onLine ? '在线' : '离线'}</Tag>
+        </div>
+        <div className="cmhub-attendance-preflight-row">
+          <ShieldCheck size={18} />
+          <span><strong>打卡方式</strong><small>{isMobile ? '移动端位置围栏' : warehouseSession.workstation?.displayName || '固定电脑工作站'}</small></span>
+          <Tag theme="primary">{isMobile ? '移动端' : '工作站'}</Tag>
+        </div>
+        <Button variant="text" size="small" icon={<RefreshCw size={14} />} onClick={() => void refreshPosition().catch(() => undefined)}>重新获取位置</Button>
+        </Space>
+      </Card>
+      </Space>
+      </Col>
+
+      <Col xs={12} lg={4}>
+        <Card
+          className="cmhub-attendance-status-card"
+          header={crossDayShift ? '跨日班次' : '今日考勤'}
+          headerBordered
+          hoverShadow
+          actions={crossDayShift ? <Tag className="cmhub-attendance-shift-chip" theme="warning">从 {returnedResultWorkDate} 延续</Tag> : <span className={`cmhub-attendance-day-status is-${attendanceState.tone}`}><i aria-hidden="true" />{attendanceState.label}</span>}
+        >
+          <Space direction="vertical" size={20} className="cmhub-attendance-status-stack">
+            <div className="cmhub-attendance-time-card">
+              <div className="cmhub-attendance-time-item cmhub-attendance-time-item--clock"><small>当前时间</small><div className="cmhub-attendance-clock-value">{clockText}</div></div>
+              <div className="cmhub-attendance-time-item cmhub-attendance-time-item--date"><small>日期</small><strong>{dateText}</strong></div>
+            </div>
+            <div className="cmhub-attendance-day-timeline" role="group" aria-label={`上班 ${activeResult?.clockInAt ? '已完成' : '未完成'}，下班 ${activeResult?.clockOutAt ? '已完成' : '未完成'}`}>
+              <div className={`cmhub-attendance-timeline-step ${activeResult?.clockInAt ? 'is-complete' : ''}`}><span className="cmhub-attendance-timeline-dot" aria-hidden="true" /><small>上班</small><strong>{activeResult?.clockInAt ? new Date(activeResult.clockInAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
+              <span className={`cmhub-attendance-timeline-rail ${activeResult?.clockOutAt ? 'is-complete' : ''}`} aria-hidden="true" />
+              <div className={`cmhub-attendance-timeline-step ${activeResult?.clockOutAt ? 'is-complete' : ''}`}><span className="cmhub-attendance-timeline-dot" aria-hidden="true" /><small>下班</small><strong>{activeResult?.clockOutAt ? new Date(activeResult.clockOutAt).toLocaleTimeString('zh-CN', { timeZone: ATTENDANCE_TIME_ZONE, hour12: false }) : '—'}</strong></div>
+            </div>
+            <div className="cmhub-attendance-working-hours">
+              <div className="cmhub-attendance-hours-heading"><span><small>已工作</small><em>今日累计工时</em></span><strong aria-label={`已工作 ${workedHours} 小时 ${workedMinuteRemainder} 分`}><span className="cmhub-attendance-duration-group"><b>{workedHours}</b><em>小时</em></span><span className="cmhub-attendance-duration-group"><b>{workedMinuteRemainder}</b><em>分</em></span></strong></div>
+              <progress className="cmhub-attendance-work-progress" aria-label="今日工作时长进度" value={workedMinutes} max={480} />
+              <small>目标 8 小时 · {workedRemainingMinutes > 0 ? `还差 ${Math.floor(workedRemainingMinutes / 60)} 小时 ${String(workedRemainingMinutes % 60).padStart(2, '0')} 分` : '已达成'}</small>
+            </div>
+            <div className="cmhub-attendance-rail-action">
+              {expiredOpenShift && <Alert className="cmhub-attendance-expired-shift" theme="warning" message="上一班次已超过 18 小时，不能直接补下班卡；请在“异常申诉”中提交修正当前工作日可正常开始新班次" />}
+              {punchType ? <Button theme="primary" block size="large" icon={punchType === 'IN' ? <MapPin size={20} /> : <Clock3 size={20} />} disabled={!photo || gestureState !== 'PASSED' || cameraState !== 'READY' || (!navigator.onLine) || (isMobile && !position)} loading={submitting} onClick={() => void submit()}>{punchType === 'IN' ? '上班打卡' : '下班打卡'}</Button> : <Alert theme="success" message="今日上下班打卡已完成" />}
+            </div>
+          </Space>
+        </Card>
+      </Col>
+    </Row>
   );
 }

@@ -18,6 +18,8 @@ export const WAREHOUSE_PERMISSION_CODES = [
   'print_logs.clear_local',
   'intercepts.view',
   'intercepts.manage',
+  'customers.view',
+  'customers.manage',
   'air_pickups.view',
   'air_pickups.create',
   'air_pickups.edit',
@@ -66,15 +68,15 @@ export function requireWarehousePermission(required: WarehousePermission) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const session = req.warehouseSession;
     if (!session) {
-      next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。'));
+      next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台'));
       return;
     }
     if (session.passwordState === 'CHANGE_REQUIRED') {
-      next(new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码。'));
+      next(new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码'));
       return;
     }
     if (!hasWarehousePermission(session.permissions, required)) {
-      next(new ApiError(403, 'PERMISSION_DENIED', '当前账号无权执行此操作。'));
+      next(new ApiError(403, 'PERMISSION_DENIED', '当前账号无权执行此操作'));
       return;
     }
     next();
@@ -85,15 +87,15 @@ export function requireWarehouseAnyPermission(required: readonly WarehousePermis
   return (req: Request, _res: Response, next: NextFunction): void => {
     const session = req.warehouseSession;
     if (!session) {
-      next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。'));
+      next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台'));
       return;
     }
     if (session.passwordState === 'CHANGE_REQUIRED') {
-      next(new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码。'));
+      next(new ApiError(409, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码'));
       return;
     }
     if (!required.some(permission => hasWarehousePermission(session.permissions, permission))) {
-      next(new ApiError(403, 'PERMISSION_DENIED', '当前账号无权执行此操作。'));
+      next(new ApiError(403, 'PERMISSION_DENIED', '当前账号无权执行此操作'));
       return;
     }
     next();
@@ -103,11 +105,11 @@ export function requireWarehouseAnyPermission(required: readonly WarehousePermis
 export function requireWarehouseWorkspace(req: Request, _res: Response, next: NextFunction): void {
   const session = req.warehouseSession;
   if (!session) {
-    next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台。'));
+    next(new ApiError(401, 'SESSION_REQUIRED', '请先登录仓库工作台'));
     return;
   }
   if (!session.warehouseId) {
-    next(new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库。'));
+    next(new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库'));
     return;
   }
   next();

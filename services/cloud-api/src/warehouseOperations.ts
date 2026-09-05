@@ -52,12 +52,12 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 function text(value: unknown, field: string, maxLength: number, required = true): string | null {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return null;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const result = value.trim();
-  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   return result;
 }
 
@@ -67,7 +67,7 @@ export function encodeDeliveryCursor(cursor: DeliveryCursor): string {
 
 export function decodeDeliveryCursor(value: unknown): DeliveryCursor | null {
   if (value === undefined || value === null || value === '') return null;
-  if (typeof value !== 'string' || value.length > 512) throw new ApiError(400, 'INVALID_CURSOR', '同步游标无效。');
+  if (typeof value !== 'string' || value.length > 512) throw new ApiError(400, 'INVALID_CURSOR', '同步游标无效');
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<DeliveryCursor>;
     if (typeof parsed.revision !== 'string' || !/^[0-9]+$/.test(parsed.revision)) {
@@ -75,7 +75,7 @@ export function decodeDeliveryCursor(value: unknown): DeliveryCursor | null {
     }
     return { revision: parsed.revision };
   } catch {
-    throw new ApiError(400, 'INVALID_CURSOR', '同步游标无效。');
+    throw new ApiError(400, 'INVALID_CURSOR', '同步游标无效');
   }
 }
 
@@ -83,7 +83,7 @@ function limitValue(value: unknown): number {
   if (value === undefined) return 200;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'limit 必须是 1 到 500 的整数。');
+    throw new ApiError(400, 'VALIDATION_ERROR', 'limit 必须是 1 到 500 的整数');
   }
   return parsed;
 }
@@ -149,13 +149,13 @@ export function createWarehouseOperations(dependencies: {
          LIMIT 1`,
         [assetId],
       );
-      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在、尚未就绪或已失效。');
+      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在、尚未就绪或已失效');
       const object = await storage.open(rows[0].storage_key).catch(() => {
-        throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单文件暂时不可用。');
+        throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单文件暂时不可用');
       });
       if (object.byteSize !== Number(rows[0].byte_size)) {
         object.stream.destroy();
-        throw new ApiError(503, 'LABEL_STORAGE_MISMATCH', '面单文件校验失败。');
+        throw new ApiError(503, 'LABEL_STORAGE_MISMATCH', '面单文件校验失败');
       }
       return { metadata: rows[0], object };
     },
@@ -164,25 +164,25 @@ export function createWarehouseOperations(dependencies: {
       const warehouseId = session.warehouseId;
       const warehouseCode = session.warehouseCode;
       if (!warehouseId || !warehouseCode) {
-        throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库。');
+        throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择要进入的仓库');
       }
       const workstationId = text(input.workstationId, 'workstationId', 36)!;
       const shipmentId = text(input.shipmentId, 'shipmentId', 36)!;
       const labelAssetId = text(input.labelAssetId, 'labelAssetId', 36)!;
       const clientAttemptId = text(input.clientAttemptId, 'clientAttemptId', 36)!;
       if (![workstationId, shipmentId, labelAssetId, clientAttemptId].every(value => UUID_PATTERN.test(value))) {
-        throw new ApiError(400, 'VALIDATION_ERROR', '提交标识必须是 UUID。');
+        throw new ApiError(400, 'VALIDATION_ERROR', '提交标识必须是 UUID');
       }
       const outcome = text(input.outcome, 'outcome', 32) as WarehousePrintOutcome;
       if (!['SUBMITTED', 'FAILED', 'RESULT_UNKNOWN', 'BLOCKED'].includes(outcome)) {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'outcome 不受支持。');
+        throw new ApiError(400, 'VALIDATION_ERROR', 'outcome 不受支持');
       }
       const printerName = text(input.printerName, 'printerName', 255, false);
       const message = text(input.message, 'message', 1024, false);
       const occurredAtText = text(input.occurredAt, 'occurredAt', 64)!;
       const occurredAt = new Date(occurredAtText);
       if (Number.isNaN(occurredAt.getTime()) || Math.abs(Date.now() - occurredAt.getTime()) > 7 * 24 * 60 * 60 * 1000) {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'occurredAt 必须是七天内的有效时间。');
+        throw new ApiError(400, 'VALIDATION_ERROR', 'occurredAt 必须是七天内的有效时间');
       }
       const normalizedOccurredAt = occurredAt.toISOString();
       const payloadHash = createHash('sha256').update(JSON.stringify({
@@ -197,7 +197,7 @@ export function createWarehouseOperations(dependencies: {
           `SELECT id FROM workstations WHERE id = ? AND warehouse_id = ? AND workstation_status = 'ACTIVE' LIMIT 1`,
           [workstationId, warehouseId],
         );
-        if (!workstations[0]) throw new ApiError(403, 'WORKSTATION_NOT_ALLOWED', '工作站不存在、已停用或不属于当前仓库。');
+        if (!workstations[0]) throw new ApiError(403, 'WORKSTATION_NOT_ALLOWED', '工作站不存在、已停用或不属于当前仓库');
         const [targets] = await connection.execute<PrintTargetRow[]>(
           `SELECT s.client_id, s.id AS shipment_id, la.id AS label_asset_id,
                   s.first_leg_tracking_no, s.courier_tracking_no, s.carrier, s.status, s.version
@@ -206,7 +206,7 @@ export function createWarehouseOperations(dependencies: {
            WHERE s.id = ? AND la.id = ? LIMIT 1`,
           [shipmentId, labelAssetId],
         );
-        if (!targets[0]) throw new ApiError(409, 'PRINT_TARGET_STALE', '当前面单已失效，请先重新同步。');
+        if (!targets[0]) throw new ApiError(409, 'PRINT_TARGET_STALE', '当前面单已失效，请先重新同步');
 
         const attemptId = randomUUID();
         const [insert] = await connection.execute<ResultSetHeader>(
@@ -224,7 +224,7 @@ export function createWarehouseOperations(dependencies: {
             [workstationId, clientAttemptId],
           );
           if (!existing[0] || existing[0].payload_sha256 !== payloadHash) {
-            throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', 'clientAttemptId 已被用于不同的打印尝试。');
+            throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', 'clientAttemptId 已被用于不同的打印尝试');
           }
           await connection.commit();
           return { id: existing[0].id, outcome: existing[0].outcome, recordedAt: existing[0].created_at.toISOString(), replayed: true };

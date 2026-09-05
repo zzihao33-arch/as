@@ -8,7 +8,7 @@ assert.deepEqual(executableStatements('CREATE DATABASE cmhub; USE cmhub; SELECT 
 
 const directory = resolve('../../database');
 const migrations = (await readdir(directory)).filter(name => /^\d{3}_[a-z0-9_]+\.sql$/i.test(name)).sort();
-assert.equal(migrations.length, 12);
+assert.equal(migrations.length, 15);
 for (const filename of migrations) {
   const statements = executableStatements(await readFile(resolve(directory, filename), 'utf8'));
   assert.ok(statements.length > 0, `${filename} must contain executable application-schema SQL`);

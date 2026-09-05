@@ -29,18 +29,19 @@ input,
 select,
 textarea { font: inherit; }
 
+/* Browser outlines vary widely between controls and platforms. Every focusable
+   form control is restyled below with the shared CM-HUB focus treatment. */
+:where(button, input, select, textarea, [role='button']):focus,
+:where(button, input, select, textarea, [role='button']):focus-visible {
+  outline: none !important;
+}
+
 button,
 [role='button'] { touch-action: manipulation; }
 
 ::selection {
   background: var(--cmhub-surface-selected);
   color: var(--cmhub-text-primary);
-}
-
-:focus-visible {
-  outline: 2px solid var(--cmhub-focus-ring);
-  outline-offset: 2px;
-  border-radius: inherit;
 }
 
 :where(button, input, select, textarea, [role='button'])[disabled],
@@ -65,7 +66,7 @@ button,
 }
 
 @media (pointer: coarse) {
-  :where(button, [role='button'], .arco-btn) { min-height: var(--cmhub-control-height); }
+  :where(button, [role='button'], .t-button) { min-height: var(--cmhub-control-height); }
 }
 
 @media (prefers-reduced-motion: reduce) {

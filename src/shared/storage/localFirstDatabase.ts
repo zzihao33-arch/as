@@ -1,32 +1,32 @@
-export type LocalFirstStore = 'intercepts' | 'bolRecords' | 'printLogs' | 'payrollDrafts' | 'employeeRates' | 'cloudShipments' | 'cloudLabels' | 'cloudSync' | 'cloudPrintOutbox' | 'sharedPrintOutbox' | 'airEvidence';
+export type LocalFirstStore = 'intercepts' | 'bolRecords' | 'printLogs' | 'payrollDrafts' | 'employeeRates' | 'cloudShipments' | 'cloudLabels' | 'cloudSync' | 'cloudPrintOutbox' | 'sharedPrintOutbox' | 'airEvidence' | 'airPickupDocuments';
 
 const DATABASE_NAME = 'cmhub-local-first-v1';
-const DATABASE_VERSION = 6;
+const DATABASE_VERSION = 7;
 
 const openDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 
   request.onupgradeneeded = () => {
     const database = request.result;
-    (['intercepts', 'bolRecords', 'printLogs', 'payrollDrafts', 'employeeRates', 'cloudShipments', 'cloudLabels', 'cloudSync', 'cloudPrintOutbox', 'sharedPrintOutbox', 'airEvidence'] as const).forEach((storeName) => {
+    (['intercepts', 'bolRecords', 'printLogs', 'payrollDrafts', 'employeeRates', 'cloudShipments', 'cloudLabels', 'cloudSync', 'cloudPrintOutbox', 'sharedPrintOutbox', 'airEvidence', 'airPickupDocuments'] as const).forEach((storeName) => {
       if (!database.objectStoreNames.contains(storeName)) {
         database.createObjectStore(storeName);
       }
     });
   };
   request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error ?? new Error('本机数据仓库无法打开。'));
+  request.onerror = () => reject(request.error ?? new Error('本机数据仓库无法打开'));
 });
 
 const transactionAsPromise = (transaction: IDBTransaction) => new Promise<void>((resolve, reject) => {
   transaction.oncomplete = () => resolve();
-  transaction.onabort = () => reject(transaction.error ?? new Error('本机数据保存失败。'));
-  transaction.onerror = () => reject(transaction.error ?? new Error('本机数据保存失败。'));
+  transaction.onabort = () => reject(transaction.error ?? new Error('本机数据保存失败'));
+  transaction.onerror = () => reject(transaction.error ?? new Error('本机数据保存失败'));
 });
 
 const requestAsPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error ?? new Error('本机数据读取失败。'));
+  request.onerror = () => reject(request.error ?? new Error('本机数据读取失败'));
 });
 
 export async function readLocalFirstValue<T>(storeName: LocalFirstStore, key: IDBValidKey): Promise<T | null> {

@@ -1,0 +1,588 @@
+/* Native TDesign operational workbench: dense data surfaces with a single, clear action rail. */
+.cmhub-page {
+  display: grid;
+  gap: var(--cmhub-space-5, 1.25rem);
+  max-width: 100%;
+}
+
+.cmhub-page-heading,
+.cmhub-accounts-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--cmhub-space-4, 1rem);
+  padding-bottom: var(--cmhub-space-4, 1rem);
+  border-bottom: 1px solid var(--cmhub-line-subtle, var(--td-component-border));
+}
+
+.cmhub-page-heading h1,
+.cmhub-feature-result h1,
+.cmhub-app-recovery-result h1 {
+  margin: 0;
+  color: var(--cmhub-text-primary, var(--td-text-color-primary));
+  font-size: clamp(1.375rem, 2vw, 1.75rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.cmhub-page-heading p,
+.cmhub-feature-result p,
+.cmhub-app-recovery-result p {
+  margin: var(--cmhub-space-1, .25rem) 0 0;
+  color: var(--cmhub-text-secondary, var(--td-text-color-secondary));
+  line-height: 1.6;
+}
+
+.cmhub-module-frame.t-card,
+.cmhub-feature-card.t-card,
+.cmhub-app-recovery-card.t-card {
+  border-color: var(--cmhub-line-subtle, var(--td-component-border));
+  border-radius: var(--cmhub-panel-radius, .75rem);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--td-text-color-primary) 5%, transparent);
+}
+
+.cmhub-module-frame > .t-card__body {
+  padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.cmhub-page :is(.t-form, .t-table) {
+  width: 100%;
+}
+
+.cmhub-page .t-form__item {
+  margin-bottom: var(--cmhub-space-4, 1rem);
+}
+
+.cmhub-page .t-form__label {
+  color: var(--cmhub-text-secondary, var(--td-text-color-secondary));
+  font-size: .75rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.cmhub-page :is(.t-input, .t-select__wrap, .t-textarea__inner) {
+  border-radius: var(--cmhub-control-radius, .375rem);
+}
+
+.cmhub-page .t-table th {
+  background: var(--cmhub-table-header-bg, var(--td-bg-color-secondarycontainer));
+  color: var(--cmhub-table-header-fg, var(--td-text-color-secondary));
+  font-size: .75rem;
+  font-weight: 650;
+  letter-spacing: .035em;
+}
+
+.cmhub-page .t-button--theme-primary {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--cmhub-interactive-primary, var(--td-brand-color)) 20%, transparent);
+}
+
+.cmhub-feature-result,
+.cmhub-app-recovery-result {
+  display: grid;
+  justify-items: center;
+  gap: var(--cmhub-space-3, .75rem);
+  padding: clamp(2rem, 6vw, 4.5rem) clamp(1rem, 4vw, 3rem);
+  text-align: center;
+}
+
+.cmhub-feature-result > svg,
+.cmhub-app-recovery-result > svg {
+  color: var(--cmhub-interactive-primary, var(--td-brand-color));
+}
+
+.cmhub-app-recovery-result > svg { color: var(--cmhub-status-danger, var(--td-error-color)); }
+
+/* Phase two: keep TDesign's Row/Col geometry authoritative after legacy page CSS. */
+.cmhub-dashboard-metrics.t-row,
+.cmhub-dashboard-body.t-row,
+.cmhub-system-status-grid.t-row,
+.cmhub-system-body.t-row {
+  display: flex;
+  gap: 0;
+}
+
+.cmhub-dashboard-metrics > .t-col,
+.cmhub-system-status-grid > .t-col { display: flex; }
+
+.cmhub-dashboard-metric-card,
+.cmhub-system-status-grid .t-card { width: 100%; }
+
+.cmhub-dashboard-metric-card > .t-card__body { height: 100%; padding: 0; }
+
+.cmhub-dashboard-metric-card button {
+  display: grid;
+  width: 100%;
+  min-height: 7.5rem;
+  align-content: space-between;
+  gap: var(--td-comp-margin-s);
+  padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-l);
+  border: 0;
+  border-radius: var(--td-radius-default);
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+.cmhub-dashboard-metric-card button:hover { background: var(--td-bg-color-container-hover); }
+.cmhub-dashboard-metrics [data-tone="danger"] strong { color: var(--td-error-color); }
+.cmhub-dashboard-metrics [data-tone="warning"] strong { color: var(--td-warning-color); }
+
+.cmhub-dashboard-primary-column,
+.cmhub-system-main-column,
+.cmhub-system-side-column { display: flex; width: 100%; }
+
+.cmhub-system-summary > .t-card__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-margin-l);
+}
+
+.cmhub-system-status-grid .t-card { min-height: 12.5rem; }
+.cmhub-system-status-grid .t-card__body { padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-l); }
+.cmhub-system-status-grid .t-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--td-comp-margin-l);
+}
+.cmhub-system-status-grid .t-card header span {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: var(--td-radius-default);
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+}
+.cmhub-system-status-grid .t-card header i {
+  width: .625rem;
+  height: .625rem;
+  border-radius: 50%;
+  background: var(--td-success-color);
+}
+.cmhub-system-status-grid .t-card[data-state="warning"] header i { background: var(--td-warning-color); }
+.cmhub-system-status-grid .t-card[data-state="error"] header i { background: var(--td-error-color); }
+.cmhub-system-status-grid .t-card h2 { color: var(--td-text-color-secondary); }
+.cmhub-system-status-grid .t-card strong { color: var(--td-text-color-primary); }
+.cmhub-system-status-grid .t-card p { color: var(--td-text-color-secondary); }
+
+.cmhub-settings-stack { display: flex; width: 100%; }
+.cmhub-settings-panel { width: 100%; }
+.cmhub-audio-status-grid.t-row { display: flex; margin-top: var(--td-comp-margin-l); }
+.cmhub-audio-status-grid .t-col { display: flex; }
+.cmhub-audio-status-card { width: 100%; background: var(--td-bg-color-secondarycontainer); }
+
+/* Layout-recovery guardrails: page-local grid owns its children, never a Card root. */
+.cmhub-air-summary-grid.t-row,
+.cmhub-account-filter-grid.t-row { display: flex; width: 100%; }
+
+.cmhub-air-summary-grid > .t-col,
+.cmhub-account-filter-grid > .t-col { display: flex; min-width: 0; }
+
+.cmhub-air-summary-card { width: 100%; }
+.cmhub-air-summary-card > .t-card__body {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-margin-s);
+}
+.cmhub-air-summary-card span,
+.cmhub-air-summary-card strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmhub-air-summary-card strong { font-variant-numeric: tabular-nums; }
+
+.cmhub-attendance-workspace.t-card {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.cmhub-attendance-workspace > .t-card__body,
+.cmhub-attendance-tabs,
+.cmhub-attendance-tabs .t-tabs {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.cmhub-attendance-tabs .t-tabs__nav-container { width: 100%; }
+.cmhub-attendance-clock-value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--td-brand-color);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmhub-account-toolbar.t-card { display: block; padding: 0; }
+.cmhub-account-toolbar > .t-card__body { padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-l); }
+.cmhub-account-filter-grid { align-items: end; }
+.cmhub-account-filter-grid .cmhub-account-filter-field { width: 100%; }
+
+/* Air pickup card workbench — the page uses three clear layers: page actions,
+   actionable queue totals, then the operational table. These rules intentionally
+   sit after legacy fidelity styles so a single TDesign spacing system wins. */
+.cmhub-air-page > [data-motion-enter] {
+  display: grid;
+  gap: var(--td-comp-paddingLR-xl);
+  min-width: 0;
+  padding-top: var(--cmhub-space-2);
+}
+
+.cmhub-air-page .cmhub-air-page-heading {
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cmhub-air-page .cmhub-air-page-heading > div:first-child {
+  display: grid;
+  gap: var(--td-comp-margin-xs);
+}
+
+.cmhub-air-page .cmhub-air-page-heading > div:first-child > :is(h1, p) {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  clip: auto !important;
+  clip-path: none !important;
+  white-space: normal !important;
+  border: 0 !important;
+}
+
+.cmhub-air-page .cmhub-air-page-heading h1 { font-size: var(--cmhub-font-size-3xl); }
+
+.cmhub-air-page .cmhub-air-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--td-comp-paddingLR-m);
+}
+
+.cmhub-air-page .cmhub-air-summary-card.t-card {
+  width: 100%;
+  overflow: hidden;
+  border-color: var(--td-component-border);
+  border-radius: var(--td-radius-medium);
+  background: var(--td-bg-color-container);
+  box-shadow: none;
+}
+
+.cmhub-air-page .cmhub-air-summary-card > .t-card__body { display: block; padding: 0; }
+
+.cmhub-air-page .cmhub-air-summary-card.t-card {
+  background: var(--td-bg-color-container) !important;
+}
+
+.cmhub-air-page .cmhub-air-summary-card button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: var(--cmhub-air-summary-card-min-height);
+  align-items: center;
+  gap: var(--td-comp-paddingLR-m);
+  padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-l);
+  border: 0;
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--cmhub-duration-short) var(--cmhub-ease-out), box-shadow var(--cmhub-duration-short) var(--cmhub-ease-out);
+}
+
+.cmhub-air-page .cmhub-air-summary-card button:hover,
+.cmhub-air-page .cmhub-air-summary-card button[aria-pressed='true'] {
+  background: var(--td-bg-color-container);
+  box-shadow: inset 0 0 0 1px var(--td-brand-color);
+}
+
+.cmhub-air-page .cmhub-air-summary-card button[aria-pressed='true'] { box-shadow: inset 0 0 0 2px var(--td-brand-color); }
+
+.cmhub-air-page .cmhub-air-summary-card button:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: -2px;
+}
+
+.cmhub-air-page .cmhub-air-summary-icon {
+  display: grid;
+  width: var(--cmhub-air-summary-icon-size);
+  height: var(--cmhub-air-summary-icon-size);
+  place-items: center;
+  border-radius: var(--td-radius-circle);
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+}
+
+.cmhub-air-page .cmhub-air-summary-icon.is-warning {
+  background: var(--td-warning-color-1);
+  color: var(--td-warning-color);
+}
+
+.cmhub-air-page .cmhub-air-summary-icon.is-success {
+  background: var(--td-success-color-1);
+  color: var(--td-success-color);
+}
+
+.cmhub-air-page .cmhub-air-summary-copy {
+  display: grid;
+  gap: var(--td-comp-margin-xs);
+  min-width: 0;
+}
+
+.cmhub-air-page .cmhub-air-summary-copy > span {
+  color: var(--td-text-color-secondary);
+  font-size: var(--td-font-size-body-small);
+  line-height: var(--td-line-height-body-small);
+}
+
+.cmhub-air-page .cmhub-air-summary-copy strong {
+  color: var(--td-brand-color);
+  font-family: var(--cmhub-font-body);
+  font-size: var(--cmhub-air-summary-value-size);
+  font-weight: var(--td-font-weight-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cmhub-line-height-tight);
+}
+
+.cmhub-air-page .cmhub-air-summary-card[data-tone='warning'] .cmhub-air-summary-copy strong { color: var(--td-warning-color); }
+.cmhub-air-page .cmhub-air-summary-card[data-tone='success'] .cmhub-air-summary-copy strong { color: var(--td-success-color); }
+
+.cmhub-air-page .cmhub-air-summary-action {
+  color: var(--td-brand-color);
+  justify-self: end;
+}
+
+.cmhub-air-page .cmhub-air-list-card.t-card {
+  overflow: hidden;
+  border-color: var(--td-component-border);
+  border-radius: var(--td-radius-medium);
+  background: var(--td-bg-color-container);
+  box-shadow: none;
+}
+
+.cmhub-air-page .cmhub-air-list-card > .t-card__body { padding: 0; }
+
+.cmhub-air-page .cmhub-air-list-intro {
+  display: flex;
+  flex-direction: row;
+  min-height: var(--cmhub-air-toolbar-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-paddingLR-m);
+  padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-xl);
+  border-bottom: 1px solid var(--td-component-border);
+  background: var(--td-bg-color-container);
+}
+
+.cmhub-air-page .cmhub-air-list-intro h2 { font-size: var(--td-font-size-title-medium); }
+
+.cmhub-air-page .cmhub-air-sync-state {
+  display: flex;
+  align-items: center;
+  gap: var(--td-comp-margin-s);
+  padding: 0;
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  font-size: var(--td-font-size-body-small);
+  white-space: nowrap;
+}
+
+.cmhub-air-page .cmhub-air-sync-divider { width: 1px; height: var(--td-comp-size-s); background: var(--td-component-border); }
+.cmhub-air-page .cmhub-air-sync-result { display: inline-flex; align-items: center; gap: var(--td-comp-margin-xs); }
+.cmhub-air-page .cmhub-air-sync-result svg { color: var(--td-success-color); }
+.cmhub-air-page .cmhub-air-sync-refresh {
+  display: grid;
+  width: var(--td-comp-size-m);
+  height: var(--td-comp-size-m);
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--td-radius-small);
+  background: transparent;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+}
+.cmhub-air-page .cmhub-air-sync-refresh:hover:not(:disabled),
+.cmhub-air-page .cmhub-air-sync-refresh:focus-visible { background: var(--td-bg-color-container-hover); color: var(--td-brand-color); outline: none; }
+.cmhub-air-page .cmhub-air-sync-refresh:focus-visible { box-shadow: inset 0 0 0 2px var(--td-brand-color); }
+.cmhub-air-page .cmhub-air-sync-refresh:disabled { cursor: not-allowed; opacity: var(--cmhub-opacity-disabled); }
+
+.cmhub-air-page .cmhub-air-filter-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-paddingLR-m);
+  min-height: var(--cmhub-air-toolbar-height);
+  padding: 0 var(--td-comp-paddingLR-xl);
+  border-bottom: 1px solid var(--td-component-border);
+  background: var(--td-bg-color-container);
+}
+
+.cmhub-air-page .cmhub-air-filter-row > .t-tabs { flex: 1 1 auto; width: auto; min-width: 0; }
+.cmhub-air-page .cmhub-air-filter-row .t-tabs__content { display: none; }
+.cmhub-air-page .cmhub-air-filter-controls { display: flex; flex: 0 0 auto; width: auto; align-items: center; gap: var(--td-comp-margin-s); }
+.cmhub-air-page .cmhub-air-filter-controls > .t-input { width: min(18rem, 24vw); }
+.cmhub-air-page .cmhub-air-customer-filter { width: 10.5rem; }
+
+.cmhub-air-page .cmhub-air-order-table .t-table { border: 0; }
+.cmhub-air-page .cmhub-air-order-table .t-table__header th { background: var(--td-bg-color-secondarycontainer); }
+.cmhub-air-page .cmhub-air-order-table .t-table__row:hover td { background: var(--td-bg-color-container-hover); }
+.cmhub-air-page .cmhub-air-queue-pagination { padding: var(--td-comp-paddingTB-l) var(--td-comp-paddingLR-xl); }
+
+@media (max-width: 68rem) {
+  .cmhub-air-page .cmhub-air-list-intro,
+  .cmhub-air-page .cmhub-air-filter-row { align-items: flex-start; flex-direction: column; }
+  .cmhub-air-page .cmhub-air-list-intro { padding-block: var(--td-comp-paddingTB-l); }
+  .cmhub-air-page .cmhub-air-filter-row { padding-block: var(--td-comp-paddingTB-s); }
+  .cmhub-air-page .cmhub-air-filter-row > .t-tabs,
+  .cmhub-air-page .cmhub-air-filter-controls { flex: 1 1 auto; width: 100%; }
+  .cmhub-air-page .cmhub-air-filter-controls > .t-input { flex: 1; width: auto; }
+}
+
+@media (max-width: 40rem) {
+  .cmhub-air-page > [data-motion-enter] { gap: var(--td-comp-paddingLR-l); }
+  .cmhub-air-page .cmhub-air-page-heading { align-items: flex-start; flex-direction: column; }
+  .cmhub-air-page .cmhub-air-header-actions { width: 100%; }
+  .cmhub-air-page .cmhub-air-header-actions .t-button { flex: 1; }
+  .cmhub-air-page .cmhub-air-summary-grid { grid-template-columns: 1fr; gap: var(--td-comp-paddingLR-s); }
+  .cmhub-air-page .cmhub-air-summary-card button { min-height: var(--td-comp-size-xxxl); }
+  .cmhub-air-page .cmhub-air-summary-icon { width: var(--td-comp-size-xxl); height: var(--td-comp-size-xxl); }
+  .cmhub-air-page .cmhub-air-summary-copy strong { font-size: var(--cmhub-font-size-2xl); }
+  .cmhub-air-page .cmhub-air-sync-state { display: none; }
+  .cmhub-air-page .cmhub-air-list-intro,
+  .cmhub-air-page .cmhub-air-filter-row { padding-inline: var(--td-comp-paddingLR-l); }
+  .cmhub-air-page .cmhub-air-filter-controls { flex-wrap: wrap; }
+  .cmhub-air-page .cmhub-air-filter-controls > .t-input { flex-basis: calc(100% - var(--td-comp-size-l) - var(--td-comp-margin-s)); }
+  .cmhub-air-page .cmhub-air-customer-filter { flex: 1; width: auto; }
+  .cmhub-air-page .cmhub-air-order-table .t-table__content { overflow-x: auto; }
+  .cmhub-air-page .cmhub-air-queue-pagination { padding-inline: var(--td-comp-paddingLR-l); }
+}
+.cmhub-account-filter-grid .cmhub-account-toolbar-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  align-self: end;
+  flex-wrap: wrap;
+  padding: 0;
+}
+.cmhub-account-filter-grid .cmhub-account-filter-summary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-margin-s);
+  margin: 0;
+  padding-top: var(--td-comp-paddingTB-s);
+  white-space: normal;
+}
+
+@media (max-width: 48rem) {
+  .cmhub-page-heading,
+  .cmhub-accounts-heading { align-items: stretch; flex-direction: column; }
+}
+
+/* One compact icon/text rhythm for every TDesign button. */
+.t-button {
+  gap: var(--td-comp-margin-s);
+}
+
+.t-button .t-button__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin: 0 !important;
+}
+
+.t-button .t-button__text {
+  display: inline-flex !important;
+  align-items: center;
+  gap: var(--td-comp-margin-xs);
+  min-width: 0;
+  overflow: hidden;
+  line-height: inherit !important;
+  text-overflow: ellipsis;
+}
+
+.cmhub-air-page .cmhub-air-row-action.t-button {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--td-comp-size-m);
+  padding-inline: var(--td-comp-paddingLR-m);
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.cmhub-air-page .cmhub-air-batchbar {
+  display: flex;
+  min-height: var(--td-comp-size-xxl);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--td-comp-paddingLR-m);
+  padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-xl);
+  background: var(--td-bg-color-container);
+}
+
+.cmhub-air-page .cmhub-air-batchbar-message {
+  min-width: 0;
+  color: var(--td-text-color-secondary);
+}
+
+.cmhub-air-page .cmhub-air-batchbar-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--td-comp-margin-s);
+}
+
+.cmhub-air-page .cmhub-air-batch-clear.t-button,
+.cmhub-air-page .cmhub-air-batch-action.t-button {
+  min-width: 0;
+  height: var(--td-comp-size-m) !important;
+  min-height: var(--td-comp-size-m) !important;
+  margin: 0;
+  padding-inline: var(--td-comp-paddingLR-m);
+  white-space: nowrap;
+}
+
+.cmhub-air-page .cmhub-air-batch-clear.t-button {
+  color: var(--td-text-color-secondary);
+}
+
+.cmhub-air-page .cmhub-air-batch-action.t-button {
+  width: auto;
+}
+
+.cmhub-air-page .cmhub-air-action-count {
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding-inline: 0;
+  border: 0;
+  background: transparent !important;
+  color: inherit;
+}
+
+@media (max-width: 48rem) {
+  .cmhub-air-page .cmhub-air-batchbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cmhub-air-page .cmhub-air-batchbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}

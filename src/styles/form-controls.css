@@ -1,0 +1,205 @@
+/*
+ * Global form-control contract
+ *
+ * TDesign renders one control as several nested elements (for example, an
+ * InputNumber owns an input wrapper and a native input). Only the outer,
+ * visible surface below is allowed to draw a border or focus ring. This keeps
+ * every page, modal, and drawer consistent without producing a double frame.
+ */
+:root {
+  --cmhub-input-focus-glow: 0 0 0 3px color-mix(in oklch, var(--cmhub-input-focus-border) 20%, transparent);
+}
+
+/* The default surface is intentionally unfilled: light theme is white, while
+   dark theme inherits the theme's base surface rather than a neutral fill. */
+:where(
+  .t-input:not(.t-input-disabled),
+  .t-select:not(.t-is-disabled) .t-select__wrap,
+  .t-cascader:not(.t-is-disabled) .t-cascader,
+  .t-date-picker:not(.t-is-disabled),
+  .t-textarea:not(.t-textarea-disabled),
+  .t-select:not(.t-select-disabled)
+) {
+  border-color: var(--cmhub-input-border) !important;
+  background: var(--cmhub-input-bg) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition:
+    border-color var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    box-shadow var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    background-color var(--cmhub-duration-micro) var(--cmhub-ease-out) !important;
+}
+
+:where(
+  .t-input:not(.t-input-disabled),
+  .t-select:not(.t-is-disabled) .t-select__wrap,
+  .t-cascader:not(.t-is-disabled) .t-cascader,
+  .t-date-picker:not(.t-is-disabled),
+  .t-textarea:not(.t-textarea-disabled),
+  .t-select:not(.t-select-disabled)
+):hover {
+  border-color: var(--cmhub-input-border) !important;
+  background: var(--cmhub-input-bg) !important;
+}
+
+/* Plain TDesign Input has no wrapper, so it owns its own visible surface. */
+input.tdesign-input:not(.tdesign-input-disabled) {
+  border-color: var(--cmhub-input-border) !important;
+  background: var(--cmhub-input-bg) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transition:
+    border-color var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    box-shadow var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    background-color var(--cmhub-duration-micro) var(--cmhub-ease-out) !important;
+}
+
+input.tdesign-input:not(.tdesign-input-disabled):hover {
+  border-color: var(--cmhub-input-border) !important;
+  background: var(--cmhub-input-bg) !important;
+}
+
+/* Inner editing elements never paint a competing frame. */
+.t-input .tdesign-input,
+.t-select .tdesign-input,
+.t-cascader .tdesign-input,
+.t-date-picker input,
+.t-textarea textarea,
+.t-select input {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Focus has exactly one owner: the visible control surface. */
+:where(
+  .t-input:focus-within,
+  .t-input.t-input-focus,
+  .t-textarea:focus-within .t-input,
+  .t-select.t-is-focused .t-select__wrap,
+  .t-select__wrap:focus-within,
+  .t-cascader.t-is-focused .t-cascader,
+  .t-cascader:focus-within,
+  .t-date-picker.t-is-focused,
+  .t-date-picker:focus-within,
+  .t-textarea:focus-within,
+  .t-select:focus-within
+) {
+  border-color: var(--cmhub-input-focus-border) !important;
+  background: var(--cmhub-input-bg) !important;
+  box-shadow: var(--cmhub-input-focus-glow) !important;
+  outline: none !important;
+}
+
+input.tdesign-input:not(.t-input .tdesign-input):not(.t-select .tdesign-input):not(.t-cascader .tdesign-input):focus,
+input.tdesign-input:not(.t-input .tdesign-input):not(.t-select .tdesign-input):not(.t-cascader .tdesign-input).t-is-focused {
+  border-color: var(--cmhub-input-focus-border) !important;
+  background: var(--cmhub-input-bg) !important;
+  box-shadow: var(--cmhub-input-focus-glow) !important;
+  outline: none !important;
+}
+
+/* InputNumber's wrapper is structural only; its nested input wrapper is the
+   sole focus owner above. */
+.t-input-number:focus-within {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Native controls that are not TDesign internals follow the same global tokens. */
+:where(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='hidden']):not(.tdesign-input):not(:disabled),
+  select:not(:disabled),
+  textarea:not(.tdesign-input):not(:disabled)
+) {
+  border: 1px solid var(--cmhub-input-border);
+  background: var(--cmhub-input-bg);
+  color: var(--cmhub-input-fg);
+  box-shadow: none;
+  outline: none;
+  transition:
+    border-color var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    box-shadow var(--cmhub-duration-micro) var(--cmhub-ease-out),
+    background-color var(--cmhub-duration-micro) var(--cmhub-ease-out);
+}
+
+:where(
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([type='hidden']):not(.tdesign-input):not(:disabled),
+  select:not(:disabled),
+  textarea:not(.tdesign-input):not(:disabled)
+):focus {
+  border-color: var(--cmhub-input-focus-border);
+  background: var(--cmhub-input-bg);
+  box-shadow: var(--cmhub-input-focus-glow);
+  outline: none;
+}
+
+/* Air-pickup weight is two independent controls, not one joined compound
+   field. Each element retains its own focus surface and the outer group never
+   paints a connecting outline. */
+.cmhub-air-receipt-weight-group.t-input-group {
+  gap: var(--cmhub-space-3);
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.cmhub-air-receipt-weight-group.t-input-group:focus-within,
+.cmhub-air-receipt-row .t-input-number:has(input:focus-visible),
+.cmhub-air-receipt-row .t-input:has(input:focus-visible),
+.cmhub-air-receipt-row .t-select:has(input:focus-visible) {
+  outline: none !important;
+}
+
+.cmhub-air-receipt-weight-group .cmhub-air-weight-value.t-input-number,
+.cmhub-air-receipt-weight-group .cmhub-air-weight-unit .t-select__wrap {
+  border-radius: var(--cmhub-control-radius) !important;
+}
+
+/* Customer actions use the same rectangular control language as the Select
+   beside them, with matching height, border, and baseline alignment. */
+.cmhub-air-customer-picker {
+  align-items: stretch;
+}
+
+.cmhub-air-customer-picker > .t-select {
+  align-self: stretch;
+}
+
+.cmhub-air-customer-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  gap: var(--cmhub-space-2);
+}
+
+.cmhub-air-customer-actions .cmhub-air-customer-action.t-button {
+  min-height: var(--cmhub-control-height);
+  padding-inline: var(--cmhub-space-4);
+  border: 1px solid var(--cmhub-input-border) !important;
+  border-radius: var(--cmhub-control-radius) !important;
+  background: var(--cmhub-input-bg) !important;
+  color: var(--cmhub-text-secondary) !important;
+  box-shadow: none !important;
+}
+
+.cmhub-air-customer-actions .cmhub-air-customer-action.t-button:hover {
+  border-color: var(--cmhub-input-focus-border) !important;
+  background: var(--cmhub-surface-selected) !important;
+  color: var(--cmhub-interactive-primary) !important;
+}
+
+/* Date/time pickers with a time panel always expose a clear action at the
+   start of the footer and TDesign's built-in 确定 button at the end. */
+.t-date-picker__popup .t-date-picker__footer-extra {
+  display: flex;
+  align-items: center;
+}
+
+.t-date-picker__popup .cmhub-date-picker-clear.t-button {
+  min-width: 3.5rem;
+  color: var(--cmhub-text-secondary);
+}

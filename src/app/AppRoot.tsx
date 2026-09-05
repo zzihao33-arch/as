@@ -1,4 +1,4 @@
-import { ConfigProvider } from '@arco-design/web-react';
+import { ConfigProvider } from 'tdesign-react';
 import { BrowserRouter } from 'react-router-dom';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { AppRouter } from './AppRouter';
@@ -10,11 +10,7 @@ export default function AppRoot() {
     <AppErrorBoundary>
       <ThemeProvider>
         <WarehouseSessionProvider>
-          <ConfigProvider
-            componentConfig={{
-              Card: { bordered: false },
-            }}
-          >
+          <ConfigProvider globalConfig={{}}>
             <BrowserRouter useTransitions={false}>
               <AppRouter />
             </BrowserRouter>

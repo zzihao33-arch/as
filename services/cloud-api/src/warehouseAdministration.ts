@@ -65,25 +65,25 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 function text(value: unknown, field: string, maxLength: number, required = true): string | null {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return null;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const normalized = value.trim();
-  if (!normalized || normalized.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+  if (!normalized || normalized.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   return normalized;
 }
 
 function uuid(value: unknown, field: string): string {
   const result = text(value, field, 36)!;
-  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID。`);
+  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID`);
   return result;
 }
 
 function loginName(value: unknown): string {
   const result = text(value, 'loginName', 50)!.toLowerCase();
   if (!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(result)) {
-    throw new ApiError(400, 'VALIDATION_ERROR', '账号需为 3–50 位字母、数字、点、下划线或连字符。');
+    throw new ApiError(400, 'VALIDATION_ERROR', '账号需为 3–50 位字母、数字、点、下划线或连字符');
   }
   return result;
 }
@@ -92,7 +92,7 @@ function pageValue(value: unknown, fallback: number, maximum: number): number {
   if (value === undefined || value === null || value === '') return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `分页参数必须是 1 到 ${maximum} 的整数。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `分页参数必须是 1 到 ${maximum} 的整数`);
   }
   return parsed;
 }
@@ -138,7 +138,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
     async listAccounts(input: { search?: unknown; status?: unknown; roleId?: unknown; page?: unknown; pageSize?: unknown }) {
       const search = input.search === undefined || input.search === '' ? null : text(input.search, 'search', 100);
       const status = input.status === undefined || input.status === '' ? null : text(input.status, 'status', 16);
-      if (status && !['ACTIVE', 'DISABLED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
+      if (status && !['ACTIVE', 'DISABLED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持');
       const roleId = input.roleId === undefined || input.roleId === '' ? null : uuid(input.roleId, 'roleId');
       const page = pageValue(input.page, 1, 100_000);
       const pageSize = pageValue(input.pageSize, 20, 100);
@@ -208,7 +208,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
       const displayName = text(input.displayName, 'displayName', 128)!;
       const phone = text(input.phone, 'phone', 32, false);
       const email = text(input.email, 'email', 254, false)?.toLowerCase() ?? null;
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'VALIDATION_ERROR', 'email 格式无效。');
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'VALIDATION_ERROR', 'email 格式无效');
       const warehouseId = uuid(input.warehouseId, 'warehouseId');
       const roleId = uuid(input.roleId, 'roleId');
       const employeeNo = text(input.employeeNo, 'employeeNo', 64, false);
@@ -224,14 +224,14 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
            LIMIT 1 FOR UPDATE`,
           [nextLoginName, phone, phone, email, email],
         );
-        if (existing[0]) throw new ApiError(409, 'ACCOUNT_ALREADY_EXISTS', '账号、手机号或邮箱已被使用。');
+        if (existing[0]) throw new ApiError(409, 'ACCOUNT_ALREADY_EXISTS', '账号、手机号或邮箱已被使用');
         const [targets] = await connection.execute<(RowDataPacket & { warehouse_id: string; role_id: string })[]>(
           `SELECT w.id AS warehouse_id, r.id AS role_id
            FROM warehouses w CROSS JOIN warehouse_roles r
            WHERE w.id = ? AND w.warehouse_status = 'ACTIVE' AND r.id = ? LIMIT 1`,
           [warehouseId, roleId],
         );
-        if (!targets[0]) throw new ApiError(400, 'INVALID_ACCOUNT_ASSIGNMENT', '仓库或角色不存在。');
+        if (!targets[0]) throw new ApiError(400, 'INVALID_ACCOUNT_ASSIGNMENT', '仓库或角色不存在');
         await connection.execute(
           `INSERT INTO warehouse_users
              (id, login_name, email, phone, display_name, password_hash, password_state)
@@ -264,14 +264,14 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
       const displayName = input.displayName === undefined ? null : text(input.displayName, 'displayName', 128);
       const phone = input.phone === undefined ? undefined : text(input.phone, 'phone', 32, false);
       const email = input.email === undefined ? undefined : text(input.email, 'email', 254, false)?.toLowerCase() ?? null;
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'VALIDATION_ERROR', 'email 格式无效。');
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError(400, 'VALIDATION_ERROR', 'email 格式无效');
       const status = input.status === undefined ? null : text(input.status, 'status', 16);
-      if (status && !['ACTIVE', 'DISABLED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
+      if (status && !['ACTIVE', 'DISABLED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持');
       if (status === 'DISABLED' && accountId === session.userId) {
-        throw new ApiError(409, 'CANNOT_DISABLE_CURRENT_ACCOUNT', '不能禁用当前登录账户。');
+        throw new ApiError(409, 'CANNOT_DISABLE_CURRENT_ACCOUNT', '不能禁用当前登录账户');
       }
       if (nextLoginName === null && displayName === null && phone === undefined && email === undefined && status === null) {
-        throw new ApiError(400, 'VALIDATION_ERROR', '没有可更新的账户字段。');
+        throw new ApiError(400, 'VALIDATION_ERROR', '没有可更新的账户字段');
       }
       const connection = await mysql.getConnection();
       try {
@@ -279,7 +279,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
         const [accounts] = await connection.execute<(RowDataPacket & { login_name: string })[]>(
           `SELECT login_name FROM warehouse_users WHERE id = ? LIMIT 1 FOR UPDATE`, [accountId],
         );
-        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户。');
+        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户');
         await connection.execute(
           `UPDATE warehouse_users
            SET login_name = COALESCE(?, login_name), display_name = COALESCE(?, display_name),
@@ -326,7 +326,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
            WHERE u.id = ? LIMIT 1 FOR UPDATE`,
           [warehouseId, roleId, accountId],
         );
-        if (!target[0]) throw new ApiError(404, 'ACCOUNT_ASSIGNMENT_TARGET_NOT_FOUND', '账户、仓库或角色不存在。');
+        if (!target[0]) throw new ApiError(404, 'ACCOUNT_ASSIGNMENT_TARGET_NOT_FOUND', '账户、仓库或角色不存在');
         await connection.execute(
           `INSERT INTO warehouse_memberships
              (id, warehouse_id, user_id, employee_no, role_id, role, membership_status)
@@ -358,7 +358,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
         const [accounts] = await connection.execute<(RowDataPacket & { login_name: string })[]>(
           `SELECT login_name FROM warehouse_users WHERE id = ? LIMIT 1 FOR UPDATE`, [accountId],
         );
-        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户。');
+        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户');
         await connection.execute(
           `UPDATE warehouse_users
            SET password_hash = ?, password_state = 'CHANGE_REQUIRED', password_changed_at = CURRENT_TIMESTAMP(3)
@@ -385,14 +385,14 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
 
     async deleteAccount(session: WarehouseSession, request: RequestAudit, accountIdValue: unknown) {
       const accountId = uuid(accountIdValue, 'accountId');
-      if (accountId === session.userId) throw new ApiError(409, 'CANNOT_DELETE_CURRENT_ACCOUNT', '不能删除当前登录账户。');
+      if (accountId === session.userId) throw new ApiError(409, 'CANNOT_DELETE_CURRENT_ACCOUNT', '不能删除当前登录账户');
       const connection = await mysql.getConnection();
       try {
         await connection.beginTransaction();
         const [accounts] = await connection.execute<(RowDataPacket & { login_name: string })[]>(
           `SELECT login_name FROM warehouse_users WHERE id = ? LIMIT 1 FOR UPDATE`, [accountId],
         );
-        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户。');
+        if (!accounts[0]) throw new ApiError(404, 'ACCOUNT_NOT_FOUND', '未找到账户');
         const actorReference = anonymizedActor(accountId);
         await connection.execute(
           `UPDATE print_attempts SET actor_reference = ?, user_id = NULL WHERE user_id = ?`,
@@ -532,22 +532,22 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
       const roleId = uuid(roleIdValue, 'roleId');
       const expectedVersion = Number(input.expectedVersion);
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
-        throw new ApiError(400, 'VALIDATION_ERROR', 'expectedVersion 必须是正整数。');
+        throw new ApiError(400, 'VALIDATION_ERROR', 'expectedVersion 必须是正整数');
       }
       const name = input.name === undefined ? null : text(input.name, 'name', 20);
       const description = input.description === undefined ? undefined : text(input.description, 'description', 512, false);
       const permissionValues = input.permissions;
       if (name === null && description === undefined && permissionValues === undefined) {
-        throw new ApiError(400, 'VALIDATION_ERROR', '没有可更新的角色字段。');
+        throw new ApiError(400, 'VALIDATION_ERROR', '没有可更新的角色字段');
       }
       let permissions: WarehousePermission[] | null = null;
       if (permissionValues !== undefined) {
         if (!Array.isArray(permissionValues) || permissionValues.some(value => typeof value !== 'string')) {
-          throw new ApiError(400, 'VALIDATION_ERROR', 'permissions 必须是权限代码数组。');
+          throw new ApiError(400, 'VALIDATION_ERROR', 'permissions 必须是权限代码数组');
         }
         permissions = [...new Set(permissionValues)] as WarehousePermission[];
         const known = new Set<string>(WAREHOUSE_PERMISSION_CODES);
-        if (permissions.some(value => !known.has(value))) throw new ApiError(400, 'UNKNOWN_PERMISSION', '包含未知权限代码。');
+        if (permissions.some(value => !known.has(value))) throw new ApiError(400, 'UNKNOWN_PERMISSION', '包含未知权限代码');
       }
       const connection = await mysql.getConnection();
       try {
@@ -555,9 +555,9 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
         const [roles] = await connection.execute<(RowDataPacket & { role_name: string; role_version: number })[]>(
           `SELECT role_name, role_version FROM warehouse_roles WHERE id = ? LIMIT 1 FOR UPDATE`, [roleId],
         );
-        if (!roles[0]) throw new ApiError(404, 'ROLE_NOT_FOUND', '未找到角色。');
+        if (!roles[0]) throw new ApiError(404, 'ROLE_NOT_FOUND', '未找到角色');
         if (roles[0].role_version !== expectedVersion) {
-          throw new ApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被其他管理员修改，请刷新后重试。');
+          throw new ApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被其他管理员修改，请刷新后重试');
         }
         const [updateResult] = await connection.execute<ResultSetHeader>(
           `UPDATE warehouse_roles
@@ -567,7 +567,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
            WHERE id = ? AND role_version = ?`,
           [name, description !== undefined, description ?? null, roleId, expectedVersion],
         );
-        if (updateResult.affectedRows !== 1) throw new ApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被其他管理员修改，请刷新后重试。');
+        if (updateResult.affectedRows !== 1) throw new ApiError(409, 'ROLE_VERSION_CONFLICT', '角色已被其他管理员修改，请刷新后重试');
         if (permissions) {
           await connection.execute(`DELETE FROM warehouse_role_permissions WHERE role_id = ?`, [roleId]);
           for (const permission of permissions) {
@@ -599,7 +599,7 @@ export function createWarehouseAdministration(dependencies: { mysql: Pool }) {
         const [roles] = await connection.execute<(RowDataPacket & { role_name: string })[]>(
           `SELECT role_name FROM warehouse_roles WHERE id = ? LIMIT 1 FOR UPDATE`, [roleId],
         );
-        if (!roles[0]) throw new ApiError(404, 'ROLE_NOT_FOUND', '未找到角色。');
+        if (!roles[0]) throw new ApiError(404, 'ROLE_NOT_FOUND', '未找到角色');
         const [permissionRows] = await connection.execute<(RowDataPacket & { permission_code: string })[]>(
           `SELECT permission_code FROM warehouse_role_permissions WHERE role_id = ? ORDER BY permission_code`,
           [roleId],

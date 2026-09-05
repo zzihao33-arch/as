@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert as ArcoAlert,
-  Button as ArcoButton,
-  Card as ArcoCard,
-  DatePicker as ArcoDatePicker,
+  Alert,
+  Button,
+  Card,
+  DatePicker,
   Empty,
-  Input as ArcoInput,
-  Select as ArcoSelect,
-  Table as ArcoTable,
+  Input,
+  Select,
+  Table,
+  Textarea,
   Typography
-} from '@arco-design/web-react';
+} from 'tdesign-react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -186,16 +187,6 @@ function formatPickupTime(value: string) {
 
   const month = date.toLocaleString('en-US', { month: 'short' });
   return `${month} ${pad(date.getDate())}, ${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function parsePickupDate(value: string) {
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) return date;
-  return new Date(Date.now() + 2 * 60 * 60 * 1000);
-}
-
-function toDateTimeInputValue(date: Date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function getNormalizedChannelIds(form: Pick<BolForm, 'channelIds' | 'channelId'>) {
@@ -395,9 +386,9 @@ const BOL_OUTPUT_SCALE = 300 / 72;
 // only inside the isolated canvas used for PDF/browser-print output, so that
 // application theme styles cannot leak into the document artifact.
 const BOL_OUTPUT_COLORS = {
-  paper: 'rgb(255, 255, 255)',
-  ink: 'rgb(0, 0, 0)',
-  timestamp: 'rgb(191, 191, 191)'
+  paper: 'white',
+  ink: 'black',
+  timestamp: 'silver'
 } as const;
 
 function loadImageFromSource(source: string, errorMessage: string) {
@@ -417,7 +408,7 @@ function drawFallbackBolTemplate(context: CanvasRenderingContext2D) {
   context.save();
   context.fillStyle = BOL_OUTPUT_COLORS.paper;
   context.fillRect(0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
-  context.strokeStyle = '#cbd5e1';
+  context.strokeStyle = 'lightgray';
   context.lineWidth = 1;
   context.strokeRect(39, 40, 534, 712);
   context.fillStyle = BOL_OUTPUT_COLORS.ink;
@@ -426,7 +417,7 @@ function drawFallbackBolTemplate(context: CanvasRenderingContext2D) {
   context.font = '600 14px Arial, sans-serif';
   context.fillText('BILL OF LADING', 238, 76);
   context.font = '400 8px Arial, sans-serif';
-  context.fillStyle = '#475569';
+  context.fillStyle = 'slategray';
   context.fillText('Warehouse handover document', 238, 92);
   context.beginPath();
   context.moveTo(39, 103);
@@ -514,7 +505,7 @@ function drawBolRoutingTable(context: CanvasRenderingContext2D, form: BolForm) {
     bolRoutingTable.bottom - bolRoutingTable.titleTop
   );
 
-  context.strokeStyle = 'rgb(205, 205, 205)';
+  context.strokeStyle = 'gainsboro';
   context.lineWidth = 0.5;
   const horizontalLines = [
     bolRoutingTable.titleTop,
@@ -684,10 +675,6 @@ function BolDocument({
       <div
         className="bol-letter-page relative isolate mx-auto h-[11in] min-h-[11in] w-[8.5in] overflow-hidden"
         aria-busy={previewState === 'loading'}
-        style={{
-          backgroundColor: 'var(--cmhub-document-paper)',
-          color: 'var(--cmhub-document-ink)'
-        }}
       >
         {documentImage ? (
           <img
@@ -700,7 +687,7 @@ function BolDocument({
           <div className="cmhub-bol-preview-state" role="status">
             <FileText className="w-9 h-9" aria-hidden="true" />
             <strong>{previewState === 'loading' ? '正在生成凭证预览' : '凭证预览暂不可用'}</strong>
-            <span>{previewState === 'loading' ? '正在恢复模板与字段内容' : '请刷新后重试；导出时会自动使用备用版式。'}</span>
+            <span>{previewState === 'loading' ? '正在恢复模板与字段内容' : '请刷新后重试；导出时会自动使用备用版式'}</span>
           </div>
         )}
       </div>
@@ -748,7 +735,7 @@ export default function BolManager() {
 
         if (isCurrent) setRecords(nextRecords);
       } catch {
-        if (isCurrent) setNotice('无法读取本机交仓凭证历史，当前会话仍可继续创建和输出。');
+        if (isCurrent) setNotice('无法读取本机交仓凭证历史，当前会话仍可继续创建和输出');
       } finally {
         if (isCurrent) setIsRecordsLoading(false);
       }
@@ -762,7 +749,7 @@ export default function BolManager() {
   useEffect(() => {
     if (isRecordsLoading) return;
     void writeLocalFirstValue('bolRecords', BOL_RECORDS_DATABASE_KEY, records).catch(() => {
-      setNotice('交仓凭证已保留在当前页面，但无法写入 IndexedDB 历史记录。');
+      setNotice('交仓凭证已保留在当前页面，但无法写入 IndexedDB 历史记录');
     });
   }, [isRecordsLoading, records]);
 
@@ -869,7 +856,7 @@ export default function BolManager() {
     setErrors(nextErrors);
 
     if (!isBolValid(nextErrors)) {
-      setNotice('请先修正红色提示项，再生成交仓凭证。');
+      setNotice('请先修正红色提示项，再生成交仓凭证');
       return;
     }
 
@@ -888,7 +875,7 @@ export default function BolManager() {
 
     if (!isBolValid(nextErrors)) {
       setStage('edit');
-      setNotice('保存前检测到信息不完整，请重新核对。');
+      setNotice('保存前检测到信息不完整，请重新核对');
       return;
     }
 
@@ -921,7 +908,7 @@ export default function BolManager() {
 
     setRecords(current => keepLatestBolRecords([record, ...current.filter(item => item.id !== record.id)]));
     setActiveRecord(record);
-    setNotice('交仓凭证已保存，可打印或下载 PDF。');
+    setNotice('交仓凭证已保存，可打印或下载 PDF');
     setStage('output');
   };
 
@@ -966,7 +953,7 @@ export default function BolManager() {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
       pdf.addImage(imageData, 'PNG', 0, 0, BOL_TEMPLATE_WIDTH, BOL_TEMPLATE_HEIGHT);
       pdf.save(`${(activeRecord?.bolNo || form.bolNo || 'BOL').replace(/[^\w-]+/g, '_')}_v${activeRecord?.version ?? 1}.pdf`);
-      setNotice('PDF 已生成并开始下载。');
+      setNotice('PDF 已生成并开始下载');
     } catch (error) {
       setNotice(`PDF 下载失败：${error instanceof Error ? error.message : '浏览器阻止了导出，请重试'}`);
     } finally {
@@ -979,7 +966,7 @@ export default function BolManager() {
     // policies can block the print document after the canvas has rendered.
     const printWindow = window.open('', '_blank', 'width=816,height=1056');
     if (!printWindow) {
-      setNotice('浏览器阻止了打印窗口，请允许本网站弹窗后重试。');
+      setNotice('浏览器阻止了打印窗口，请允许本网站弹窗后重试');
       return;
     }
 
@@ -998,7 +985,7 @@ export default function BolManager() {
             <title>BOL Print</title>
             <style>
               @page { size: Letter portrait; margin: 0; }
-              html, body { width: 8.5in; height: 11in; margin: 0; padding: 0; background: rgb(255, 255, 255); }
+              html, body { width: 8.5in; height: 11in; margin: 0; padding: 0; background: white; }
               img { display: block; width: 8.5in; height: 11in; object-fit: fill; }
             </style>
           </head>
@@ -1029,7 +1016,7 @@ export default function BolManager() {
         ))));
         setActiveRecord(current => current ? { ...current, printCount: current.printCount + 1 } : current);
       }
-      setNotice('完整 Letter 版交仓凭证已送入浏览器打印队列。');
+      setNotice('完整 Letter 版交仓凭证已送入浏览器打印队列');
     } catch (error) {
       printWindow.close();
       setNotice(`打印准备失败：${error instanceof Error ? error.message : '请重试'}`);
@@ -1047,41 +1034,41 @@ export default function BolManager() {
   };
 
   return (
-    <ArcoCard className="cmhub-bol-card" bordered bodyStyle={{ padding: 0 }}>
+    <Card className="cmhub-bol-card" headerBordered hoverShadow bordered bodyStyle={{ padding: 0 }}>
       <div className="no-print cmhub-bol-toolbar">
         <div className="cmhub-bol-toolbar-heading">
           <div className="cmhub-bol-toolbar-icon">
             <FileCheck2 className="w-6 h-6 text-brand-green" />
           </div>
           <div>
-            <Typography.Title heading={3} className="!mb-0">交仓凭证</Typography.Title>
-            <Typography.Paragraph type="secondary" className="!mb-0">录入单号、渠道、装货数量和提货时间，实时生成标准交仓凭证。</Typography.Paragraph>
+            <Typography.Title level="h3" className="!mb-0">交仓凭证</Typography.Title>
+            <Typography.Paragraph className="!mb-0">录入单号、渠道、装货数量和提货时间，实时生成标准交仓凭证</Typography.Paragraph>
           </div>
         </div>
         <div className="cmhub-bol-toolbar-actions">
           {stage !== 'list' && (
-            <ArcoButton
+            <Button
               onClick={() => setStage('list')}
               icon={<ArrowLeft className="w-4 h-4" />}
             >
               返回列表
-            </ArcoButton>
+            </Button>
           )}
           {stage === 'list' && (
-            <ArcoButton
-              type="primary"
+            <Button
+              theme="primary"
               onClick={startNewBol}
               disabled={isRecordsLoading}
               icon={<FileText className="w-4 h-4" />}
             >
               {isRecordsLoading ? '正在恢复历史…' : '新建交仓凭证'}
-            </ArcoButton>
+            </Button>
           )}
         </div>
       </div>
 
       {notice && (
-        <div className="no-print mx-5 mt-5"><ArcoAlert type="success" showIcon content={notice} /></div>
+        <div className="no-print mx-5 mt-5"><Alert theme="success" message={notice} /></div>
       )}
 
       {stage === 'list' && (
@@ -1089,24 +1076,25 @@ export default function BolManager() {
           {isRecordsLoading ? (
             <Empty description="正在从本机恢复交仓凭证历史…" />
           ) : records.length === 0 ? (
-            <Empty description="还没有生成过交仓凭证。点击“新建交仓凭证”，扫码或输入 BOL 单号后即可生成预览。" />
+            <Empty description="还没有生成过交仓凭证点击“新建交仓凭证”，扫码或输入 BOL 单号后即可生成预览" />
           ) : (
-            <ArcoTable
+            <Table
               rowKey="id"
               data={records}
-              border={false}
-              pagination={false}
+              hover
+              bordered={false}
               columns={[
-                { title: 'BOL 单号', dataIndex: 'bolNo' },
-                { title: '渠道', render: (_: unknown, record: BolRecord) => formatChannelNames(record) },
-                { title: '数量', render: (_: unknown, record: BolRecord) => formatQuantitySummary(record) },
-                { title: '提货时间', dataIndex: 'pickupAt', render: (pickupAt: string) => formatPickupTime(pickupAt) },
-                { title: '版本/打印', render: (_: unknown, record: BolRecord) => `v${record.version} · 已打印 ${record.printCount}` },
+                { title: 'BOL 单号', colKey: 'bolNo' },
+                { title: '渠道', colKey: 'channels', cell: ({ row }) => formatChannelNames(row) },
+                { title: '数量', colKey: 'quantity', cell: ({ row }) => formatQuantitySummary(row) },
+                { title: '提货时间', colKey: 'pickupAt', cell: ({ row }) => formatPickupTime(row.pickupAt) },
+                { title: '版本/打印', colKey: 'version', cell: ({ row }) => `v${row.version} · 已打印 ${row.printCount}` },
                 {
                   title: '操作',
+                  colKey: 'actions',
                   width: 118,
-                  render: (_: unknown, record: BolRecord) => (
-                    <ArcoButton type="text" size="mini" onClick={() => openRecord(record)}>预览/输出</ArcoButton>
+                  cell: ({ row }) => (
+                    <Button variant="text" size="small" onClick={() => openRecord(row)}>预览/输出</Button>
                   )
                 }
               ]}
@@ -1121,38 +1109,37 @@ export default function BolManager() {
             <div className="cmhub-bol-form-panel">
               <div>
                 <label className="text-sm font-bold text-text-primary">BOL 单号 <span className="text-red-400">*</span></label>
-                <ArcoInput.TextArea
+                <Textarea
                   value={form.bolNo}
-                  onChange={value => updateFormField('bolNo', value)}
+                  onChange={(value: string) => updateFormField('bolNo', value)}
                   placeholder="扫码或手动输入 BOL Number"
                   className="mt-2 cmhub-bol-number-input"
-                  autoSize={{ minRows: 1, maxRows: BOL_NUMBER_MAX_LINES }}
-                  autoFocus
+                  autosize={{ minRows: 1, maxRows: BOL_NUMBER_MAX_LINES }}
+                  autofocus
                 />
                 {errors.bolNo && <p className="mt-2 text-xs text-red-400">{errors.bolNo}</p>}
               </div>
 
               <div className="cmhub-bol-field">
                 <label className="text-sm font-bold text-text-primary">渠道 <span className="text-red-400">*</span></label>
-                <ArcoSelect
-                  mode="multiple"
+                <Select
+                  multiple
                   value={selectedChannelIds}
                   options={BOL_CHANNELS.map(channel => ({ label: channel.name, value: channel.id }))}
                   placeholder="选择一个或多个渠道"
                   onChange={value => updateSelectedChannels(Array.isArray(value) ? value.map(String) : [])}
-                  onSelect={value => setActiveChannel(String(value))}
                   status={errors.channelId ? 'error' : undefined}
                   className="cmhub-bol-channel-select"
                 />
-                <Typography.Text type="secondary" className="cmhub-bol-field-help">选择新渠道后会自动切换填写对象；每个渠道已填写的数量将被保留。</Typography.Text>
+                <Typography.Text theme="secondary" className="cmhub-bol-field-help">选择新渠道后会自动切换填写对象；每个渠道已填写的数量将被保留</Typography.Text>
                 {errors.channelId && <p className="mt-2 text-xs text-red-400">{errors.channelId}</p>}
               </div>
 
               <div className="cmhub-bol-quantity-panel">
                 <div className="cmhub-bol-quantity-heading">
                   <div>
-                    <Typography.Text type="secondary">当前填写渠道</Typography.Text>
-                    <Typography.Title heading={5} className="!mb-0">{activeChannel?.name ?? '请选择渠道'}</Typography.Title>
+                    <Typography.Text theme="secondary">当前填写渠道</Typography.Text>
+                    <Typography.Title level="h5" className="!mb-0">{activeChannel?.name ?? '请选择渠道'}</Typography.Title>
                   </div>
                   <Typography.Text className="cmhub-bol-quantity-summary">
                     {getQuantitySummaryParts(activeChannelQuantities).length > 0
@@ -1164,14 +1151,14 @@ export default function BolManager() {
                 {selectedChannels.length > 1 && (
                   <div className="cmhub-bol-channel-switcher" role="group" aria-label="切换当前填写渠道">
                     {selectedChannels.map(channel => (
-                      <ArcoButton
+                      <Button
                         key={channel.id}
                         size="small"
-                        type={channel.id === activeChannelId ? 'primary' : 'secondary'}
+                        theme={channel.id === activeChannelId ? 'primary' : 'default'}
                         onClick={() => setActiveChannel(channel.id)}
                       >
                         {channel.name}
-                      </ArcoButton>
+                      </Button>
                     ))}
                   </div>
                 )}
@@ -1180,10 +1167,9 @@ export default function BolManager() {
                   {quantityFields.map(field => (
                     <div key={field.key}>
                       <label className="text-xs font-bold text-text-secondary">{field.label}</label>
-                      <ArcoInput
-                        inputMode="numeric"
+                      <Input
                         value={activeChannelQuantities[field.key]}
-                        onChange={value => updateQuantity(field.key, value)}
+                        onChange={(value) => updateQuantity(field.key, String(value))}
                         placeholder="0"
                         disabled={!activeChannel}
                         className="mt-2"
@@ -1196,12 +1182,12 @@ export default function BolManager() {
 
               <div className="cmhub-bol-field">
                 <label className="text-sm font-bold text-text-primary">提货时间 <span className="text-red-400">*</span></label>
-                <ArcoDatePicker
-                  value={parsePickupDate(form.pickupAt)}
-                  onChange={(_value, date) => updateFormField('pickupAt', toDateTimeInputValue(date.toDate()))}
-                  showTime={{ use12Hours: true }}
-                  showNowBtn
-                  allowClear={false}
+                <DatePicker
+                  value={form.pickupAt || undefined}
+                  valueType="YYYY-MM-DD HH:mm"
+                  onChange={(value) => updateFormField('pickupAt', typeof value === 'string' ? value : '')}
+                  enableTimePicker
+                  clearable
                   format="MM/DD/YYYY hh:mm A"
                   status={errors.pickupAt ? 'error' : undefined}
                   className="cmhub-bol-date-picker"
@@ -1212,19 +1198,19 @@ export default function BolManager() {
             </div>
 
             <div className="cmhub-bol-form-actions">
-              <ArcoButton
+              <Button
                 onClick={resetForm}
                 icon={<RotateCcw className="w-4 h-4" />}
               >
                 重置
-              </ArcoButton>
-              <ArcoButton
-                type="primary"
+              </Button>
+              <Button
+                theme="primary"
                 onClick={submitForPreview}
                 icon={<Save className="w-4 h-4" />}
               >
                 生成交仓凭证
-              </ArcoButton>
+              </Button>
             </div>
           </div>
 
@@ -1241,23 +1227,23 @@ export default function BolManager() {
               <AlertCircle className="w-5 h-5 text-brand-green" />
               <div>
                 <h3 className="font-bold text-text-primary">请核对交仓凭证字段</h3>
-                <p className="text-sm text-text-secondary/70">确认无误后保存正式交仓凭证；返回修改会保留当前表单内容。</p>
+                <p className="text-sm text-text-secondary/70">确认无误后保存正式交仓凭证；返回修改会保留当前表单内容</p>
               </div>
             </div>
             <div className="flex gap-3">
-              <ArcoButton
+              <Button
                 onClick={() => setStage('edit')}
                 icon={<ArrowLeft className="w-4 h-4" />}
               >
                 返回修改
-              </ArcoButton>
-              <ArcoButton
-                type="primary"
+              </Button>
+              <Button
+                theme="primary"
                 onClick={confirmBol}
                 icon={<CheckCircle2 className="w-4 h-4" />}
               >
                 确认生成
-              </ArcoButton>
+              </Button>
             </div>
           </div>
 
@@ -1280,29 +1266,29 @@ export default function BolManager() {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <ArcoButton
+              <Button
                 onClick={() => setStage('edit')}
                 icon={<ArrowLeft className="w-4 h-4" />}
               >
                 返回修改
-              </ArcoButton>
-              <ArcoButton
+              </Button>
+              <Button
                 onClick={() => void printBol()}
                 disabled={isPrinting}
                 loading={isPrinting}
                 icon={<Printer className="w-4 h-4" />}
               >
                 {isPrinting ? '准备打印...' : '打印'}
-              </ArcoButton>
-              <ArcoButton
-                type="primary"
+              </Button>
+              <Button
+                theme="primary"
                 onClick={() => void downloadPdf()}
                 disabled={isExporting}
                 loading={isExporting}
                 icon={<Download className="w-4 h-4" />}
               >
                 {isExporting ? '生成中...' : '下载 PDF'}
-              </ArcoButton>
+              </Button>
             </div>
           </div>
 
@@ -1312,6 +1298,6 @@ export default function BolManager() {
 
         </div>
       )}
-    </ArcoCard>
+    </Card>
   );
 }

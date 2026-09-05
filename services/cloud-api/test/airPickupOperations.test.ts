@@ -6,6 +6,7 @@ import {
   normalizeAirBillNo,
   receivingValuesDiffer,
   validateAirEvidenceImage,
+  validatePickupDocument,
 } from '../src/airPickupOperations.js';
 
 test('normalizes equivalent air bill numbers to one global key', () => {
@@ -60,5 +61,30 @@ test('validates image bytes rather than trusting the file extension or header', 
   assert.equal(result.contentType, 'image/png');
   assert.throws(() => validateAirEvidenceImage(png, 'image/jpeg'), (error: unknown) => (
     error instanceof ApiError && error.code === 'EVIDENCE_CONTENT_TYPE_MISMATCH'
+  ));
+});
+
+test('validates pickup-document extension, real file signature, and declared digest', () => {
+  const pdf = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
+  const result = validatePickupDocument(pdf, 'pickup-order.pdf', 'application/pdf');
+  assert.equal(result.contentType, 'application/pdf');
+  assert.throws(() => validatePickupDocument(Buffer.from('not a document'), 'pickup-order.pdf'), (error: unknown) => (
+    error instanceof ApiError && error.code === 'PICKUP_DOCUMENT_SIGNATURE_INVALID'
+  ));
+  assert.throws(() => validatePickupDocument(pdf, 'pickup-order.exe'), (error: unknown) => (
+    error instanceof ApiError && error.code === 'UNSUPPORTED_PICKUP_DOCUMENT'
+  ));
+  assert.throws(() => validatePickupDocument(pdf, 'pickup-order.pdf', 'application/pdf', '0'.repeat(64)), (error: unknown) => (
+    error instanceof ApiError && error.code === 'PICKUP_DOCUMENT_SHA256_MISMATCH'
+  ));
+});
+
+test('recognizes the internal Office package path for docx and xlsx pickup documents', () => {
+  const docx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('word/document.xml')]);
+  const xlsx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('xl/workbook.xml')]);
+  assert.equal(validatePickupDocument(docx, 'pickup.docx').contentType, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.equal(validatePickupDocument(xlsx, 'pickup.xlsx').contentType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  assert.throws(() => validatePickupDocument(docx, 'pickup.xlsx'), (error: unknown) => (
+    error instanceof ApiError && error.code === 'PICKUP_DOCUMENT_SIGNATURE_INVALID'
   ));
 });

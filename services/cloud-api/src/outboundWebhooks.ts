@@ -165,14 +165,14 @@ export function validateCallbackUrl(value: string, environment: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new ApiError(400, 'INVALID_CALLBACK_URL', '回调地址必须是有效 URL。');
+    throw new ApiError(400, 'INVALID_CALLBACK_URL', '回调地址必须是有效 URL');
   }
   if (url.username || url.password || url.hash || !url.hostname ||
       (environment === 'production' ? url.protocol !== 'https:' : !['http:', 'https:'].includes(url.protocol))) {
-    throw new ApiError(400, 'INVALID_CALLBACK_URL', '生产回调必须使用无用户信息和片段的 HTTPS URL。');
+    throw new ApiError(400, 'INVALID_CALLBACK_URL', '生产回调必须使用无用户信息和片段的 HTTPS URL');
   }
   if (url.hostname === 'localhost' || isPrivateAddress(url.hostname)) {
-    throw new ApiError(400, 'INVALID_CALLBACK_URL', '回调地址不能指向本机或私有网络。');
+    throw new ApiError(400, 'INVALID_CALLBACK_URL', '回调地址不能指向本机或私有网络');
   }
   return url;
 }
@@ -296,7 +296,7 @@ function listLimit(value: unknown): number {
   if (value === undefined) return 100;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 200) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'limit 必须是 1 到 200 的整数。');
+    throw new ApiError(400, 'VALIDATION_ERROR', 'limit 必须是 1 到 200 的整数');
   }
   return parsed;
 }
@@ -579,7 +579,7 @@ export function createOutboundWebhooks(dependencies: {
   async function listForWarehouse(_session: WarehouseSession, input: { status?: unknown; limit?: unknown }) {
     const status = input.status === undefined || input.status === '' ? null : String(input.status);
     if (status && !DELIVERY_STATUSES.has(status as WebhookDeliveryStatus)) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
+      throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持');
     }
     const limit = listLimit(input.limit);
     const [rows] = await mysql.query<ListedEventRow[]>(
@@ -613,14 +613,14 @@ export function createOutboundWebhooks(dependencies: {
 
   async function listAttemptsForWarehouse(_session: WarehouseSession, eventIdValue: unknown) {
     const eventId = typeof eventIdValue === 'string' ? eventIdValue.trim() : '';
-    if (!UUID_PATTERN.test(eventId)) throw new ApiError(400, 'VALIDATION_ERROR', 'eventId 必须是 UUID。');
+    if (!UUID_PATTERN.test(eventId)) throw new ApiError(400, 'VALIDATION_ERROR', 'eventId 必须是 UUID');
     const [access] = await mysql.execute<EventAccessRow[]>(
       `SELECT e.id, e.client_id, e.delivery_status
        FROM outbound_webhook_events e
        WHERE e.id = ? LIMIT 1`,
       [eventId],
     );
-    if (!access[0]) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件。');
+    if (!access[0]) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件');
     const [rows] = await mysql.execute<ListedAttemptRow[]>(
       `SELECT id, replay_number, attempt_number, request_timestamp, http_status, outcome,
               error_code, response_excerpt, started_at, completed_at
@@ -644,7 +644,7 @@ export function createOutboundWebhooks(dependencies: {
 
   async function retryForWarehouse(session: WarehouseSession, eventIdValue: unknown) {
     const eventId = typeof eventIdValue === 'string' ? eventIdValue.trim() : '';
-    if (!UUID_PATTERN.test(eventId)) throw new ApiError(400, 'VALIDATION_ERROR', 'eventId 必须是 UUID。');
+    if (!UUID_PATTERN.test(eventId)) throw new ApiError(400, 'VALIDATION_ERROR', 'eventId 必须是 UUID');
     const connection = await mysql.getConnection();
     try {
       await connection.beginTransaction();
@@ -655,9 +655,9 @@ export function createOutboundWebhooks(dependencies: {
         [eventId],
       );
       const event = events[0];
-      if (!event) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件。');
+      if (!event) throw new ApiError(404, 'WEBHOOK_EVENT_NOT_FOUND', '未找到可访问的回调事件');
       if (event.delivery_status !== 'DEAD_LETTER') {
-        throw new ApiError(409, 'WEBHOOK_NOT_DEAD_LETTER', '只有死信事件可以人工重放。');
+        throw new ApiError(409, 'WEBHOOK_NOT_DEAD_LETTER', '只有死信事件可以人工重放');
       }
       const [endpoints] = await connection.execute<ActiveEndpointRow[]>(
         `SELECT id FROM client_callback_endpoints WHERE client_id = ? AND endpoint_status = 'ACTIVE' LIMIT 1`,

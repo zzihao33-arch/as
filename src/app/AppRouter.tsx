@@ -72,7 +72,7 @@ function FirstAllowedRoute() {
   ].find(([permission]) => session.hasPermission(permission));
   return firstAllowed
     ? <Navigate to={firstAllowed[1]} replace />
-    : <RoutedFeature title="暂无可用功能" description="当前账号尚未分配任何功能权限，请联系系统管理员。" />;
+    : <RoutedFeature title="暂无可用功能" description="当前账号尚未分配任何功能权限，请联系系统管理员" />;
 }
 
 function RoutedFeature({ title, description, actionLabel, actionPath }: {

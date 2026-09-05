@@ -98,5 +98,6 @@ describe('warehouse HTTP boundary', () => {
     assert.equal(ended, true);
     assert.equal(nextCalled, false);
     assert.match(headers.get('Access-Control-Allow-Headers') ?? '', /X-Label-SHA256/i);
+    assert.match(headers.get('Access-Control-Allow-Headers') ?? '', /X-Document-SHA256/i);
   });
 });

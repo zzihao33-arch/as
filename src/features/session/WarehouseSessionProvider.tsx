@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Form, Input, Modal, Select, Spin, Typography } from '@arco-design/web-react';
+import { Alert, Button, Checkbox, DialogPlugin, Form, Input, Loading, Select, Typography } from 'tdesign-react';
 import { Building2, Cloud, KeyRound, LogIn, RefreshCw } from 'lucide-react';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -81,7 +81,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       await activate(restored);
     }).catch(cause => {
       if (!current) return;
-      setError(cause instanceof Error ? cause.message : '无法连接仓库云端服务。');
+      setError(cause instanceof Error ? cause.message : '无法连接仓库云端服务');
       setStatus('error');
     });
     return () => { current = false; };
@@ -94,12 +94,12 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
     const timer = window.setTimeout(() => {
       if (promptedExpiryRef.current === session.expiresAt) return;
       promptedExpiryRef.current = session.expiresAt;
-      Modal.confirm({
-        title: '登录即将过期',
-        content: '是否继续当前仓库作业？确认后会在 16 小时单次上限内续期。',
-        okText: '继续使用',
-        cancelText: '稍后处理',
-        onOk: async () => { await activate(await renewWarehouseSession()); },
+      DialogPlugin.confirm({
+        header: '登录即将过期',
+        body: '是否继续当前仓库作业？确认后会在 16 小时单次上限内续期',
+        confirmBtn: '继续使用',
+        cancelBtn: '稍后处理',
+        onConfirm: async () => { await activate(await renewWarehouseSession()); },
       });
     }, delay);
     return () => window.clearTimeout(timer);
@@ -115,7 +115,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       try {
         await activate(await createWarehouseSession(input));
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '登录失败。');
+        setError(cause instanceof Error ? cause.message : '登录失败');
         setStatus('anonymous');
         throw cause;
       }
@@ -131,7 +131,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       try {
         await activate(await selectWarehouseWorkspace(warehouseId));
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '无法进入仓库。');
+        setError(cause instanceof Error ? cause.message : '无法进入仓库');
         setStatus('ready');
         throw cause;
       }
@@ -139,7 +139,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
     async changePassword(input) {
       await changeWarehousePassword(input);
       const restored = await getWarehouseSession();
-      if (!restored) throw new Error('登录会话已失效，请重新登录。');
+      if (!restored) throw new Error('登录会话已失效，请重新登录');
       await activate(restored);
     },
     hasPermission(permission) {
@@ -165,17 +165,19 @@ function PasswordChangeGate({ children }: { children: ReactNode }) {
   if (warehouseSession.session?.passwordState !== 'CHANGE_REQUIRED') return <>{children}</>;
   return (
     <main className="cmhub-login-page">
-      <section className="cmhub-login-card" aria-labelledby="change-password-title">
-        <div className="cmhub-login-mark"><KeyRound size={21} /></div>
-        <div>
-          <Typography.Title id="change-password-title" heading={3}>设置你的正式密码</Typography.Title>
-          <Typography.Paragraph>这是初始密码首次使用。修改后其他临时会话会立即失效。</Typography.Paragraph>
-        </div>
-        {message && <Alert type="error" content={message} />}
-        <Form form={form} layout="vertical" onSubmit={async values => {
-          const input = values as { currentPassword: string; newPassword: string; confirmPassword: string };
+      <section className="cmhub-login-card cmhub-auth-card" aria-labelledby="change-password-title">
+        <header className="cmhub-auth-header">
+          <div className="cmhub-login-mark" aria-hidden="true"><KeyRound size={20} /></div>
+          <div className="cmhub-auth-heading">
+          <div id="change-password-title"><Typography.Title level="h3">设置你的正式密码</Typography.Title></div>
+          <Typography.Paragraph>这是初始密码首次使用修改后其他临时会话会立即失效</Typography.Paragraph>
+          </div>
+        </header>
+        {message && <Alert theme="error" message={message} />}
+        <Form className="cmhub-auth-form" form={form} layout="vertical" onSubmit={async ({ fields }) => {
+          const input = fields as { currentPassword: string; newPassword: string; confirmPassword: string };
           if (input.newPassword !== input.confirmPassword) {
-            setMessage('两次输入的新密码不一致。');
+            setMessage('两次输入的新密码不一致');
             return;
           }
           setSubmitting(true);
@@ -183,21 +185,21 @@ function PasswordChangeGate({ children }: { children: ReactNode }) {
           try {
             await warehouseSession.changePassword(input);
           } catch (cause) {
-            setMessage(cause instanceof Error ? cause.message : '密码修改失败。');
+            setMessage(cause instanceof Error ? cause.message : '密码修改失败');
           } finally {
             setSubmitting(false);
           }
         }}>
-          <Form.Item label="当前临时密码" field="currentPassword" rules={[{ required: true, message: '请输入当前临时密码' }]}>
-            <Input.Password autoComplete="current-password" />
-          </Form.Item>
-          <Form.Item label="新密码" field="newPassword" rules={[{ required: true, minLength: 16, message: '新密码至少 16 个字符' }]}>
-            <Input.Password autoComplete="new-password" />
-          </Form.Item>
-          <Form.Item label="确认新密码" field="confirmPassword" rules={[{ required: true, message: '请再次输入新密码' }]}>
-            <Input.Password autoComplete="new-password" />
-          </Form.Item>
-          <Button htmlType="submit" type="primary" long loading={submitting}>保存并进入系统</Button>
+          <Form.FormItem label="当前临时密码" name="currentPassword" rules={[{ required: true, message: '请输入当前临时密码' }]}>
+            <Input type="password" autocomplete="current-password" />
+          </Form.FormItem>
+          <Form.FormItem label="新密码" name="newPassword" help="至少 5 个字符" rules={[{ required: true, min: 5, message: '新密码至少 5 个字符' }]}>
+            <Input type="password" autocomplete="new-password" />
+          </Form.FormItem>
+          <Form.FormItem label="确认新密码" name="confirmPassword" rules={[{ required: true, message: '请再次输入新密码' }]}>
+            <Input type="password" autocomplete="new-password" />
+          </Form.FormItem>
+          <Button className="cmhub-auth-submit" type="submit" theme="primary" block loading={submitting}>保存并进入系统</Button>
         </Form>
       </section>
     </main>
@@ -213,30 +215,32 @@ function WorkspaceGate({ children }: { children: ReactNode }) {
   if (!activeSession || activeSession.warehouseId || activeSession.workspaces.length === 0) return <>{children}</>;
   return (
     <main className="cmhub-login-page">
-      <section className="cmhub-login-card" aria-labelledby="workspace-title">
-        <div className="cmhub-login-mark"><Building2 size={21} /></div>
-        <div>
-          <Typography.Title id="workspace-title" heading={3}>选择仓库工作空间</Typography.Title>
-          <Typography.Paragraph>账号 {activeSession.loginName} 可进入多个仓库。业务数据仍按已确认规则全员共享。</Typography.Paragraph>
-        </div>
-        {message && <Alert type="error" content={message} />}
+      <section className="cmhub-login-card cmhub-auth-card" aria-labelledby="workspace-title">
+        <header className="cmhub-auth-header">
+          <div className="cmhub-login-mark" aria-hidden="true"><Building2 size={20} /></div>
+          <div className="cmhub-auth-heading">
+          <div id="workspace-title"><Typography.Title level="h3">选择仓库工作空间</Typography.Title></div>
+          <Typography.Paragraph>账号 {activeSession.loginName} 可进入多个仓库业务数据仍按已确认规则全员共享</Typography.Paragraph>
+          </div>
+        </header>
+        {message && <Alert theme="error" message={message} />}
         <Select
           aria-label="仓库工作空间"
           placeholder="选择要进入的仓库"
           value={warehouseId || undefined}
-          onChange={setWarehouseId}
+          onChange={(value) => setWarehouseId(String(value))}
           options={activeSession.workspaces.map(workspace => ({
             value: workspace.warehouseId,
             label: `${workspace.warehouseName} · ${workspace.roleName ?? '系统管理员'}`,
           }))}
         />
-        <Button type="primary" long disabled={!warehouseId} loading={submitting} onClick={async () => {
+        <Button className="cmhub-auth-submit" theme="primary" block disabled={!warehouseId} loading={submitting} onClick={async () => {
           setSubmitting(true);
           setMessage('');
           try {
             await warehouseSession.selectWorkspace(warehouseId);
           } catch (cause) {
-            setMessage(cause instanceof Error ? cause.message : '无法进入仓库。');
+            setMessage(cause instanceof Error ? cause.message : '无法进入仓库');
           } finally {
             setSubmitting(false);
           }
@@ -257,38 +261,46 @@ export function WarehouseSessionGate({ children }: { children: ReactNode }) {
     return <PasswordChangeGate><WorkspaceGate>{children}</WorkspaceGate></PasswordChangeGate>;
   }
   if (warehouseSession.status === 'loading') {
-    return <div className="cmhub-session-loading"><Spin size={32} /><span>正在验证登录会话…</span></div>;
+    return <div className="cmhub-session-loading"><Loading loading size="32px" /><span>正在验证登录会话…</span></div>;
   }
   if (warehouseSession.status === 'error') {
     return (
       <main className="cmhub-login-page">
         <section className="cmhub-login-card">
           <Cloud size={30} />
-          <Typography.Title heading={3}>云端连接不可用</Typography.Title>
-          <Alert type="error" content={warehouseSession.error} />
-          <Button type="primary" icon={<RefreshCw size={16} />} onClick={warehouseSession.retry}>重新连接</Button>
+          <Typography.Title level="h3">云端连接不可用</Typography.Title>
+          <Alert theme="error" message={warehouseSession.error} />
+          <Button theme="primary" icon={<RefreshCw size={16} />} onClick={warehouseSession.retry}>重新连接</Button>
         </section>
       </main>
     );
   }
   return (
     <main className="cmhub-login-page">
-      <section className="cmhub-login-card" aria-labelledby="login-title">
-        <div className="cmhub-login-mark">C</div>
-        <div>
-          <Typography.Title id="login-title" heading={3}>登录 CM-HUB 仓库工作台</Typography.Title>
-          <Typography.Paragraph>使用内部账号登录。上游 API Key 不应填写在浏览器中。</Typography.Paragraph>
-        </div>
+      <section className="cmhub-login-card cmhub-auth-card cmhub-login-card-compact" aria-labelledby="login-title">
+        <header className="cmhub-auth-header cmhub-login-header">
+          <div className="cmhub-login-mark" aria-hidden="true">C</div>
+          <div className="cmhub-auth-heading">
+            <div id="login-title"><Typography.Title level="h3">CM-HUB 仓库工作台</Typography.Title></div>
+          </div>
+        </header>
         {WAREHOUSE_MOCK_API_ENABLED && (
-          <Alert type="info" content="本地 Mock 测试账号：admin　密码：CMHub-Local-2026!（不会连接线上）" />
+          <section className="cmhub-login-credentials" aria-label="本地 Mock 测试账号信息">
+            <strong>本地 Mock 测试账号信息</strong>
+            <dl>
+              <div><dt>账号</dt><dd>admin</dd></div>
+              <div><dt>密码</dt><dd>CMHub-Local-2026!</dd></div>
+            </dl>
+          </section>
         )}
-        {(loginError || warehouseSession.error) && <Alert type="error" content={loginError || warehouseSession.error} />}
+        {(loginError || warehouseSession.error) && <Alert theme="error" message={loginError || warehouseSession.error} />}
         <Form
           form={form}
+          className="cmhub-auth-form"
           layout="vertical"
-          initialValues={{ loginName: rememberedLogin, remember: true }}
-          onSubmit={async values => {
-            const input = values as { loginName: string; password: string; remember: boolean };
+          initialData={{ loginName: rememberedLogin, remember: true }}
+          onSubmit={async ({ fields }) => {
+            const input = fields as { loginName: string; password: string; remember: boolean };
             setSubmitting(true);
             setLoginError('');
             try {
@@ -296,20 +308,23 @@ export function WarehouseSessionGate({ children }: { children: ReactNode }) {
               else localStorage.removeItem(REMEMBERED_LOGIN_KEY);
               await warehouseSession.login({ loginName: input.loginName, password: input.password });
             } catch (cause) {
-              setLoginError(cause instanceof Error ? cause.message : '登录失败。');
+              setLoginError(cause instanceof Error ? cause.message : '登录失败');
             } finally {
               setSubmitting(false);
             }
           }}
         >
-          <Form.Item label="账号" field="loginName" rules={[{ required: true, message: '请输入账号' }]}>
-            <Input autoFocus autoComplete="username" maxLength={50} placeholder="输入内部账号" />
-          </Form.Item>
-          <Form.Item label="密码" field="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password autoComplete="current-password" />
-          </Form.Item>
-          <Form.Item field="remember" triggerPropName="checked"><Checkbox>记住账号</Checkbox></Form.Item>
-          <Button htmlType="submit" type="primary" long loading={submitting} icon={<LogIn size={16} />}>登录工作台</Button>
+          <Form.FormItem label="账号" name="loginName" rules={[{ required: true, message: '请输入账号' }]}>
+            <Input autofocus autocomplete="username" maxlength={50} placeholder="输入内部账号" />
+          </Form.FormItem>
+          <Form.FormItem label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
+            <Input type="password" autocomplete="current-password" />
+          </Form.FormItem>
+          <Form.FormItem name="remember"><Checkbox>记住账号</Checkbox></Form.FormItem>
+          <Button className="cmhub-auth-submit" type="submit" theme="primary" block loading={submitting}>
+            <LogIn size={18} aria-hidden="true" />
+            <span>登录工作台</span>
+          </Button>
         </Form>
         <span className="cmhub-login-version">CM-HUB · v0.1.0</span>
       </section>

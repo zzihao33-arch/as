@@ -14,6 +14,8 @@ These MySQL 8.0 migrations are an immutable, ordered history. For a new database
 10. `010_integrate_handover_document_permissions.sql` moves the existing handover-document permission catalog under Air Pickup Management without binding legacy browser-local records.
 11. `011_link_air_pickups_clients_shipments_and_receipt_evidence.sql` records source clients on air-pickup orders, links shipments to their air-pickup order, adds receipt-batch evidence, and enables server-derived exchange progress.
 12. `012_add_attendance_and_payroll.sql` adds cloud attendance locations, effective-dated shift rules, accepted/rejected punch evidence, daily results, supervisor-reviewed appeals, effective-dated pay rates, payroll adjustments, and immutable payroll-run snapshots.
+13. `013_add_tyg_v11_label_versions.sql` adds immutable TYG v1.1 PDF label-version records and retention metadata.
+14. `014_add_customer_profiles.sql` separates manually managed business/upstream customer profiles from API integration identities, backfills integrated upstream customers, and records the single customer ownership of each air-pickup order.
 
 Do not edit, skip, or replay a migration after it has been applied to a shared environment. A repository checkout does not prove which migrations production has received: verify the live schema and deployment record first, take a backup, test against a production-like copy, and schedule the DDL/backfill for an approved change window. Add future changes as the next numbered migration. In particular, do not use `001` to rotate an existing MySQL password; `CREATE USER IF NOT EXISTS` leaves an existing account unchanged.
 
@@ -25,7 +27,7 @@ Client API keys are operational credentials, not seed data. After the API servic
 npm run create-client-key -- --code jfk-test-client --name "JFK Test Client" --environment test --rate-limit 60
 ```
 
-The CLI creates the client when the code is new, or issues an additional key when that client already exists. `--name` is only required for a new client. Optional `--scopes` accepts a comma-separated subset of `shipments:write,shipments:read,labels:write`. The plaintext key is shown once; move it directly to an approved password manager and never put it in SQL, logs, screenshots, chat, or source control.
+The CLI creates the integration client when the code is new, or issues an additional key when that client already exists. After migration `014`, a new API client automatically connects to the existing upstream customer profile with the same customer code; if none exists, the CLI creates an already-integrated upstream profile. A business customer can never be converted into an API integration client. `--name` is only required for a new client. Optional `--scopes` accepts a comma-separated subset of `shipments:write,shipments:read,labels:write`. The plaintext key is shown once; move it directly to an approved password manager and never put it in SQL, logs, screenshots, chat, or source control.
 
 Safe rotation deliberately permits overlap:
 
@@ -141,3 +143,7 @@ The upstream batch endpoint derives `client_id` from the authenticated API Key a
 Apply `012` before enabling the cloud attendance workspace. Configure at least one active shift rule and, for mobile attendance, one active geofence before assigning operator permissions. Fixed warehouse computers must register as workstations; browser location is supplemental there, while mobile attendance requires a location with accuracy no worse than 50 meters and a matching active geofence.
 
 Punch photos are private evidence under `LABEL_STORAGE_ROOT`; Nginx must not expose that directory. Schedule a daily retention job that removes evidence bytes and clears `storage_key` after `evidence_delete_after`, while preserving the non-biometric attendance and payroll facts required by policy. Payroll export first creates an immutable server snapshot, then downloads the workbook. Verify one cross-midnight shift, the 18-hour limit, a self-approval denial, a missing-rate export block, weekly overtime, and a deleted-user payroll snapshot before production rollout.
+
+## Production transition for migration 015
+
+Apply `015` before deploying pickup-document upload. These files are private operational attachments: keep their storage root outside the repository and all public web roots. Before rollout, verify the 10-file-per-order cap, 20 MB per file limit, signature checks for PDF/Office files, CSV upload, duplicate content rejection, authenticated download, and that an uploaded file remains available after the order has progressed to receipt or handover.

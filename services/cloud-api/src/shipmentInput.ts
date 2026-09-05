@@ -25,24 +25,24 @@ const upstreamOrderFields = ['order_id', 'recipient_name', 'phone', 'address', '
 
 function text(value: unknown, field: string, maxLength = 128, required = false): string | undefined {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return undefined;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const result = value.trim();
   if (!result || result.length > maxLength) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   }
   return result;
 }
 
 function object(value: unknown, field: string, required = false): Record<string, unknown> | undefined {
   if (value === undefined || value === null) {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return undefined;
   }
   if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是对象。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是对象`);
   }
   return value as Record<string, unknown>;
 }
@@ -56,12 +56,12 @@ function address(value: unknown): string | Record<string, unknown> | undefined {
   if (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0) {
     return value as Record<string, unknown>;
   }
-  throw new ApiError(400, 'VALIDATION_ERROR', 'address 必须是非空字符串或非空对象。');
+  throw new ApiError(400, 'VALIDATION_ERROR', 'address 必须是非空字符串或非空对象');
 }
 
 function items(value: unknown): unknown[] | undefined {
   if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value)) throw new ApiError(400, 'VALIDATION_ERROR', 'items 必须是数组。');
+  if (!Array.isArray(value)) throw new ApiError(400, 'VALIDATION_ERROR', 'items 必须是数组');
   return value;
 }
 
@@ -72,7 +72,7 @@ function verifyHttpsUrl(value: string | undefined): string | undefined {
     if (url.protocol !== 'https:') throw new Error('not https');
     return url.toString();
   } catch {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'labelUrl 必须为 HTTPS URL。');
+    throw new ApiError(400, 'VALIDATION_ERROR', 'labelUrl 必须为 HTTPS URL');
   }
 }
 
@@ -93,7 +93,7 @@ export function parseShipmentUpsert(body: unknown): ShipmentUpsertInput {
   const rawData = object(body, '请求体', true)!;
   const labelSha256 = text(rawData.labelSha256, 'labelSha256', 64);
   if (labelSha256 && !/^[a-fA-F0-9]{64}$/.test(labelSha256)) {
-    throw new ApiError(400, 'VALIDATION_ERROR', 'labelSha256 必须是 64 位十六进制 SHA-256。');
+    throw new ApiError(400, 'VALIDATION_ERROR', 'labelSha256 必须是 64 位十六进制 SHA-256');
   }
 
   return {

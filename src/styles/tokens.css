@@ -59,6 +59,7 @@
   --cmhub-space-4: 1rem;
   --cmhub-space-5: 1.25rem;
   --cmhub-space-6: 1.5rem;
+  --cmhub-operation-rail-inset: var(--cmhub-space-6);
   --cmhub-space-8: 2rem;
   --cmhub-space-10: 2.5rem;
   --cmhub-space-12: 3rem;
@@ -98,6 +99,7 @@
   --cmhub-text-on-inverse: var(--cmhub-neutral-25);
   --cmhub-line-subtle: var(--cmhub-neutral-200);
   --cmhub-line-strong: var(--cmhub-neutral-300);
+  --cmhub-panel-border: color-mix(in srgb, var(--cmhub-interactive-primary) 22%, var(--cmhub-line-subtle));
   --cmhub-line-focus: var(--cmhub-blue-600);
   --cmhub-interactive-primary: var(--cmhub-blue-600);
   --cmhub-interactive-primary-hover: var(--cmhub-blue-700);
@@ -126,6 +128,8 @@
   --cmhub-control-height-compact: 2.25rem;
   --cmhub-control-height-large: 3.25rem;
   --cmhub-control-icon-hit-area: 2.75rem;
+  --cmhub-intercept-control-height: 44px;
+  --cmhub-intercept-control-height-compact: 36px;
   --cmhub-control-radius: var(--cmhub-radius-md);
   --cmhub-control-padding-inline: var(--cmhub-space-4);
   --cmhub-button-bg: var(--cmhub-interactive-primary);
@@ -147,12 +151,20 @@
   --cmhub-panel-padding: var(--cmhub-space-6);
   --cmhub-panel-padding-compact: var(--cmhub-space-4);
   --cmhub-panel-radius: var(--cmhub-radius-lg);
+  --cmhub-modal-radius: var(--cmhub-radius-xl);
+  --cmhub-modal-header-height: 4rem;
+  --cmhub-modal-inline-padding: var(--cmhub-space-6);
+  --cmhub-modal-content-padding: var(--cmhub-space-6);
   --cmhub-table-header-bg: var(--cmhub-surface-sunken);
   --cmhub-table-header-fg: var(--cmhub-text-tertiary);
   --cmhub-table-row-hover-bg: var(--cmhub-surface-selected);
   --cmhub-table-row-height: 3.75rem;
   --cmhub-table-cell-padding-inline: var(--cmhub-space-4);
   --cmhub-table-cell-padding-block: var(--cmhub-space-3);
+  --cmhub-air-summary-card-min-height: 8.25rem;
+  --cmhub-air-summary-icon-size: 4rem;
+  --cmhub-air-summary-value-size: 2.5rem;
+  --cmhub-air-toolbar-height: 4rem;
   --cmhub-layout-sidebar-width: 15.75rem;
   --cmhub-layout-topbar-height: 4rem;
   --cmhub-layout-page-max: 90rem;
@@ -163,6 +175,7 @@
   --cmhub-z-modal: 400;
   --cmhub-z-toast: 500;
   --cmhub-z-tooltip: 600;
+  --cmhub-z-alert: 1300;
 
   /* Compatibility aliases keep existing business components stable while their
      page-level CSS moves to semantic names in phase three. */
@@ -231,6 +244,7 @@
   --cmhub-text-on-inverse: var(--cmhub-neutral-900);
   --cmhub-line-subtle: oklch(29% 0.016 260);
   --cmhub-line-strong: oklch(37% 0.018 260);
+  --cmhub-panel-border: color-mix(in srgb, var(--cmhub-interactive-primary) 34%, var(--cmhub-line-subtle));
   --cmhub-line-focus: oklch(76% 0.15 264);
   --cmhub-interactive-primary: oklch(72% 0.16 264);
   --cmhub-interactive-primary-hover: oklch(78% 0.145 264);

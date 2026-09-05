@@ -11,6 +11,7 @@ type WorkbenchMotionOptions = {
 };
 
 const precisionPointerQuery = '(hover: hover) and (pointer: fine)';
+const reducedMotionQuery = '(prefers-reduced-motion: reduce)';
 
 /**
  * Small, scoped motion for operational workspaces. It never touches data-bearing
@@ -20,7 +21,7 @@ const precisionPointerQuery = '(hover: hover) and (pointer: fine)';
 export function useWorkbenchMotion(scope: MotionScope, { tabKey }: WorkbenchMotionOptions = {}) {
   useGSAP((_, contextSafe) => {
     const root = scope.current;
-    if (!root) return undefined;
+    if (!root || window.matchMedia(reducedMotionQuery).matches) return undefined;
 
     const targets = Array.from(root.querySelectorAll<HTMLElement>('[data-motion-enter]'));
     if (targets.length) {
@@ -84,7 +85,7 @@ export function useWorkbenchMotion(scope: MotionScope, { tabKey }: WorkbenchMoti
 
   useGSAP(() => {
     const root = scope.current;
-    if (!root || !tabKey) return undefined;
+    if (!root || !tabKey || window.matchMedia(reducedMotionQuery).matches) return undefined;
 
     const panel = root.querySelector<HTMLElement>('[data-motion-tab]');
     if (!panel) return undefined;

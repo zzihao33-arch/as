@@ -15,6 +15,9 @@ type OrderRow = RowDataPacket & {
   id: string;
   client_id: string | null;
   client_name_snapshot: string;
+  customer_profile_id: string | null;
+  customer_name_snapshot: string | null;
+  customer_type_snapshot: 'BUSINESS' | 'UPSTREAM' | null;
   source_type: 'MANUAL' | 'UPSTREAM';
   external_batch_id: string | null;
   bill_no_raw: string;
@@ -88,6 +91,19 @@ type ReceiptEvidenceRow = RowDataPacket & {
   created_at: Date;
 };
 
+type PickupDocumentRow = RowDataPacket & {
+  id: string;
+  order_id: string;
+  original_filename: string;
+  storage_key: string;
+  content_sha256: string;
+  content_type: PickupDocumentContentType;
+  byte_size: number | string;
+  asset_status: 'READY' | 'REMOVED';
+  uploaded_by_reference: string;
+  created_at: Date;
+};
+
 type HandoverBatchRow = RowDataPacket & {
   id: string;
   batch_no: string;
@@ -109,28 +125,40 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const BILL_ALLOWED = /^[A-Z0-9-]+$/;
 const MAX_BATCH_SIZE = 200;
 const MAX_EVIDENCE_BYTES = 10 * 1024 * 1024;
+const MAX_PICKUP_DOCUMENT_BYTES = 20 * 1024 * 1024;
+const MAX_PICKUP_DOCUMENTS = 10;
+const PICKUP_DOCUMENT_TYPES = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv',
+} as const;
+type PickupDocumentExtension = keyof typeof PICKUP_DOCUMENT_TYPES;
+type PickupDocumentContentType = typeof PICKUP_DOCUMENT_TYPES[PickupDocumentExtension];
 
 function text(value: unknown, field: string, maxLength: number, required = true): string | null {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项。`);
+    if (required) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 为必填项`);
     return null;
   }
-  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串。`);
+  if (typeof value !== 'string') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是字符串`);
   const result = value.trim();
-  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效。`);
+  if (!result || result.length > maxLength) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 长度无效`);
   return result;
 }
 
 function uuid(value: unknown, field: string): string {
   const result = text(value, field, 36)!;
-  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID。`);
+  if (!UUID_PATTERN.test(result)) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 UUID`);
   return result;
 }
 
 function positiveInteger(value: unknown, field: string): number {
   const result = Number(value);
   if (!Number.isInteger(result) || result < 1 || result > 999_999) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 1 到 999999 的整数。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是 1 到 999999 的整数`);
   }
   return result;
 }
@@ -138,28 +166,28 @@ function positiveInteger(value: unknown, field: string): number {
 function positiveWeight(value: unknown, field: string): number {
   const result = Number(value);
   if (!Number.isFinite(result) || result <= 0 || result > 99_999_999_999.999) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须大于 0。`);
+    throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须大于 0`);
   }
   return Math.round(result * 1000) / 1000;
 }
 
 function weightUnit(value: unknown, field: string): WeightUnit {
   const result = text(value, field, 2)!.toUpperCase();
-  if (result !== 'KG' && result !== 'LB') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 仅支持 KG 或 LB。`);
+  if (result !== 'KG' && result !== 'LB') throw new ApiError(400, 'VALIDATION_ERROR', `${field} 仅支持 KG 或 LB`);
   return result;
 }
 
 function dateValue(value: unknown, field: string): Date {
   if (value === undefined || value === null || value === '') return new Date();
   const result = new Date(String(value));
-  if (Number.isNaN(result.getTime())) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是有效时间。`);
+  if (Number.isNaN(result.getTime())) throw new ApiError(400, 'VALIDATION_ERROR', `${field} 必须是有效时间`);
   return result;
 }
 
 function pageValue(value: unknown, fallback: number, maximum: number): number {
   if (value === undefined || value === null || value === '') return fallback;
   const result = Number(value);
-  if (!Number.isInteger(result) || result < 1 || result > maximum) throw new ApiError(400, 'VALIDATION_ERROR', '分页参数无效。');
+  if (!Number.isInteger(result) || result < 1 || result > maximum) throw new ApiError(400, 'VALIDATION_ERROR', '分页参数无效');
   return result;
 }
 
@@ -172,10 +200,10 @@ export function normalizeAirBillNo(value: unknown): {
   const raw = text(value, 'billNo', 32)!;
   const displayCandidate = raw.replace(/[\s\u3000]+/g, '').replace(/[－—–]/g, '-').toUpperCase();
   if (!BILL_ALLOWED.test(displayCandidate)) {
-    throw new ApiError(400, 'INVALID_AIR_BILL_NO', '提货单号仅允许字母、数字和连字符。');
+    throw new ApiError(400, 'INVALID_AIR_BILL_NO', '提货单号仅允许字母、数字和连字符');
   }
   const normalized = displayCandidate.replace(/-/g, '');
-  if (!normalized || normalized.length > 32) throw new ApiError(400, 'INVALID_AIR_BILL_NO', '提货单号长度无效。');
+  if (!normalized || normalized.length > 32) throw new ApiError(400, 'INVALID_AIR_BILL_NO', '提货单号长度无效');
   const isStandard = /^\d{11}$/.test(normalized);
   const display = isStandard ? `${normalized.slice(0, 3)}-${normalized.slice(3)}` : displayCandidate;
   return { raw, display, normalized, isStandard };
@@ -228,26 +256,64 @@ export function validateAirEvidenceImage(
 ): {
   content: Buffer; contentType: 'image/jpeg' | 'image/png'; sha256: string; width: number; height: number;
 } {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 1) throw new ApiError(400, 'EMPTY_EVIDENCE_IMAGE', '凭证图片不能为空。');
-  if (buffer.length > MAX_EVIDENCE_BYTES) throw new ApiError(413, 'EVIDENCE_IMAGE_TOO_LARGE', '单张凭证图片不能超过 10MB。');
+  if (!Buffer.isBuffer(buffer) || buffer.length < 1) throw new ApiError(400, 'EMPTY_EVIDENCE_IMAGE', '凭证图片不能为空');
+  if (buffer.length > MAX_EVIDENCE_BYTES) throw new ApiError(413, 'EVIDENCE_IMAGE_TOO_LARGE', '单张凭证图片不能超过 10MB');
   const png = pngDimensions(buffer);
   const jpeg = png ? null : jpegDimensions(buffer);
   const contentType = png ? 'image/png' : jpeg ? 'image/jpeg' : null;
-  if (!contentType) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持真实的 JPG、JPEG 或 PNG 图片。');
+  if (!contentType) throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '仅支持真实的 JPG、JPEG 或 PNG 图片');
   if (declaredContentType && !['image/jpeg', 'image/png'].includes(declaredContentType.toLowerCase())) {
-    throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '图片 Content-Type 无效。');
+    throw new ApiError(415, 'UNSUPPORTED_EVIDENCE_IMAGE', '图片 Content-Type 无效');
   }
   if (declaredContentType && declaredContentType.toLowerCase() !== contentType) {
-    throw new ApiError(415, 'EVIDENCE_CONTENT_TYPE_MISMATCH', '图片真实类型与 Content-Type 不一致。');
+    throw new ApiError(415, 'EVIDENCE_CONTENT_TYPE_MISMATCH', '图片真实类型与 Content-Type 不一致');
   }
   const dimensions = png ?? jpeg!;
   if (dimensions.width < minimumDimensions.width || dimensions.height < minimumDimensions.height) {
-    throw new ApiError(400, 'EVIDENCE_RESOLUTION_TOO_LOW', `凭证图片分辨率至少为 ${minimumDimensions.width}×${minimumDimensions.height}。`);
+    throw new ApiError(400, 'EVIDENCE_RESOLUTION_TOO_LOW', `凭证图片分辨率至少为 ${minimumDimensions.width}×${minimumDimensions.height}`);
   }
   const sha256 = createHash('sha256').update(buffer).digest('hex');
-  if (declaredSha256 && !/^[0-9a-f]{64}$/i.test(declaredSha256)) throw new ApiError(400, 'INVALID_EVIDENCE_SHA256', '图片摘要格式无效。');
-  if (declaredSha256 && declaredSha256.toLowerCase() !== sha256) throw new ApiError(400, 'EVIDENCE_SHA256_MISMATCH', '图片摘要校验失败。');
+  if (declaredSha256 && !/^[0-9a-f]{64}$/i.test(declaredSha256)) throw new ApiError(400, 'INVALID_EVIDENCE_SHA256', '图片摘要格式无效');
+  if (declaredSha256 && declaredSha256.toLowerCase() !== sha256) throw new ApiError(400, 'EVIDENCE_SHA256_MISMATCH', '图片摘要校验失败');
   return { content: buffer, contentType, sha256, width: dimensions.width, height: dimensions.height };
+}
+
+function pickupDocumentFilename(value: unknown): { filename: string; extension: PickupDocumentExtension } {
+  const filename = text(value, 'filename', 255)!;
+  if (/[\\/\0]/.test(filename)) throw new ApiError(400, 'INVALID_DOCUMENT_FILENAME', '文件名不能包含路径');
+  const extension = filename.split('.').pop()?.toLowerCase() as PickupDocumentExtension | undefined;
+  if (!extension || !(extension in PICKUP_DOCUMENT_TYPES)) {
+    throw new ApiError(415, 'UNSUPPORTED_PICKUP_DOCUMENT', '仅支持 PDF、Word、Excel 或 CSV 提货文件');
+  }
+  return { filename, extension };
+}
+
+export function validatePickupDocument(buffer: unknown, filenameValue: unknown, declaredContentType?: string, declaredSha256?: string): {
+  content: Buffer; filename: string; extension: PickupDocumentExtension; contentType: PickupDocumentContentType; sha256: string;
+} {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 1) throw new ApiError(400, 'EMPTY_PICKUP_DOCUMENT', '提货文件不能为空');
+  if (buffer.length > MAX_PICKUP_DOCUMENT_BYTES) throw new ApiError(413, 'PICKUP_DOCUMENT_TOO_LARGE', '单个提货文件不能超过 20MB');
+  const { filename, extension } = pickupDocumentFilename(filenameValue);
+  const isPdf = buffer.subarray(0, 5).equals(Buffer.from('%PDF-'));
+  const isOfficeBinary = buffer.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+  const isZip = buffer.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const contains = (value: string) => buffer.includes(Buffer.from(value));
+  const valid = extension === 'pdf' ? isPdf
+    : extension === 'doc' || extension === 'xls' ? isOfficeBinary
+      : extension === 'docx' ? isZip && contains('word/')
+        : extension === 'xlsx' ? isZip && contains('xl/')
+          : !buffer.includes(0);
+  if (!valid) throw new ApiError(415, 'PICKUP_DOCUMENT_SIGNATURE_INVALID', '文件内容与所选的提货文件格式不一致');
+  const contentType = PICKUP_DOCUMENT_TYPES[extension];
+  const normalizedType = declaredContentType?.split(';')[0].trim().toLowerCase();
+  if (normalizedType && normalizedType !== 'application/octet-stream' && normalizedType !== contentType
+    && !(extension === 'csv' && normalizedType === 'application/vnd.ms-excel')) {
+    throw new ApiError(415, 'PICKUP_DOCUMENT_CONTENT_TYPE_MISMATCH', '文件 Content-Type 与文件类型不一致');
+  }
+  const sha256 = createHash('sha256').update(buffer).digest('hex');
+  if (declaredSha256 && !/^[0-9a-f]{64}$/i.test(declaredSha256)) throw new ApiError(400, 'INVALID_PICKUP_DOCUMENT_SHA256', '文件摘要格式无效');
+  if (declaredSha256 && declaredSha256.toLowerCase() !== sha256) throw new ApiError(400, 'PICKUP_DOCUMENT_SHA256_MISMATCH', '文件摘要校验失败');
+  return { content: buffer, filename, extension, contentType, sha256 };
 }
 
 function batchNo(prefix: 'IN' | 'HO'): string {
@@ -270,6 +336,8 @@ function toOrder(row: OrderRow) {
   const exceptions = Number(row.exception_shipment_count ?? 0);
   return {
     id: row.id, sourceClientId: row.client_id, sourceClientName: row.client_name_snapshot,
+    customerId: row.customer_profile_id, customerName: row.customer_name_snapshot ?? row.client_name_snapshot,
+    customerType: row.customer_type_snapshot,
     sourceType: row.source_type, externalBatchId: row.external_batch_id,
     billNoRaw: row.bill_no_raw, billNo: row.bill_no_display,
     billNoNormalized: row.bill_no_normalized, billNoIsStandard: Boolean(row.bill_no_is_standard),
@@ -337,6 +405,12 @@ function receiptEvidenceView(asset: ReceiptEvidenceRow) {
     downloadPath: `/warehouse/v1/air-receipt-evidence-assets/${asset.id}/content`, createdAt: asset.created_at.toISOString() };
 }
 
+function pickupDocumentView(asset: PickupDocumentRow) {
+  return { id: asset.id, filename: asset.original_filename, contentType: asset.content_type,
+    byteSize: Number(asset.byte_size), downloadPath: `/warehouse/v1/air-pickup-documents/${asset.id}/content`,
+    createdAt: asset.created_at.toISOString() };
+}
+
 async function addEvent(connection: PoolConnection, session: WarehouseSession, audit: RequestAudit, input: {
   orderId?: string | null; receiptBatchId?: string | null; handoverBatchId?: string | null;
   eventType: string; reason?: string | null; data?: unknown;
@@ -375,24 +449,26 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       return rows.map(row => ({ id: row.id, code: row.client_code, name: row.display_name }));
     },
 
-    async listOrders(input: { search?: unknown; status?: unknown; evidenceStatus?: unknown; page?: unknown; pageSize?: unknown }) {
+    async listOrders(input: { search?: unknown; customerId?: unknown; status?: unknown; evidenceStatus?: unknown; page?: unknown; pageSize?: unknown }) {
       const search = input.search === undefined || input.search === '' ? null : text(input.search, 'search', 100);
+      const customerId = input.customerId === undefined || input.customerId === '' ? null : uuid(input.customerId, 'customerId');
       const status = input.status === undefined || input.status === '' ? null : text(input.status, 'status', 32) as AirPickupStatus | null;
       const evidence = input.evidenceStatus === undefined || input.evidenceStatus === '' ? null : text(input.evidenceStatus, 'evidenceStatus', 32) as EvidenceStatus | null;
-      if (status && !['RECORDED', 'RECEIVED', 'HANDED_OVER', 'VOIDED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
-      if (evidence && !['NONE', 'PARTIAL', 'COMPLETE'].includes(evidence)) throw new ApiError(400, 'VALIDATION_ERROR', 'evidenceStatus 不受支持。');
+      if (status && !['RECORDED', 'RECEIVED', 'HANDED_OVER', 'VOIDED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持');
+      if (evidence && !['NONE', 'PARTIAL', 'COMPLETE'].includes(evidence)) throw new ApiError(400, 'VALIDATION_ERROR', 'evidenceStatus 不受支持');
       const page = pageValue(input.page, 1, 100_000);
       const pageSize = pageValue(input.pageSize, 20, 100);
       const offset = (page - 1) * pageSize;
       const normalizedSearch = search ? `%${search.replace(/[\s\u3000\-－—–]+/g, '').toUpperCase()}%` : null;
       const [rows] = await mysql.query<OrderRow[]>(
         `${ORDER_SELECT}, COUNT(*) OVER () AS total_count
-         WHERE (? IS NULL OR o.bill_no_normalized LIKE ? OR o.cargo_name LIKE ? OR o.client_name_snapshot LIKE ?)
+         WHERE (? IS NULL OR o.bill_no_normalized LIKE ? OR o.cargo_name LIKE ? OR COALESCE(o.customer_name_snapshot, o.client_name_snapshot) LIKE ?)
+           AND (? IS NULL OR o.customer_profile_id = ?)
            AND (? IS NULL OR o.order_status = ?)
            AND (? IS NULL OR o.evidence_status = ?)
          ORDER BY o.updated_at DESC, o.id LIMIT ${pageSize} OFFSET ${offset}`,
         [normalizedSearch, normalizedSearch, search ? `%${search}%` : null, search ? `%${search}%` : null,
-          status, status, evidence, evidence],
+          customerId, customerId, status, status, evidence, evidence],
       );
       const [summaryRows] = await mysql.execute<(RowDataPacket & {
         recorded_count: number | string; received_count: number | string;
@@ -418,7 +494,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
     async getOrder(orderIdValue: unknown) {
       const orderId = uuid(orderIdValue, 'orderId');
       const [rows] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT} WHERE o.id = ? LIMIT 1`, [orderId]);
-      if (!rows[0]) throw new ApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单。');
+      if (!rows[0]) throw new ApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单');
       const [events] = await mysql.execute<(RowDataPacket & { revision: number; event_type: string; actor_reference: string; reason: string | null; event_data: unknown; occurred_at: Date })[]>(
         `SELECT revision, event_type, actor_reference, reason, event_data, occurred_at
          FROM air_pickup_events WHERE order_id = ? ORDER BY revision DESC LIMIT 100`, [orderId],
@@ -433,9 +509,13 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
           `SELECT * FROM air_handover_evidence_assets WHERE handover_batch_id = ? AND asset_status = 'READY' ORDER BY evidence_type, created_at`,
           [rows[0].handover_batch_id],
         ) : [[] as EvidenceRow[], []];
+      const [pickupDocuments] = await mysql.execute<PickupDocumentRow[]>(
+        `SELECT * FROM air_pickup_document_assets WHERE order_id = ? AND asset_status = 'READY' ORDER BY created_at`,
+        [orderId],
+      );
       const receiptEvidence = receiptAssets.map(receiptEvidenceView);
       const handoverEvidence = handoverAssets.map(handoverEvidenceView);
-      return { ...toOrder(rows[0]), receiptEvidence, handoverEvidence, events: events.map(event => {
+      return { ...toOrder(rows[0]), receiptEvidence, handoverEvidence, pickupDocuments: pickupDocuments.map(pickupDocumentView), events: events.map(event => {
         const data = parseJson(event.event_data);
         const eventEvidence = event.event_type === 'ORDER_RECEIVED'
           ? receiptEvidence
@@ -453,7 +533,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
     },
 
     async createOrder(session: WarehouseSession, audit: RequestAudit, input: Record<string, unknown>) {
-      const clientId = uuid(input.clientId, 'clientId');
+      const customerId = uuid(input.customerId, 'customerId');
       const bill = normalizeAirBillNo(input.billNo);
       const cargoName = text(input.cargoName, 'cargoName', 100, false);
       const forecastCartons = positiveInteger(input.forecastCartons, 'forecastCartons');
@@ -465,28 +545,31 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const connection = await mysql.getConnection();
       try {
         await connection.beginTransaction();
-        const [clients] = await connection.execute<(RowDataPacket & { display_name: string })[]>(
-          `SELECT display_name FROM clients WHERE id = ? AND client_status = 'ACTIVE' LIMIT 1`, [clientId],
+        const [customers] = await connection.execute<(RowDataPacket & { display_name: string; customer_type: 'BUSINESS' | 'UPSTREAM' })[]>(
+          `SELECT display_name, customer_type FROM customer_profiles
+           WHERE id = ? AND customer_status = 'ACTIVE' LIMIT 1`, [customerId],
         );
-        if (!clients[0]) throw new ApiError(400, 'INVALID_CLIENT', '请选择有效的来源客户。');
+        if (!customers[0]) throw new ApiError(400, 'INVALID_CUSTOMER', '请选择有效的归属客户');
         await connection.execute(
           `INSERT INTO air_pickup_orders
-            (id, client_id, client_name_snapshot, source_type,
+            (id, client_id, client_name_snapshot, customer_profile_id, customer_name_snapshot, customer_type_snapshot, source_type,
              bill_no_raw, bill_no_display, bill_no_normalized, bill_no_is_standard, cargo_name,
              forecast_cartons, forecast_packages, forecast_weight, forecast_weight_unit, remarks,
              created_by_user_id, created_by_reference, updated_by_user_id, updated_by_reference)
-           VALUES (?, ?, ?, 'MANUAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [id, clientId, clients[0].display_name, bill.raw, bill.display, bill.normalized, bill.isStandard, cargoName, forecastCartons,
+           VALUES (?, NULL, ?, ?, ?, ?, 'MANUAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, customers[0].display_name, customerId, customers[0].display_name, customers[0].customer_type,
+            bill.raw, bill.display, bill.normalized, bill.isStandard, cargoName, forecastCartons,
             forecastPackages, forecastWeight, forecastWeightUnit, remarks, session.userId, actor(session), session.userId, actor(session)],
         );
         await addEvent(connection, session, audit, { orderId: id, eventType: 'ORDER_RECORDED',
-          data: { billNo: bill.display, billNoIsStandard: bill.isStandard, clientId, clientName: clients[0].display_name } });
+          data: { billNo: bill.display, billNoIsStandard: bill.isStandard, customerId, customerName: customers[0].display_name,
+            customerType: customers[0].customer_type, source: 'MANUAL' } });
         await connection.commit();
         return await this.getOrder(id);
       } catch (error) {
         await connection.rollback().catch(() => undefined);
         if (error instanceof Error && 'code' in error && error.code === 'ER_DUP_ENTRY') {
-          throw new ApiError(409, 'AIR_BILL_ALREADY_EXISTS', '该提货单号已存在；空格、大小写和连字符不影响唯一性。');
+          throw new ApiError(409, 'AIR_BILL_ALREADY_EXISTS', '该提货单号已存在；空格、大小写和连字符不影响唯一性');
         }
         throw error;
       } finally { connection.release(); }
@@ -512,7 +595,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
           [cargoName, forecastCartons, forecastPackages, forecastWeight, forecastWeightUnit, remarks,
             session.userId, actor(session), orderId, expectedVersion],
         );
-        if (!('affectedRows' in result) || result.affectedRows !== 1) throw new ApiError(409, 'AIR_PICKUP_VERSION_CONFLICT', '提货单已被其他人修改或不再允许编辑，请刷新。');
+        if (!('affectedRows' in result) || result.affectedRows !== 1) throw new ApiError(409, 'AIR_PICKUP_VERSION_CONFLICT', '提货单已被其他人修改或不再允许编辑，请刷新');
         await addEvent(connection, session, audit, { orderId, eventType: 'ORDER_EDITED' });
         await connection.commit();
         return await this.getOrder(orderId);
@@ -522,17 +605,17 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
 
     async createReceiptBatch(session: WarehouseSession, audit: RequestAudit, input: Record<string, unknown>) {
       if (!Array.isArray(input.orders) || input.orders.length < 1 || input.orders.length > MAX_BATCH_SIZE) {
-        throw new ApiError(400, 'VALIDATION_ERROR', `orders 每批需包含 1 到 ${MAX_BATCH_SIZE} 条。`);
+        throw new ApiError(400, 'VALIDATION_ERROR', `orders 每批需包含 1 到 ${MAX_BATCH_SIZE} 条`);
       }
       const receivedAt = dateValue(input.receivedAt, 'receivedAt');
       const entries = input.orders.map((value, index) => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError(400, 'VALIDATION_ERROR', `orders[${index}] 必须是对象。`);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError(400, 'VALIDATION_ERROR', `orders[${index}] 必须是对象`);
         const row = value as Record<string, unknown>;
         return { orderId: uuid(row.orderId, `orders[${index}].orderId`), actualCartons: positiveInteger(row.actualCartons, 'actualCartons'),
           actualPackages: positiveInteger(row.actualPackages, 'actualPackages'), actualWeight: positiveWeight(row.actualWeight, 'actualWeight'),
           actualWeightUnit: weightUnit(row.actualWeightUnit, 'actualWeightUnit'), differenceReason: text(row.differenceReason, 'differenceReason', 500, false) };
       });
-      if (new Set(entries.map(entry => entry.orderId)).size !== entries.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复。');
+      if (new Set(entries.map(entry => entry.orderId)).size !== entries.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复');
       const id = randomUUID();
       const nextBatchNo = batchNo('IN');
       const connection = await mysql.getConnection();
@@ -545,12 +628,12 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
         for (const entry of entries) {
           const [orders] = await connection.execute<OrderRow[]>('SELECT * FROM air_pickup_orders WHERE id = ? LIMIT 1 FOR UPDATE', [entry.orderId]);
           const order = orders[0];
-          if (!order || order.order_status !== 'RECORDED') throw new ApiError(409, 'AIR_PICKUP_NOT_RECEIVABLE', '批次包含不存在或已处理的提货单，整批未保存。');
+          if (!order || order.order_status !== 'RECORDED') throw new ApiError(409, 'AIR_PICKUP_NOT_RECEIVABLE', '批次包含不存在或已处理的提货单，整批未保存');
           const differs = receivingValuesDiffer({ forecastCartons: order.forecast_cartons, forecastPackages: order.forecast_packages,
             forecastWeight: Number(order.forecast_weight), forecastWeightUnit: order.forecast_weight_unit,
             actualCartons: entry.actualCartons, actualPackages: entry.actualPackages, actualWeight: entry.actualWeight,
             actualWeightUnit: entry.actualWeightUnit });
-          if (differs && !entry.differenceReason) throw new ApiError(400, 'DIFFERENCE_REASON_REQUIRED', `${order.bill_no_display} 的实际值有差异，必须填写差异说明。`);
+          if (differs && !entry.differenceReason) throw new ApiError(400, 'DIFFERENCE_REASON_REQUIRED', `${order.bill_no_display} 的实际值有差异，必须填写差异说明`);
           await connection.execute(
             `UPDATE air_pickup_orders SET order_status = 'RECEIVED', actual_cartons = ?, actual_packages = ?,
                actual_weight = ?, actual_weight_unit = ?, difference_reason = ?, receipt_batch_id = ?, received_at = ?,
@@ -574,7 +657,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const filename = text(input.filename, 'filename', 255)!;
       const warnings = Array.isArray(input.qualityWarnings) ? input.qualityWarnings.map(String).slice(0, 8) : [];
       const qualityOverride = input.qualityOverride === true || input.qualityOverride === 'true';
-      if (warnings.length && !qualityOverride) throw new ApiError(400, 'QUALITY_OVERRIDE_REQUIRED', '图片存在清晰度警告，请确认后再上传。');
+      if (warnings.length && !qualityOverride) throw new ApiError(400, 'QUALITY_OVERRIDE_REQUIRED', '图片存在清晰度警告，请确认后再上传');
       const image = validateAirEvidenceImage(input.content, input.contentType, input.sha256);
       const assetId = randomUUID();
       const extension = image.contentType === 'image/png' ? 'png' : 'jpg';
@@ -585,12 +668,12 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
         const [batches] = await connection.execute<(RowDataPacket & { id: string })[]>(
           `SELECT id FROM air_receipt_batches WHERE id = ? LIMIT 1 FOR UPDATE`, [batchId],
         );
-        if (!batches[0]) throw new ApiError(404, 'RECEIPT_BATCH_NOT_FOUND', '未找到入库批次。');
+        if (!batches[0]) throw new ApiError(404, 'RECEIPT_BATCH_NOT_FOUND', '未找到入库批次');
         const [counts] = await connection.execute<(RowDataPacket & { count: number | string })[]>(
           `SELECT COUNT(*) AS count FROM air_receipt_evidence_assets
            WHERE receipt_batch_id = ? AND asset_status = 'READY' FOR UPDATE`, [batchId],
         );
-        if (Number(counts[0]?.count ?? 0) >= 9) throw new ApiError(409, 'RECEIPT_EVIDENCE_LIMIT_REACHED', '入库照最多上传 9 张。');
+        if (Number(counts[0]?.count ?? 0) >= 9) throw new ApiError(409, 'RECEIPT_EVIDENCE_LIMIT_REACHED', '入库照最多上传 9 张');
         await storage.put(storageKey, image.content);
         await connection.execute(
           `INSERT INTO air_receipt_evidence_assets
@@ -622,19 +705,104 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const [rows] = await mysql.execute<ReceiptEvidenceRow[]>(
         `SELECT * FROM air_receipt_evidence_assets WHERE id = ? AND asset_status = 'READY' LIMIT 1`, [assetId],
       );
-      if (!rows[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '入库照不存在或已移除。');
+      if (!rows[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '入库照不存在或已移除');
       const object = await storage.open(rows[0].storage_key).catch(() => {
-        throw new ApiError(503, 'EVIDENCE_STORAGE_UNAVAILABLE', '入库照暂时不可用。');
+        throw new ApiError(503, 'EVIDENCE_STORAGE_UNAVAILABLE', '入库照暂时不可用');
       });
       return { metadata: rows[0], object };
     },
 
+    async storePickupDocument(session: WarehouseSession, audit: RequestAudit, orderIdValue: unknown, input: {
+      filename: unknown; contentType?: string; sha256?: string; content: unknown;
+    }) {
+      const orderId = uuid(orderIdValue, 'orderId');
+      const document = validatePickupDocument(input.content, input.filename, input.contentType, input.sha256);
+      const assetId = randomUUID();
+      const storageKey = `air-pickups/documents/${orderId}/${document.sha256}.${document.extension}`;
+      const connection = await mysql.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [orders] = await connection.execute<OrderRow[]>('SELECT * FROM air_pickup_orders WHERE id = ? LIMIT 1 FOR UPDATE', [orderId]);
+        if (!orders[0]) throw new ApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单');
+        if (orders[0].order_status === 'VOIDED') throw new ApiError(409, 'AIR_PICKUP_VOIDED', '已作废的提货单不能新增提货文件');
+        const [counts] = await connection.execute<(RowDataPacket & { count: number | string })[]>(
+          `SELECT COUNT(*) AS count FROM air_pickup_document_assets WHERE order_id = ? AND asset_status = 'READY' FOR UPDATE`, [orderId],
+        );
+        if (Number(counts[0]?.count ?? 0) >= MAX_PICKUP_DOCUMENTS) {
+          throw new ApiError(409, 'PICKUP_DOCUMENT_LIMIT_REACHED', `每张提货单最多上传 ${MAX_PICKUP_DOCUMENTS} 个提货文件`);
+        }
+        const [duplicates] = await connection.execute<(RowDataPacket & { id: string })[]>(
+          'SELECT id FROM air_pickup_document_assets WHERE order_id = ? AND content_sha256 = ? LIMIT 1 FOR UPDATE', [orderId, document.sha256],
+        );
+        if (duplicates[0]) throw new ApiError(409, 'DUPLICATE_PICKUP_DOCUMENT', '相同内容的提货文件已经上传');
+        await storage.put(storageKey, document.content);
+        await connection.execute(
+          `INSERT INTO air_pickup_document_assets
+            (id, order_id, original_filename, storage_key, content_sha256, content_type, byte_size, uploaded_by_user_id, uploaded_by_reference)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [assetId, orderId, document.filename, storageKey, document.sha256, document.contentType, document.content.length,
+            session.userId, actor(session)],
+        );
+        await connection.execute(
+          `UPDATE air_pickup_orders SET updated_by_user_id = ?, updated_by_reference = ?, version = version + 1 WHERE id = ?`,
+          [session.userId, actor(session), orderId],
+        );
+        await addEvent(connection, session, audit, { orderId, eventType: 'PICKUP_DOCUMENT_ADDED', data: { assetId, filename: document.filename } });
+        await connection.commit();
+        return { id: assetId, filename: document.filename, contentType: document.contentType, byteSize: document.content.length,
+          downloadPath: `/warehouse/v1/air-pickup-documents/${assetId}/content`, createdAt: new Date().toISOString() };
+      } catch (error) { await connection.rollback().catch(() => undefined); throw error; }
+      finally { connection.release(); }
+    },
+
+    async openPickupDocument(assetIdValue: unknown): Promise<{ metadata: PickupDocumentRow; object: LabelStorageObject }> {
+      const assetId = uuid(assetIdValue, 'assetId');
+      const [rows] = await mysql.execute<PickupDocumentRow[]>(
+        `SELECT * FROM air_pickup_document_assets WHERE id = ? AND asset_status = 'READY' LIMIT 1`, [assetId],
+      );
+      if (!rows[0]) throw new ApiError(404, 'PICKUP_DOCUMENT_NOT_FOUND', '提货文件不存在或已移除');
+      const object = await storage.open(rows[0].storage_key).catch(() => {
+        throw new ApiError(503, 'PICKUP_DOCUMENT_STORAGE_UNAVAILABLE', '提货文件暂时不可用');
+      });
+      return { metadata: rows[0], object };
+    },
+
+    async removePickupDocument(session: WarehouseSession, audit: RequestAudit, assetIdValue: unknown, input: Record<string, unknown>) {
+      const assetId = uuid(assetIdValue, 'assetId');
+      const password = text(input.password, 'password', 1024)!;
+      const reason = text(input.reason, 'reason', 500)!;
+      if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '仅主管或系统管理员可移除提货文件');
+      const connection = await mysql.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [users] = await connection.execute<(RowDataPacket & { password_hash: string })[]>('SELECT password_hash FROM warehouse_users WHERE id = ? LIMIT 1', [session.userId]);
+        if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误');
+        const [assets] = await connection.execute<PickupDocumentRow[]>(
+          `SELECT * FROM air_pickup_document_assets WHERE id = ? AND asset_status = 'READY' LIMIT 1 FOR UPDATE`, [assetId],
+        );
+        const asset = assets[0];
+        if (!asset) throw new ApiError(404, 'PICKUP_DOCUMENT_NOT_FOUND', '提货文件不存在或已移除');
+        await connection.execute(
+          `UPDATE air_pickup_document_assets SET asset_status = 'REMOVED', removed_by_user_id = ?,
+             removed_by_reference = ?, removed_reason = ?, removed_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
+          [session.userId, actor(session), reason, assetId],
+        );
+        await connection.execute(
+          `UPDATE air_pickup_orders SET updated_by_user_id = ?, updated_by_reference = ?, version = version + 1 WHERE id = ?`,
+          [session.userId, actor(session), asset.order_id],
+        );
+        await addEvent(connection, session, audit, { orderId: asset.order_id, eventType: 'PICKUP_DOCUMENT_REMOVED', reason, data: { assetId } });
+        await connection.commit();
+      } catch (error) { await connection.rollback().catch(() => undefined); throw error; }
+      finally { connection.release(); }
+    },
+
     async createHandoverDraft(session: WarehouseSession, audit: RequestAudit, input: Record<string, unknown>) {
       if (!Array.isArray(input.orderIds) || input.orderIds.length < 1 || input.orderIds.length > MAX_BATCH_SIZE) {
-        throw new ApiError(400, 'VALIDATION_ERROR', `orderIds 每批需包含 1 到 ${MAX_BATCH_SIZE} 条。`);
+        throw new ApiError(400, 'VALIDATION_ERROR', `orderIds 每批需包含 1 到 ${MAX_BATCH_SIZE} 条`);
       }
       const orderIds = input.orderIds.map((value, index) => uuid(value, `orderIds[${index}]`));
-      if (new Set(orderIds).size !== orderIds.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复。');
+      if (new Set(orderIds).size !== orderIds.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复');
       const vehicleNo = text(input.vehicleNo, 'vehicleNo', 64, false);
       const driverName = text(input.driverName, 'driverName', 100, false);
       const driverPhone = text(input.driverPhone, 'driverPhone', 32, false);
@@ -657,7 +825,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
             [id, session.userId, actor(session), orderId],
           );
           if (!('affectedRows' in result) || result.affectedRows !== 1) {
-            throw new ApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '批次包含未入库或已加入其他交仓批次的提货单，整批未保存。');
+            throw new ApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '批次包含未入库或已加入其他交仓批次的提货单，整批未保存');
           }
           await addEvent(connection, session, audit, { orderId, handoverBatchId: id, eventType: 'HANDOVER_DRAFT_CREATED' });
         }
@@ -670,7 +838,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
     async getHandoverBatch(batchIdValue: unknown) {
       const batchId = uuid(batchIdValue, 'batchId');
       const [batches] = await mysql.execute<HandoverBatchRow[]>('SELECT * FROM air_handover_batches WHERE id = ? LIMIT 1', [batchId]);
-      if (!batches[0]) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
+      if (!batches[0]) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
       const [orders] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT} WHERE o.handover_batch_id = ? ORDER BY o.bill_no_display`, [batchId]);
       const [assets] = await mysql.execute<EvidenceRow[]>(
         `SELECT * FROM air_handover_evidence_assets WHERE handover_batch_id = ? AND asset_status = 'READY'
@@ -688,10 +856,10 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const batchId = uuid(batchIdValue, 'batchId');
       const expectedVersion = positiveInteger(input.expectedVersion, 'expectedVersion');
       if (!Array.isArray(input.orderIds) || input.orderIds.length < 1 || input.orderIds.length > MAX_BATCH_SIZE) {
-        throw new ApiError(400, 'VALIDATION_ERROR', `orderIds 每批需包含 1 到 ${MAX_BATCH_SIZE} 条。`);
+        throw new ApiError(400, 'VALIDATION_ERROR', `orderIds 每批需包含 1 到 ${MAX_BATCH_SIZE} 条`);
       }
       const orderIds = input.orderIds.map((value, index) => uuid(value, `orderIds[${index}]`));
-      if (new Set(orderIds).size !== orderIds.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复。');
+      if (new Set(orderIds).size !== orderIds.length) throw new ApiError(400, 'DUPLICATE_BATCH_ORDER', '同一提货单不能在批次中重复');
       const vehicleNo = text(input.vehicleNo, 'vehicleNo', 64, false);
       const driverName = text(input.driverName, 'driverName', 100, false);
       const driverPhone = text(input.driverPhone, 'driverPhone', 32, false);
@@ -703,17 +871,17 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
         await connection.beginTransaction();
         const [batches] = await connection.execute<HandoverBatchRow[]>('SELECT * FROM air_handover_batches WHERE id = ? LIMIT 1 FOR UPDATE', [batchId]);
         const batch = batches[0];
-        if (!batch) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
-        if (batch.version !== expectedVersion) throw new ApiError(409, 'HANDOVER_VERSION_CONFLICT', '交仓批次已被其他人修改，请刷新。');
+        if (!batch) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
+        if (batch.version !== expectedVersion) throw new ApiError(409, 'HANDOVER_VERSION_CONFLICT', '交仓批次已被其他人修改，请刷新');
         const confirmed = batch.batch_status === 'CONFIRMED';
         if (!confirmed && batch.created_by_user_id !== session.userId && !canCorrect(session)) {
-          throw new ApiError(403, 'HANDOVER_DRAFT_OWNER_REQUIRED', '仅草稿创建人或主管可编辑该批次。');
+          throw new ApiError(403, 'HANDOVER_DRAFT_OWNER_REQUIRED', '仅草稿创建人或主管可编辑该批次');
         }
         if (confirmed) {
-          if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '已确认批次仅允许主管或系统管理员更正。');
-          if (!reason || !password) throw new ApiError(400, 'REAUTHENTICATION_REQUIRED', '更正已确认批次必须填写原因并验证当前账户密码。');
+          if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '已确认批次仅允许主管或系统管理员更正');
+          if (!reason || !password) throw new ApiError(400, 'REAUTHENTICATION_REQUIRED', '更正已确认批次必须填写原因并验证当前账户密码');
           const [users] = await connection.execute<(RowDataPacket & { password_hash: string })[]>('SELECT password_hash FROM warehouse_users WHERE id = ? LIMIT 1', [session.userId]);
-          if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误。');
+          if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误');
         }
         const [existing] = await connection.execute<OrderRow[]>('SELECT * FROM air_pickup_orders WHERE handover_batch_id = ? FOR UPDATE', [batchId]);
         const existingIds = new Set(existing.map(order => order.id));
@@ -724,7 +892,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
           const order = rows[0];
           const alreadyMember = existingIds.has(orderId);
           if (!order || (!alreadyMember && (order.order_status !== 'RECEIVED' || order.handover_batch_id !== null))) {
-            throw new ApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '成员变更包含未入库或已加入其他交仓批次的提货单，整批未保存。');
+            throw new ApiError(409, 'AIR_PICKUP_NOT_HANDOVER_READY', '成员变更包含未入库或已加入其他交仓批次的提货单，整批未保存');
           }
           if (!alreadyMember) {
             await connection.execute(
@@ -774,11 +942,11 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
         await connection.beginTransaction();
         const [batches] = await connection.execute<HandoverBatchRow[]>('SELECT * FROM air_handover_batches WHERE id = ? LIMIT 1 FOR UPDATE', [batchId]);
         const batch = batches[0];
-        if (!batch) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
-        if (batch.batch_status !== 'DRAFT') throw new ApiError(409, 'HANDOVER_ALREADY_CONFIRMED', '该交仓批次已经确认。');
-        if (batch.created_by_user_id !== session.userId && !canCorrect(session)) throw new ApiError(403, 'HANDOVER_DRAFT_OWNER_REQUIRED', '仅草稿创建人或主管可确认该批次。');
+        if (!batch) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
+        if (batch.batch_status !== 'DRAFT') throw new ApiError(409, 'HANDOVER_ALREADY_CONFIRMED', '该交仓批次已经确认');
+        if (batch.created_by_user_id !== session.userId && !canCorrect(session)) throw new ApiError(403, 'HANDOVER_DRAFT_OWNER_REQUIRED', '仅草稿创建人或主管可确认该批次');
         const [orders] = await connection.execute<OrderRow[]>('SELECT * FROM air_pickup_orders WHERE handover_batch_id = ? FOR UPDATE', [batchId]);
-        if (!orders.length || orders.some(order => order.order_status !== 'RECEIVED')) throw new ApiError(409, 'HANDOVER_BATCH_INVALID', '交仓批次中的提货单状态已变化，整批未确认。');
+        if (!orders.length || orders.some(order => order.order_status !== 'RECEIVED')) throw new ApiError(409, 'HANDOVER_BATCH_INVALID', '交仓批次中的提货单状态已变化，整批未确认');
         const status = await recalculateEvidence(connection, batchId);
         const confirmedAt = batch.handed_over_at ?? new Date();
         await connection.execute(
@@ -804,11 +972,11 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
     }) {
       const batchId = uuid(batchIdValue, 'batchId');
       const type = text(input.type, 'type', 16)! as 'POD' | 'LOADING';
-      if (type !== 'POD' && type !== 'LOADING') throw new ApiError(400, 'VALIDATION_ERROR', 'type 仅支持 POD 或 LOADING。');
+      if (type !== 'POD' && type !== 'LOADING') throw new ApiError(400, 'VALIDATION_ERROR', 'type 仅支持 POD 或 LOADING');
       const filename = text(input.filename, 'filename', 255)!;
       const warnings = Array.isArray(input.qualityWarnings) ? input.qualityWarnings.map(String).slice(0, 8) : [];
       const qualityOverride = input.qualityOverride === true || input.qualityOverride === 'true';
-      if (warnings.length && !qualityOverride) throw new ApiError(400, 'QUALITY_OVERRIDE_REQUIRED', '图片存在清晰度警告，请确认后再上传。');
+      if (warnings.length && !qualityOverride) throw new ApiError(400, 'QUALITY_OVERRIDE_REQUIRED', '图片存在清晰度警告，请确认后再上传');
       const image = validateAirEvidenceImage(input.content, input.contentType, input.sha256);
       const assetId = randomUUID();
       const extension = image.contentType === 'image/png' ? 'png' : 'jpg';
@@ -817,12 +985,12 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       try {
         await connection.beginTransaction();
         const [batches] = await connection.execute<HandoverBatchRow[]>('SELECT * FROM air_handover_batches WHERE id = ? LIMIT 1 FOR UPDATE', [batchId]);
-        if (!batches[0]) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次。');
+        if (!batches[0]) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
         const [counts] = await connection.execute<(RowDataPacket & { count: number | string })[]>(
           `SELECT COUNT(*) AS count FROM air_handover_evidence_assets
            WHERE handover_batch_id = ? AND evidence_type = ? AND asset_status = 'READY' FOR UPDATE`, [batchId, type],
         );
-        if (Number(counts[0]?.count ?? 0) >= 9) throw new ApiError(409, 'EVIDENCE_LIMIT_REACHED', `${type === 'POD' ? 'POD' : '装车照'}最多上传 9 张。`);
+        if (Number(counts[0]?.count ?? 0) >= 9) throw new ApiError(409, 'EVIDENCE_LIMIT_REACHED', `${type === 'POD' ? 'POD' : '装车照'}最多上传 9 张`);
         await storage.put(storageKey, image.content);
         await connection.execute(
           `INSERT INTO air_handover_evidence_assets
@@ -849,8 +1017,8 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const [rows] = await mysql.execute<EvidenceRow[]>(
         `SELECT * FROM air_handover_evidence_assets WHERE id = ? AND asset_status = 'READY' LIMIT 1`, [assetId],
       );
-      if (!rows[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除。');
-      const object = await storage.open(rows[0].storage_key).catch(() => { throw new ApiError(503, 'EVIDENCE_STORAGE_UNAVAILABLE', '凭证文件暂时不可用。'); });
+      if (!rows[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除');
+      const object = await storage.open(rows[0].storage_key).catch(() => { throw new ApiError(503, 'EVIDENCE_STORAGE_UNAVAILABLE', '凭证文件暂时不可用'); });
       return { metadata: rows[0], object };
     },
 
@@ -858,14 +1026,14 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const assetId = uuid(assetIdValue, 'assetId');
       const password = text(input.password, 'password', 1024)!;
       const reason = text(input.reason, 'reason', 500)!;
-      if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '仅主管或系统管理员可移除凭证。');
+      if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '仅主管或系统管理员可移除凭证');
       const connection = await mysql.getConnection();
       try {
         await connection.beginTransaction();
         const [users] = await connection.execute<(RowDataPacket & { password_hash: string })[]>('SELECT password_hash FROM warehouse_users WHERE id = ? LIMIT 1', [session.userId]);
-        if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误。');
+        if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误');
         const [assets] = await connection.execute<EvidenceRow[]>('SELECT * FROM air_handover_evidence_assets WHERE id = ? AND asset_status = \'READY\' LIMIT 1 FOR UPDATE', [assetId]);
-        if (!assets[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除。');
+        if (!assets[0]) throw new ApiError(404, 'EVIDENCE_NOT_FOUND', '凭证不存在或已移除');
         await connection.execute(
           `UPDATE air_handover_evidence_assets SET asset_status = 'REMOVED', removed_by_user_id = ?,
              removed_by_reference = ?, removal_reason = ?, removed_at = CURRENT_TIMESTAMP(3) WHERE id = ?`,
@@ -885,19 +1053,19 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const orderId = uuid(orderIdValue, 'orderId');
       const password = text(input.password, 'password', 1024)!;
       const reason = text(input.reason, 'reason', 500)!;
-      if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '仅主管或系统管理员可作废提货单。');
+      if (!canCorrect(session)) throw new ApiError(403, 'PERMISSION_DENIED', '仅主管或系统管理员可作废提货单');
       const connection = await mysql.getConnection();
       try {
         await connection.beginTransaction();
         const [users] = await connection.execute<(RowDataPacket & { password_hash: string })[]>('SELECT password_hash FROM warehouse_users WHERE id = ? LIMIT 1', [session.userId]);
-        if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误。');
+        if (!users[0] || !(await verifyWarehousePassword(password, users[0].password_hash))) throw new ApiError(401, 'REAUTHENTICATION_FAILED', '操作密码错误');
         const [result] = await connection.execute(
           `UPDATE air_pickup_orders SET order_status = 'VOIDED', void_reason = ?, voided_at = CURRENT_TIMESTAMP(3),
              updated_by_user_id = ?, updated_by_reference = ?, version = version + 1
            WHERE id = ? AND order_status <> 'VOIDED' AND handover_batch_id IS NULL`,
           [reason, session.userId, actor(session), orderId],
         );
-        if (!('affectedRows' in result) || result.affectedRows !== 1) throw new ApiError(409, 'AIR_PICKUP_NOT_VOIDABLE', '提货单已作废或已加入交仓批次，不能直接作废。');
+        if (!('affectedRows' in result) || result.affectedRows !== 1) throw new ApiError(409, 'AIR_PICKUP_NOT_VOIDABLE', '提货单已作废或已加入交仓批次，不能直接作废');
         await addEvent(connection, session, audit, { orderId, eventType: 'ORDER_VOIDED', reason });
         await connection.commit();
       } catch (error) { await connection.rollback().catch(() => undefined); throw error; }

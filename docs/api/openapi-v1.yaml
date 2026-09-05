@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
   title: CM-HUB 上游客户对接 API
-  version: 1.5.0
+  version: 1.6.0-staging
   description: |
     当前已实现的上游服务器端合同：原子推送空提预报与整批物流单据、创建/更新单条物流单据、
-    主动上传 PDF 面单，以及按头程单号查询。
+    主动上传 PDF 面单，以及按头程单号查询。TYG v1.1 staging contract uses the
+    separate /air-shipments and /label-pushes routes; legacy routes remain supported.
     除独立的 /healthz 探针外，请求必须携带有效 X-API-Key。
     上游不能写入 CM-HUB 状态或打印事件；仓库取单与未来签名回调不属于本合同。
 servers:
@@ -17,7 +18,64 @@ tags:
     description: 使用当前客户身份提交一张空提预报及其全部物流单据
   - name: Shipments
     description: 当前客户范围内的物流单据
+  - name: TYG v1.1 (staging)
+    description: 独立于旧批次和原始 PDF 上传流的 TYG Base64 面单合同
 paths:
+  /air-shipments:
+    post:
+      tags: [TYG v1.1 (staging)]
+      summary: TYG v1.1 创建或更新空运提单预报
+      description: 仅 staging 合同。Idempotency-Key 必填；仓库开始收货后，仅完全相同的预报可重放。
+      operationId: tygV11UpsertAirShipment
+      x-required-scope: shipments:write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TygAirShipmentInput'
+      responses:
+        '200':
+          description: 已创建、更新或幂等重放
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TygAirShipmentResponse'
+        '400': { $ref: '#/components/responses/TygBadRequest' }
+        '409': { $ref: '#/components/responses/TygConflict' }
+  /label-pushes:
+    post:
+      tags: [TYG v1.1 (staging)]
+      summary: TYG v1.1 统一逐票面单推送
+      description: Separate from legacy raw-PDF upload. Standard Base64 PDF only; 5 MiB decoded PDF and 7 MiB JSON request limits.
+      operationId: tygV11PushLabel
+      x-required-scope: labels:write
+      x-max-request-body: 7MiB
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TygLabelPushInput'
+      responses:
+        '200':
+          description: Created, duplicate, PDF replacement, or atomic tracking-and-PDF update
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TygLabelPushResponse'
+        '400': { $ref: '#/components/responses/TygBadRequest' }
+        '404': { $ref: '#/components/responses/TygNotFound' }
+        '409': { $ref: '#/components/responses/TygConflict' }
+        '413': { $ref: '#/components/responses/TygPayloadTooLarge' }
+        '415': { $ref: '#/components/responses/TygUnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/TygInvalidPdf' }
   /inbound-batches:
     post:
       tags: [Inbound Batches]
@@ -267,6 +325,58 @@ components:
         type: string
         pattern: '^[a-fA-F0-9]{64}$'
   schemas:
+    TygAirShipmentInput:
+      type: object
+      additionalProperties: false
+      required: [airWaybillNo, forecastCartons, forecastPackages, forecastWeight, weightUnit]
+      properties:
+        airWaybillNo: { type: string, maxLength: 32 }
+        forecastCartons: { type: integer, minimum: 1, maximum: 999999 }
+        forecastPackages: { type: integer, minimum: 1, maximum: 999999 }
+        forecastWeight: { type: number, exclusiveMinimum: 0, multipleOf: 0.001 }
+        weightUnit: { type: string, enum: [KG, LB] }
+    TygLabelPushInput:
+      type: object
+      additionalProperties: false
+      required: [airWaybillNo, originalTrackingNo, transferTrackingNo, labelBase64]
+      properties:
+        airWaybillNo: { type: string, maxLength: 32 }
+        originalTrackingNo: { type: string, maxLength: 128 }
+        transferTrackingNo: { type: string, maxLength: 128 }
+        labelBase64:
+          type: string
+          description: Standard Base64 PDF only; no data URL or whitespace. Decoded content is limited to 5 MiB.
+          pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'
+        replacementReason: { type: string, maxLength: 200 }
+    TygAirShipmentResponse:
+      type: object
+      required: [code, message, data, requestId]
+      properties:
+        code: { type: string, enum: [SUCCESS] }
+        message: { type: string }
+        data: { type: object, additionalProperties: true }
+        requestId: { type: string }
+        idempotentReplay: { type: boolean }
+    TygLabelPushResponse:
+      type: object
+      required: [code, message, data, requestId]
+      properties:
+        code: { type: string, enum: [SUCCESS] }
+        message: { type: string }
+        requestId: { type: string }
+        idempotentReplay: { type: boolean }
+        data:
+          type: object
+          required: [originalTrackingNo, transferTrackingNo, operation, labelVersion, duplicate, latePush, relationshipChanged, reprintRequired]
+          properties:
+            originalTrackingNo: { type: string }
+            transferTrackingNo: { type: string }
+            operation: { type: string, enum: [CREATED, DUPLICATE, PDF_REPLACED, TRACKING_AND_PDF_UPDATED, FILE_RESTORED] }
+            labelVersion: { type: integer, minimum: 1 }
+            duplicate: { type: boolean }
+            latePush: { type: boolean }
+            relationshipChanged: { type: boolean }
+            reprintRequired: { type: boolean }
     AirPickupForecastInput:
       type: object
       required: [billNo, forecastCartons, forecastPackages, forecastWeight, forecastWeightUnit]
@@ -517,7 +627,32 @@ components:
       properties:
         error:
           $ref: '#/components/schemas/ErrorBody'
+    TygErrorResponse:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
   responses:
+    TygBadRequest:
+      description: TYG v1.1 validation, Base64, or idempotency-key error
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
+    TygNotFound:
+      description: The v1.1 air-shipment forecast does not exist
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
+    TygConflict:
+      description: Idempotency, tracking binding, or locked forecast conflict
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
+    TygPayloadTooLarge:
+      description: The decoded PDF exceeds 5 MiB or JSON request exceeds 7 MiB
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
+    TygUnsupportedMediaType:
+      description: TYG v1.1 accepts application/json only
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
+    TygInvalidPdf:
+      description: Base64 decoded but is not a structurally recognizable PDF
+      content: { application/json: { schema: { $ref: '#/components/schemas/TygErrorResponse' } } }
     BadRequest:
       description: 请求参数或幂等键无效
       content:

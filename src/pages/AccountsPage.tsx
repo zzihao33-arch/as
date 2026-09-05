@@ -1,36 +1,41 @@
 import {
   Alert,
   Button,
+  Card,
+  Col,
+  Dialog,
+  DialogPlugin,
   Dropdown,
   Empty,
   Form,
   Input,
-  Menu,
-  Message,
-  Modal,
+  MessagePlugin,
   Select,
+  Space,
   Table,
   Tag,
-} from '@arco-design/web-react';
+  Row,
+  type PrimaryTableCol,
+} from 'tdesign-react';
 import {
-  BadgeCheck,
-  Check,
-  CheckCircle2,
-  Copy,
-  FilterX,
-  KeyRound,
-  LockOpen,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  SlidersHorizontal,
-  Trash2,
-  UserRoundCheck,
-  UserRoundX,
-  Users,
-} from 'lucide-react';
+  AddIcon,
+  CheckCircleFilledIcon,
+  CheckIcon,
+  DeleteIcon,
+  Edit1Icon,
+  FileCopyIcon,
+  FilterClearIcon,
+  FilterIcon,
+  KeyIcon,
+  MoreIcon,
+  RefreshIcon,
+  SearchIcon,
+  UserBlockedIcon,
+  UserCheckedIcon,
+  UsergroupIcon,
+  UserSafetyIcon,
+  UserUnlockedIcon,
+} from 'tdesign-icons-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWorkbenchMotion } from '../features/motion/useWorkbenchMotion';
 import {
@@ -69,19 +74,19 @@ function TemporaryPasswordResult({ loginName, password }: { loginName: string; p
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard API unavailable');
       await navigator.clipboard.writeText(`${loginName}\n${password}`);
       setCopied(true);
-      Message.success('账号与临时密码已复制');
+      MessagePlugin.success('账号与临时密码已复制');
     } catch {
-      Message.error('自动复制失败，请手动选择并复制登录信息。');
+      MessagePlugin.error('自动复制失败，请手动选择并复制登录信息');
     }
   };
 
   return (
     <div className="cmhub-secret-result">
       <div className="cmhub-secret-notice">
-        <ShieldCheck size={20} aria-hidden="true" />
+        <UserSafetyIcon size={20} aria-hidden="true" />
         <div>
           <strong>此密码仅显示一次</strong>
-          <p>请通过安全渠道交给员工，并确认已妥善保存后再关闭。</p>
+          <p>请通过安全渠道交给员工，并确认已妥善保存后再关闭</p>
         </div>
       </div>
       <dl aria-label="新账户登录凭据">
@@ -97,8 +102,8 @@ function TemporaryPasswordResult({ loginName, password }: { loginName: string; p
       <div className="cmhub-secret-copy-row">
         <Button
           className="cmhub-icon-label-button cmhub-secret-copy-button"
-          type={copied ? 'secondary' : 'primary'}
-          icon={copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+          theme={copied ? 'default' : 'primary'}
+          icon={copied ? <CheckIcon size={16} aria-hidden="true" /> : <FileCopyIcon size={16} aria-hidden="true" />}
           onClick={() => void copyCredentials()}
         >
           {copied ? '已复制登录信息' : '复制登录信息'}
@@ -110,24 +115,22 @@ function TemporaryPasswordResult({ loginName, password }: { loginName: string; p
 }
 
 function showTemporaryPassword(title: string, loginName: string, password: string) {
-  Modal.success({
+  const dialog = DialogPlugin.alert({
     className: 'cmhub-account-secret-modal',
-    simple: false,
-    icon: null,
-    title: (
+    theme: 'success',
+    header: (
       <span className="cmhub-account-secret-title">
-        <CheckCircle2 size={20} aria-hidden="true" />
+        <CheckCircleFilledIcon size={20} aria-hidden="true" />
         {title}
       </span>
     ),
-    content: <TemporaryPasswordResult loginName={loginName} password={password} />,
-    okText: '我已安全保存',
-    closable: false,
-    maskClosable: false,
-    escToExit: false,
-    autoFocus: true,
-    focusLock: true,
-    style: { width: 520 },
+    body: <TemporaryPasswordResult loginName={loginName} password={password} />,
+    confirmBtn: '我已安全保存',
+    closeBtn: false,
+    closeOnOverlayClick: false,
+    closeOnEscKeydown: false,
+    width: 520,
+    onConfirm: () => dialog.destroy(),
   });
 }
 
@@ -176,7 +179,7 @@ export default function AccountsPage() {
       setListRevision(revision => revision + 1);
     } catch (cause) {
       if (requestId !== requestSequence.current) return;
-      setError(cause instanceof Error ? cause.message : '账户数据加载失败。');
+      setError(cause instanceof Error ? cause.message : '账户数据加载失败');
     } finally {
       if (requestId === requestSequence.current) setLoading(false);
     }
@@ -227,24 +230,26 @@ export default function AccountsPage() {
 
   const confirmStatus = (account: WarehouseAccount) => {
     const disabling = account.status === 'ACTIVE';
-    Modal.confirm({
+    const dialog = DialogPlugin.confirm({
       className: 'cmhub-confirm-modal',
-      title: disabling ? '禁用该账户？' : '启用该账户？',
-      content: disabling ? '保存后，该员工的现有登录会话会立即失效。' : '启用后，员工可使用现有凭据重新登录。',
-      okText: disabling ? '确认禁用' : '确认启用',
-      okButtonProps: disabling ? { status: 'danger' } : undefined,
-      onOk: async () => {
+      header: disabling ? '禁用该账户？' : '启用该账户？',
+      body: disabling ? '保存后，该员工的现有登录会话会立即失效' : '启用后，员工可使用现有凭据重新登录',
+      confirmBtn: disabling ? { content: '确认禁用', theme: 'danger' } : '确认启用',
+      onClose: () => dialog.destroy(),
+      onConfirm: async () => {
         const busyKey = accountActionKey(account.id, 'status');
         setActionBusy(busyKey);
+        dialog.setConfirmLoading(true);
         try {
           await updateWarehouseAccount(account.id, { status: disabling ? 'DISABLED' : 'ACTIVE' });
-          Message.success(disabling ? '账户已禁用' : '账户已启用');
+          MessagePlugin.success(disabling ? '账户已禁用' : '账户已启用');
           await load();
+          dialog.destroy();
         } catch (cause) {
-          Message.error(cause instanceof Error ? cause.message : '账户状态更新失败。');
-          throw cause;
+          MessagePlugin.error(cause instanceof Error ? cause.message : '账户状态更新失败');
         } finally {
           setActionBusy('');
+          dialog.setConfirmLoading(false);
         }
       },
     });
@@ -259,54 +264,59 @@ export default function AccountsPage() {
       const busyKey = accountActionKey(account.id, action);
       setActionBusy(busyKey);
       void unlockWarehouseAccount(account.loginName)
-        .then(() => Message.success('该账户的登录锁定已解除'))
-        .catch(cause => Message.error(cause instanceof Error ? cause.message : '账户解锁失败。'))
+        .then(() => MessagePlugin.success('该账户的登录锁定已解除'))
+        .catch(cause => MessagePlugin.error(cause instanceof Error ? cause.message : '账户解锁失败'))
         .finally(() => setActionBusy(''));
       return;
     }
 
     if (action === 'reset-password') {
-      Modal.confirm({
+      const dialog = DialogPlugin.confirm({
         className: 'cmhub-confirm-modal',
-        title: '重置该账户密码？',
-        content: '现有登录会话会立即失效，并生成一个只显示一次的强随机临时密码。',
-        okText: '生成临时密码',
-        onOk: async () => {
+        header: '重置该账户密码？',
+        body: '现有登录会话会立即失效，并生成一个只显示一次的强随机临时密码',
+        confirmBtn: '生成临时密码',
+        onClose: () => dialog.destroy(),
+        onConfirm: async () => {
           const busyKey = accountActionKey(account.id, action);
           setActionBusy(busyKey);
+          dialog.setConfirmLoading(true);
           try {
             const result = await resetWarehouseAccountPassword(account.id);
+            dialog.destroy();
             showTemporaryPassword('密码已重置', account.loginName, result.temporaryPassword);
             await load();
           } catch (cause) {
-            Message.error(cause instanceof Error ? cause.message : '密码重置失败。');
-            throw cause;
+            MessagePlugin.error(cause instanceof Error ? cause.message : '密码重置失败');
           } finally {
             setActionBusy('');
+            dialog.setConfirmLoading(false);
           }
         },
       });
       return;
     }
 
-    Modal.confirm({
+    const dialog = DialogPlugin.confirm({
       className: 'cmhub-confirm-modal',
-      title: '永久删除该账户？',
-      content: '员工登录凭证和个人资料会永久删除；业务操作事实仅保留匿名审计引用。此操作不可恢复。',
-      okText: '永久删除',
-      okButtonProps: { status: 'danger' },
-      onOk: async () => {
+      header: '永久删除该账户？',
+      body: '员工登录凭证和个人资料会永久删除；业务操作事实仅保留匿名审计引用此操作不可恢复',
+      confirmBtn: { content: '永久删除', theme: 'danger' },
+      onClose: () => dialog.destroy(),
+      onConfirm: async () => {
         const busyKey = accountActionKey(account.id, action);
         setActionBusy(busyKey);
+        dialog.setConfirmLoading(true);
         try {
           await deleteWarehouseAccount(account.id);
-          Message.success('账户已删除');
+          MessagePlugin.success('账户已删除');
           await load();
+          dialog.destroy();
         } catch (cause) {
-          Message.error(cause instanceof Error ? cause.message : '账户删除失败。');
-          throw cause;
+          MessagePlugin.error(cause instanceof Error ? cause.message : '账户删除失败');
         } finally {
           setActionBusy('');
+          dialog.setConfirmLoading(false);
         }
       },
     });
@@ -316,12 +326,12 @@ export default function AccountsPage() {
     <section ref={pageRef} className="cmhub-page cmhub-admin-page cmhub-accounts-page" aria-labelledby="accounts-title">
       <header className="cmhub-page-heading cmhub-accounts-heading" data-motion-enter>
         <div>
-          <span className="cmhub-page-eyebrow"><Users size={15} aria-hidden="true" />权限与身份</span>
+          <span className="cmhub-page-eyebrow"><UsergroupIcon size={15} aria-hidden="true" />权限与身份</span>
           <h1 id="accounts-title">账户管理</h1>
-          <p>创建员工账号、分配岗位角色，并集中管理登录状态与安全凭据。</p>
+          <p>创建员工账号、分配岗位角色，并集中管理登录状态与安全凭据</p>
         </div>
         {canManage && (
-          <Button type="primary" size="large" icon={<Plus size={17} aria-hidden="true" />} data-motion-hover onClick={() => setCreateOpen(true)}>
+          <Button theme="primary" size="large" icon={<AddIcon size={17} aria-hidden="true" />} data-motion-hover onClick={() => setCreateOpen(true)}>
             新增账户
           </Button>
         )}
@@ -329,19 +339,19 @@ export default function AccountsPage() {
 
       {error && (
         <Alert
-          type="error"
-          content={error}
-          action={<Button size="mini" onClick={() => void load()}>重试</Button>}
+          theme="error"
+          message={error}
+          operation={<Button size="small" onClick={() => void load()}>重试</Button>}
           data-motion-enter
         />
       )}
 
-      <section className="cmhub-account-toolbar" aria-label="账户筛选" data-motion-enter data-refreshing={loading || undefined}>
-        <div className="cmhub-account-filter-field cmhub-account-search-field">
-          <label htmlFor="account-search">搜索账户</label>
-          <Input.Search
-            id="account-search"
-            allowClear
+      <Card className="cmhub-account-toolbar" headerBordered hoverShadow aria-label="账户筛选" data-motion-enter data-refreshing={loading || undefined}>
+        <Row className="cmhub-account-filter-grid" gutter={[16, 16]}>
+        <Col span={8} xs={12} md={8}><div className="cmhub-account-filter-field cmhub-account-search-field">
+          <label>搜索账户</label>
+          <Input
+            clearable
             value={searchDraft}
             placeholder="姓名、账号、手机号或工号"
             onChange={value => {
@@ -351,42 +361,38 @@ export default function AccountsPage() {
                 setPage(1);
               }
             }}
-            onSearch={applySearch}
-            aria-label="搜索账户"
+            onEnter={applySearch}
+            suffix={<Button variant="text" shape="square" icon={<SearchIcon size={16} aria-hidden="true" />} aria-label="搜索账户" onClick={() => applySearch(searchDraft)} />}
           />
           <small>输入关键词后按 Enter 或点击搜索图标</small>
-        </div>
+        </div></Col>
 
-        <div className="cmhub-account-filter-field">
-          <label htmlFor="account-status-filter">账户状态</label>
+        <Col span={6} xs={12} md={6}><div className="cmhub-account-filter-field">
+          <label>账户状态</label>
           <Select
-            id="account-status-filter"
-            aria-label="按账户状态筛选"
-            allowClear
+            clearable
             placeholder="全部状态"
             value={statusFilter || undefined}
-            onChange={value => { setStatusFilter(value ?? ''); setPage(1); }}
+            onChange={value => { setStatusFilter(String(value ?? '')); setPage(1); }}
             options={[{ label: '启用账户', value: 'ACTIVE' }, { label: '禁用账户', value: 'DISABLED' }]}
           />
-        </div>
+        </div></Col>
 
-        <div className="cmhub-account-filter-field">
-          <label htmlFor="account-role-filter">岗位角色</label>
+        <Col span={6} xs={12} md={6}><div className="cmhub-account-filter-field">
+          <label>岗位角色</label>
           <Select
-            id="account-role-filter"
-            aria-label="按岗位角色筛选"
-            allowClear
+            clearable
             placeholder="全部角色"
             value={roleFilter || undefined}
-            onChange={value => { setRoleFilter(value ?? ''); setPage(1); }}
+            onChange={value => { setRoleFilter(String(value ?? '')); setPage(1); }}
             options={roles.map(role => ({ label: role.name, value: role.id }))}
           />
-        </div>
+        </div></Col>
 
-        <div className="cmhub-account-toolbar-actions">
+        <Col span={4} xs={12} md={4}><Space className="cmhub-account-toolbar-actions" size={12}>
           <Button
             className="cmhub-filter-action"
-            icon={<RefreshCw size={16} aria-hidden="true" />}
+            icon={<RefreshIcon size={16} aria-hidden="true" />}
             disabled={loading}
             data-refreshing={loading || undefined}
             data-motion-hover
@@ -395,53 +401,57 @@ export default function AccountsPage() {
             {loading ? '正在刷新' : '刷新列表'}
           </Button>
           <Button
-            type="text"
-            icon={<FilterX size={15} aria-hidden="true" />}
+            variant="text"
+            icon={<FilterClearIcon size={15} aria-hidden="true" />}
             disabled={activeFilterCount === 0}
             onClick={clearFilters}
           >
             清除筛选
           </Button>
-        </div>
+        </Space></Col>
 
-        <div className="cmhub-account-filter-summary" role="status" aria-live="polite">
-          <span><SlidersHorizontal size={14} aria-hidden="true" />{activeFilterCount ? `已应用 ${activeFilterCount} 项筛选` : '显示全部账户'}</span>
+        <Col span={24}><div className="cmhub-account-filter-summary" role="status" aria-live="polite">
+          <span><FilterIcon size={14} aria-hidden="true" />{activeFilterCount ? `已应用 ${activeFilterCount} 项筛选` : '显示全部账户'}</span>
           <strong>{loading ? '正在同步账户列表' : `共 ${total} 个账户`}</strong>
-        </div>
-      </section>
+        </div></Col>
+        </Row>
+      </Card>
 
-      <section className="cmhub-account-table-panel" aria-labelledby="account-list-title" aria-busy={loading} data-loading={loading || undefined} data-motion-tab>
+      <Card className="cmhub-account-table-panel" headerBordered hoverShadow aria-labelledby="account-list-title" aria-busy={loading} data-loading={loading || undefined} data-motion-tab>
         <header>
           <div>
             <h2 id="account-list-title">员工账户</h2>
-            <p>角色决定可访问的业务模块；安全操作会立即作用于该员工的登录会话。</p>
+            <p>角色决定可访问的业务模块；安全操作会立即作用于该员工的登录会话</p>
           </div>
           <span className="cmhub-account-sync-state">
-            <BadgeCheck size={15} aria-hidden="true" />
+            <CheckCircleFilledIcon size={15} aria-hidden="true" />
             {loading ? '更新中' : '已同步'}
           </span>
         </header>
 
         <Table<WarehouseAccount>
-          borderCell={false}
+          bordered={false}
           loading={loading}
+          hover
           rowKey="id"
           data={accounts}
-          scroll={{ x: 1120 }}
-          noDataElement={(
+          disableDataPage
+          tableContentWidth="1120px"
+          empty={(
             <div className="cmhub-account-empty-state">
               <Empty description={activeFilterCount ? '未找到匹配的账户' : '当前还没有员工账户'} />
               {activeFilterCount > 0
-                ? <Button type="text" icon={<FilterX size={15} aria-hidden="true" />} onClick={clearFilters}>清除筛选条件</Button>
-                : canManage && <Button type="primary" icon={<Plus size={15} aria-hidden="true" />} onClick={() => setCreateOpen(true)}>创建第一个账户</Button>}
+                ? <Button variant="text" icon={<FilterClearIcon size={15} aria-hidden="true" />} onClick={clearFilters}>清除筛选条件</Button>
+                : canManage && <Button theme="primary" icon={<AddIcon size={15} aria-hidden="true" />} onClick={() => setCreateOpen(true)}>创建第一个账户</Button>}
             </div>
           )}
-          pagination={{ current: page, pageSize: 20, total, onChange: setPage, showTotal: true }}
+          pagination={{ current: page, pageSize: 20, total, showPageSize: false, totalContent: `共 ${total} 个账户`, onChange: pageInfo => setPage(pageInfo.current) }}
           columns={[
             {
+              colKey: 'identity',
               title: '员工账户',
               width: 208,
-              render: (_, account) => (
+              cell: ({ row: account }) => (
                 <div className="cmhub-account-cell">
                   <span className="cmhub-account-avatar" aria-hidden="true">{account.displayName.trim().slice(0, 1) || 'C'}</span>
                   <span className="cmhub-account-identity">
@@ -452,9 +462,10 @@ export default function AccountsPage() {
               ),
             },
             {
+              colKey: 'contact',
               title: '联系方式',
               width: 204,
-              render: (_, account) => (
+              cell: ({ row: account }) => (
                 <div className="cmhub-account-contact-cell">
                   {account.phone && <span>{account.phone}</span>}
                   {account.email && <small>{account.email}</small>}
@@ -463,32 +474,35 @@ export default function AccountsPage() {
               ),
             },
             {
+              colKey: 'role',
               title: '岗位角色',
               width: 238,
-              render: (_, account) => (
+              cell: ({ row: account }) => (
                 <div className="cmhub-account-role-list">
                   {account.platformRole
-                    ? <Tag color="arcoblue">系统管理员</Tag>
+                    ? <Tag theme="primary" variant="light">系统管理员</Tag>
                     : account.memberships.length
-                      ? account.memberships.map(item => <Tag key={item.id}>{item.warehouseName} · {item.roleName ?? '未分配角色'}</Tag>)
-                      : <Tag>未分配角色</Tag>}
+                      ? account.memberships.map(item => <Tag key={item.id} theme="primary" variant="light">{item.warehouseName} · {item.roleName ?? '未分配角色'}</Tag>)
+                      : <Tag variant="light">未分配角色</Tag>}
                 </div>
               ),
             },
             {
+              colKey: 'status',
               title: '安全状态',
               width: 178,
-              render: (_, account) => (
+              cell: ({ row: account }) => (
                 <div className="cmhub-account-status-list">
-                  <Tag color={account.status === 'ACTIVE' ? 'blue' : 'gray'}>{account.status === 'ACTIVE' ? '已启用' : '已禁用'}</Tag>
-                  {account.passwordState === 'CHANGE_REQUIRED' && <Tag color="orange">需修改初始密码</Tag>}
+                  <Tag theme={account.status === 'ACTIVE' ? 'success' : 'default'} variant="light">{account.status === 'ACTIVE' ? '已启用' : '已禁用'}</Tag>
+                  {account.passwordState === 'CHANGE_REQUIRED' && <Tag theme="warning" variant="light">需修改初始密码</Tag>}
                 </div>
               ),
             },
             {
+              colKey: 'lastLogin',
               title: '最近登录',
               width: 148,
-              render: (_, account) => {
+              cell: ({ row: account }) => {
                 const lastLogin = formatLastLogin(account.lastLoginAt);
                 return lastLogin ? (
                   <time className="cmhub-account-last-login" dateTime={account.lastLoginAt ?? undefined}>
@@ -499,10 +513,11 @@ export default function AccountsPage() {
               },
             },
             {
+              colKey: 'actions',
               title: '操作',
               width: 144,
               fixed: 'right',
-              render: (_, account) => {
+              cell: ({ row: account }) => {
                 const isCurrentAccount = account.id === warehouseSession.session?.userId;
                 const rowBusy = actionBusy.startsWith(`${account.id}:`);
                 return (
@@ -510,9 +525,9 @@ export default function AccountsPage() {
                     {canManage && (
                       <Button
                         className="cmhub-account-row-action"
-                        type="text"
+                        variant="text"
                         size="small"
-                        icon={<Pencil size={14} aria-hidden="true" />}
+                        icon={<Edit1Icon size={14} aria-hidden="true" />}
                         disabled={rowBusy}
                         aria-label={`编辑 ${account.displayName}`}
                         onClick={() => openEditAccount(account)}
@@ -521,50 +536,29 @@ export default function AccountsPage() {
                       </Button>
                     )}
                     {(canManage || canResetPassword) && (
-                      <Dropdown
-                        trigger="click"
-                        position="br"
+                        <Dropdown
+                          trigger="click"
+                        placement="bottom-right"
                         disabled={rowBusy}
-                        droplist={(
-                          <Menu
-                            className="cmhub-account-action-menu"
-                            onClickMenuItem={key => handleAccountMenuAction(key as AccountMenuAction, account)}
-                          >
-                            {canManage && (
-                              <Menu.Item
-                                key="toggle-status"
-                                disabled={isCurrentAccount && account.status === 'ACTIVE'}
-                                className={account.status === 'ACTIVE' ? 'cmhub-account-menu-danger' : 'cmhub-account-menu-success'}
-                              >
-                                {account.status === 'ACTIVE'
-                                  ? <UserRoundX size={15} aria-hidden="true" />
-                                  : <UserRoundCheck size={15} aria-hidden="true" />}
-                                {account.status === 'ACTIVE' ? '禁用账户' : '启用账户'}
-                              </Menu.Item>
-                            )}
-                            {canManage && (
-                              <Menu.Item key="unlock">
-                                <LockOpen size={15} aria-hidden="true" />解除登录锁定
-                              </Menu.Item>
-                            )}
-                            {canResetPassword && (
-                              <Menu.Item key="reset-password">
-                                <KeyRound size={15} aria-hidden="true" />重置临时密码
-                              </Menu.Item>
-                            )}
-                            {canManage && (
-                              <Menu.Item key="delete" disabled={isCurrentAccount} className="cmhub-account-menu-danger">
-                                <Trash2 size={15} aria-hidden="true" />永久删除账户
-                              </Menu.Item>
-                            )}
-                          </Menu>
-                        )}
+                        options={[
+                          ...(canManage ? [{
+                            value: 'toggle-status',
+                            content: account.status === 'ACTIVE' ? '禁用账户' : '启用账户',
+                            prefixIcon: account.status === 'ACTIVE' ? <UserBlockedIcon size={15} /> : <UserCheckedIcon size={15} />,
+                            disabled: isCurrentAccount && account.status === 'ACTIVE',
+                            theme: account.status === 'ACTIVE' ? 'error' as const : 'success' as const,
+                          }] : []),
+                          ...(canManage ? [{ value: 'unlock', content: '解除登录锁定', prefixIcon: <UserUnlockedIcon size={15} /> }] : []),
+                          ...(canResetPassword ? [{ value: 'reset-password', content: '重置临时密码', prefixIcon: <KeyIcon size={15} /> }] : []),
+                          ...(canManage ? [{ value: 'delete', content: '永久删除账户', prefixIcon: <DeleteIcon size={15} />, disabled: isCurrentAccount, theme: 'error' as const }] : []),
+                        ]}
+                        onClick={option => handleAccountMenuAction(option.value as AccountMenuAction, account)}
                       >
                         <Button
                           className="cmhub-account-row-action"
-                          type="text"
+                          variant="text"
                           size="small"
-                          icon={<MoreHorizontal size={15} aria-hidden="true" />}
+                          icon={<MoreIcon size={15} aria-hidden="true" />}
                           loading={rowBusy}
                           aria-label={`${account.displayName} 的更多账户操作`}
                         >
@@ -576,89 +570,91 @@ export default function AccountsPage() {
                 );
               },
             },
-          ]}
+          ] satisfies PrimaryTableCol<WarehouseAccount>[]}
         />
-      </section>
+      </Card>
 
-      <Modal
+      <Dialog
         className="cmhub-account-form-modal"
-        title={<span className="cmhub-account-modal-title"><Plus size={18} aria-hidden="true" />新增员工账户</span>}
+        header={<span className="cmhub-account-modal-title"><AddIcon size={18} aria-hidden="true" />新增员工账户</span>}
         visible={createOpen}
         confirmLoading={creating}
-        okText="创建账户"
-        cancelText="取消"
-        maskClosable={false}
-        onCancel={() => { if (!creating) setCreateOpen(false); }}
-        onOk={() => form.submit()}
-        unmountOnExit
-        style={{ width: 640 }}
+        confirmBtn="创建账户"
+        cancelBtn="取消"
+        closeOnOverlayClick={false}
+        onClose={() => { if (!creating) setCreateOpen(false); }}
+        onConfirm={() => form.submit()}
+        destroyOnClose
+        width={600}
       >
         <div className="cmhub-account-modal-intro">
           <strong>建立员工的首个登录身份</strong>
-          <span>创建成功后会生成一次性临时密码，员工首次登录时必须修改。</span>
+          <span>创建成功后会生成一次性临时密码，员工首次登录时必须修改</span>
         </div>
-        <Form form={form} layout="vertical" className="cmhub-account-form" onSubmit={async values => {
+        <Form form={form} layout="vertical" className="cmhub-account-form" onSubmit={async ({ fields, validateResult }) => {
+          if (validateResult !== true) return;
           setCreating(true);
           try {
-            const result = await createWarehouseAccount(values as Parameters<typeof createWarehouseAccount>[0]);
+            const result = await createWarehouseAccount(fields as Parameters<typeof createWarehouseAccount>[0]);
             setCreateOpen(false);
-            form.resetFields();
+            form.reset();
             showTemporaryPassword('账户已创建', result.loginName, result.temporaryPassword);
             await load();
           } catch (cause) {
-            Message.error(cause instanceof Error ? cause.message : '账户创建失败。');
+            MessagePlugin.error(cause instanceof Error ? cause.message : '账户创建失败');
           } finally {
             setCreating(false);
           }
         }}>
           <div className="cmhub-form-grid">
-            <Form.Item label="登录账号" field="loginName" extra="建议使用姓名拼音或企业账号格式" rules={[{ required: true, message: '请输入登录账号' }]}>
-              <Input maxLength={50} autoComplete="off" placeholder="例如 max.zhang" />
-            </Form.Item>
-            <Form.Item label="员工姓名" field="displayName" rules={[{ required: true, message: '请输入员工姓名' }]}>
-              <Input maxLength={128} autoComplete="name" placeholder="填写员工常用姓名" />
-            </Form.Item>
+            <Form.FormItem label="登录账号" name="loginName" help="建议使用姓名拼音或企业账号格式" rules={[{ required: true, message: '请输入登录账号' }]}>
+              <Input maxlength={50} autocomplete="off" placeholder="例如 max.zhang" />
+            </Form.FormItem>
+            <Form.FormItem label="员工姓名" name="displayName" rules={[{ required: true, message: '请输入员工姓名' }]}>
+              <Input maxlength={128} autocomplete="name" placeholder="填写员工常用姓名" />
+            </Form.FormItem>
           </div>
           <div className="cmhub-form-grid">
-            <Form.Item label="手机号码" field="phone"><Input type="tel" maxLength={32} autoComplete="tel" placeholder="选填" /></Form.Item>
-            <Form.Item label="工作邮箱" field="email"><Input type="email" maxLength={254} autoComplete="email" placeholder="选填" /></Form.Item>
+            <Form.FormItem label="手机号码" name="phone"><Input type="tel" maxlength={32} autocomplete="tel" placeholder="选填" /></Form.FormItem>
+            <Form.FormItem label="工作邮箱" name="email" rules={[{ email: true, message: '请输入有效的工作邮箱' }]}><Input maxlength={254} autocomplete="email" placeholder="选填" /></Form.FormItem>
           </div>
           <div className="cmhub-form-grid cmhub-account-assignment-fields">
-            <Form.Item label="所属仓库" field="warehouseId" rules={[{ required: true, message: '请选择仓库' }]}>
+            <Form.FormItem label="所属仓库" name="warehouseId" rules={[{ required: true, message: '请选择仓库' }]}>
               <Select placeholder="选择仓库" options={warehouseOptions} />
-            </Form.Item>
-            <Form.Item label="员工工号" field="employeeNo"><Input maxLength={64} placeholder="选填" /></Form.Item>
-            <Form.Item className="cmhub-account-assignment-role" label="初始岗位角色" field="roleId" extra="角色决定员工可查看和操作的业务模块" rules={[{ required: true, message: '请选择角色' }]}>
+            </Form.FormItem>
+            <Form.FormItem label="员工工号" name="employeeNo"><Input maxlength={64} placeholder="选填" /></Form.FormItem>
+            <Form.FormItem className="cmhub-account-assignment-role" label="初始岗位角色" name="roleId" help="角色决定员工可查看和操作的业务模块" rules={[{ required: true, message: '请选择角色' }]}>
               <Select placeholder="选择岗位角色" options={roles.map(role => ({ label: role.name, value: role.id }))} />
-            </Form.Item>
+            </Form.FormItem>
           </div>
         </Form>
-      </Modal>
+      </Dialog>
 
-      <Modal
+      <Dialog
         className="cmhub-account-form-modal"
-        title={<span className="cmhub-account-modal-title"><Pencil size={17} aria-hidden="true" />编辑员工账户</span>}
+        header={<span className="cmhub-account-modal-title"><Edit1Icon size={17} aria-hidden="true" />编辑员工账户</span>}
         visible={Boolean(editingAccount)}
         confirmLoading={editSaving}
-        okText="保存修改"
-        cancelText="取消"
-        maskClosable={false}
-        onCancel={() => {
+        confirmBtn="保存修改"
+        cancelBtn="取消"
+        closeOnOverlayClick={false}
+        onClose={() => {
           if (editSaving) return;
           setEditingAccount(null);
-          editForm.resetFields();
+          editForm.reset();
         }}
-        onOk={() => editForm.submit()}
-        unmountOnExit
-        style={{ width: 640 }}
+        onConfirm={() => editForm.submit()}
+        destroyOnClose
+        width={600}
       >
         <div className="cmhub-account-modal-intro">
           <strong>{editingAccount?.displayName ?? '员工账户'}</strong>
-          <span>账号资料与岗位角色保存后立即生效。</span>
+          <span>账号资料与岗位角色保存后立即生效</span>
         </div>
-        <Form form={editForm} layout="vertical" className="cmhub-account-form" onSubmit={async values => {
+        <Form form={editForm} layout="vertical" className="cmhub-account-form" onSubmit={async ({ fields, validateResult }) => {
+          if (validateResult !== true) return;
           if (!editingAccount) return;
-          const input = values as {
+          const input = fields as {
             loginName: string; displayName: string; phone?: string; email?: string;
             warehouseId?: string; employeeNo?: string; roleId?: string;
           };
@@ -678,40 +674,40 @@ export default function AccountsPage() {
               });
             }
             setEditingAccount(null);
-            editForm.resetFields();
-            Message.success('账户资料与岗位角色已更新');
+            editForm.reset();
+            MessagePlugin.success('账户资料与岗位角色已更新');
             await load();
           } catch (cause) {
-            Message.error(cause instanceof Error ? cause.message : '账户更新失败。');
+            MessagePlugin.error(cause instanceof Error ? cause.message : '账户更新失败');
           } finally {
             setEditSaving(false);
           }
         }}>
           <div className="cmhub-form-grid">
-            <Form.Item label="登录账号" field="loginName" rules={[{ required: true, message: '请输入登录账号' }]}>
-              <Input maxLength={50} autoComplete="off" />
-            </Form.Item>
-            <Form.Item label="员工姓名" field="displayName" rules={[{ required: true, message: '请输入员工姓名' }]}>
-              <Input maxLength={128} autoComplete="name" />
-            </Form.Item>
+            <Form.FormItem label="登录账号" name="loginName" rules={[{ required: true, message: '请输入登录账号' }]}>
+              <Input maxlength={50} autocomplete="off" />
+            </Form.FormItem>
+            <Form.FormItem label="员工姓名" name="displayName" rules={[{ required: true, message: '请输入员工姓名' }]}>
+              <Input maxlength={128} autocomplete="name" />
+            </Form.FormItem>
           </div>
           <div className="cmhub-form-grid">
-            <Form.Item label="手机号码" field="phone"><Input type="tel" maxLength={32} autoComplete="tel" placeholder="选填" /></Form.Item>
-            <Form.Item label="工作邮箱" field="email"><Input type="email" maxLength={254} autoComplete="email" placeholder="选填" /></Form.Item>
+            <Form.FormItem label="手机号码" name="phone"><Input type="tel" maxlength={32} autocomplete="tel" placeholder="选填" /></Form.FormItem>
+            <Form.FormItem label="工作邮箱" name="email" rules={[{ email: true, message: '请输入有效的工作邮箱' }]}><Input maxlength={254} autocomplete="email" placeholder="选填" /></Form.FormItem>
           </div>
           {!editingAccount?.platformRole && (
             <div className="cmhub-form-grid cmhub-account-assignment-fields">
-              <Form.Item label="所属仓库" field="warehouseId" rules={[{ required: true, message: '请选择仓库' }]}>
+              <Form.FormItem label="所属仓库" name="warehouseId" rules={[{ required: true, message: '请选择仓库' }]}>
                 <Select placeholder="选择仓库" options={warehouseOptions} />
-              </Form.Item>
-              <Form.Item label="员工工号" field="employeeNo"><Input maxLength={64} placeholder="选填" /></Form.Item>
-              <Form.Item className="cmhub-account-assignment-role" label="岗位角色" field="roleId" rules={[{ required: true, message: '请选择角色' }]}>
+              </Form.FormItem>
+              <Form.FormItem label="员工工号" name="employeeNo"><Input maxlength={64} placeholder="选填" /></Form.FormItem>
+              <Form.FormItem className="cmhub-account-assignment-role" label="岗位角色" name="roleId" rules={[{ required: true, message: '请选择角色' }]}>
                 <Select placeholder="选择岗位角色" options={roles.map(role => ({ label: role.name, value: role.id }))} />
-              </Form.Item>
+              </Form.FormItem>
             </div>
           )}
         </Form>
-      </Modal>
+      </Dialog>
     </section>
   );
 }

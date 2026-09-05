@@ -21,12 +21,12 @@ export function createWarehouseHttpBoundary(input: {
     origin(req: Request, res: Response, next: NextFunction): void {
       const origin = req.header('origin');
       if (!origin || !allowedOrigins.has(origin)) {
-        next(new ApiError(403, 'ORIGIN_NOT_ALLOWED', '请求来源不受信任。'));
+        next(new ApiError(403, 'ORIGIN_NOT_ALLOWED', '请求来源不受信任'));
         return;
       }
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Request-ID, X-Image-Sha256, X-Label-SHA256');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Request-ID, X-Image-Sha256, X-Document-SHA256, X-Label-SHA256');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {

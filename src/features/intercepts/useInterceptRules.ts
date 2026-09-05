@@ -27,8 +27,8 @@ export const normalizeInterceptWaybill = (value: string) => sanitizeInterceptWay
 
 export const getInterceptWaybillError = (value: string) => {
   const waybillNo = sanitizeInterceptWaybill(value).replaceAll(/\s+/g, '');
-  if (!waybillNo) return '请输入拦截单号。';
-  if (!WAYBILL_PATTERN.test(waybillNo)) return '单号格式错误：请输入字母、数字、点、下划线或连字符。';
+  if (!waybillNo) return '请输入拦截单号';
+  if (!WAYBILL_PATTERN.test(waybillNo)) return '单号格式错误：请输入字母、数字、点、下划线或连字符';
   return null;
 };
 
@@ -181,7 +181,7 @@ export function useInterceptRules() {
   const addRules = useCallback(async (rawWaybills: string, source: InterceptRuleSource, reason?: string) => {
     const sourceLabel = source === 'scan' ? '扫码' : '手动';
     const values = splitWaybills(rawWaybills);
-    if (values.length === 0) return { ok: false as const, added: 0, duplicates: 0, invalid: 0, message: '请输入至少一个拦截单号。' };
+    if (values.length === 0) return { ok: false as const, added: 0, duplicates: 0, invalid: 0, message: '请输入至少一个拦截单号' };
     const valid: string[] = [];
     const nextIndex = new Set(ruleIndex.keys());
     let duplicates = 0;
@@ -194,7 +194,7 @@ export function useInterceptRules() {
       valid.push(value);
     }
     if (valid.length === 0) {
-      return { ok: false as const, added: 0, duplicates, invalid, message: invalid ? '没有添加成功：请检查单号格式。' : '输入的单号已全部存在于拦截名单。' };
+      return { ok: false as const, added: 0, duplicates, invalid, message: invalid ? '没有添加成功：请检查单号格式' : '输入的单号已全部存在于拦截名单' };
     }
     try {
       for (let start = 0; start < valid.length; start += 1_000) {
@@ -202,10 +202,10 @@ export function useInterceptRules() {
       }
       await syncRules();
       const details = [duplicates ? `${duplicates} 个重复` : '', invalid ? `${invalid} 个格式错误` : ''].filter(Boolean).join('，');
-      return { ok: true as const, added: valid.length, duplicates, invalid, message: details ? `${sourceLabel}共享 ${valid.length} 个拦截单号；${details}。` : `${sourceLabel}共享 ${valid.length} 个拦截单号。` };
+      return { ok: true as const, added: valid.length, duplicates, invalid, message: details ? `${sourceLabel}共享 ${valid.length} 个拦截单号；${details}` : `${sourceLabel}共享 ${valid.length} 个拦截单号` };
     } catch (cause) {
       setStorageStatus('unavailable');
-      return { ok: false as const, added: 0, duplicates, invalid, message: cause instanceof Error ? cause.message : '云端拦截名单写入失败。' };
+      return { ok: false as const, added: 0, duplicates, invalid, message: cause instanceof Error ? cause.message : '云端拦截名单写入失败' };
     }
   }, [ruleIndex, syncRules]);
 
