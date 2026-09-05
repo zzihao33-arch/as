@@ -6,6 +6,9 @@ on:
       - master
     paths:
       - "services/cloud-api/**"
+      - "database/**"
+      - "deploy/ubuntu/**"
+      - ".github/workflows/deploy-cloud-api.yml"
   workflow_dispatch:
     inputs:
       command:
@@ -26,9 +29,12 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy cloud API
+    name: Verify and deploy production API
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    # Configure required reviewers for this environment in GitHub before the
+    # first release. A push to master will then wait here for one approval.
+    environment: Production
 
     steps:
       - name: Check out the exact revision being deployed
@@ -91,3 +97,12 @@ jobs:
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$CMHUB_DEPLOY_USER@$CMHUB_DEPLOY_HOST" \
             "$command"
+
+      - name: Verify public production health
+        if: ${{ github.event_name == 'push' || inputs.command == 'deploy' }}
+        run: |
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error https://api.cmhubtool.com/healthz; then exit 0; fi
+            sleep 3
+          done
+          exit 1

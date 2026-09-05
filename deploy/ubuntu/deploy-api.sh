@@ -21,9 +21,25 @@ git pull --ff-only origin "$BRANCH"
 
 cd services/cloud-api
 npm ci
+npm run typecheck
+npm test
 npm run build
+npm run migrate
 npm prune --omit=dev
 
 pm2 startOrReload "$APP_DIR/deploy/ubuntu/ecosystem.config.cjs" --env production
 pm2 save
 pm2 status cmhub-cloud-api
+
+for attempt in {1..20}; do
+  if curl --fail --silent --show-error http://127.0.0.1:8080/healthz >/dev/null; then
+    git -C "$APP_DIR" rev-parse HEAD > "$APP_DIR/.deployed-sha"
+    echo "Production API deployment healthy at $(git -C "$APP_DIR" rev-parse --short HEAD)."
+    exit 0
+  fi
+  sleep 1
+done
+
+pm2 logs cmhub-cloud-api --lines 80 --nostream >&2 || true
+echo "Production API failed its local health check." >&2
+exit 1

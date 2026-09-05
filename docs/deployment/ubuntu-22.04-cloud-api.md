@@ -71,6 +71,9 @@ sudo env PATH="$PATH:/usr/bin" pm2 startup systemd -u cmhub --hp /home/cmhub
 10. `database/010_integrate_handover_document_permissions.sql`
 11. `database/011_link_air_pickups_clients_shipments_and_receipt_evidence.sql`
 12. `database/012_add_attendance_and_payroll.sql`
+13. `database/013_add_tyg_v11_label_versions.sql`
+14. `database/014_add_customer_profiles.sql`
+15. `database/015_add_air_pickup_documents.sql`
 
 在受控副本中替换 `001` 的 `REPLACE_WITH_A_LONG_RANDOM_PASSWORD`，不得把真实密码提交到仓库。新数据库示例：
 
@@ -87,6 +90,9 @@ sudo mysql < /opt/cmhub-api/database/009_add_air_pickup_lifecycle.sql
 sudo mysql < /opt/cmhub-api/database/010_integrate_handover_document_permissions.sql
 sudo mysql < /opt/cmhub-api/database/011_link_air_pickups_clients_shipments_and_receipt_evidence.sql
 sudo mysql < /opt/cmhub-api/database/012_add_attendance_and_payroll.sql
+sudo mysql < /opt/cmhub-api/database/013_add_tyg_v11_label_versions.sql
+sudo mysql < /opt/cmhub-api/database/014_add_customer_profiles.sql
+sudo mysql < /opt/cmhub-api/database/015_add_air_pickup_documents.sql
 ```
 
 以后增加的编号迁移同样按升序执行一次。不要重放已执行的脚本。旧环境若已通过早期草稿迁移或扩展版 `001` 获得 `order_id`/`raw_data` 等字段，应把当前 `002` 视为同一个逻辑变更，先由数据库负责人核对实际 schema 和部署记录，**不要再次执行**。
@@ -199,7 +205,7 @@ REPO_URL=https://github.com/<组织或账号>/<仓库>.git \
   bash deploy/ubuntu/deploy-api.sh
 ```
 
-脚本执行快进更新、`npm ci`、TypeScript 构建、移除开发依赖并 `pm2 startOrReload`。模板环境检查：
+脚本执行快进更新、`npm ci`、TypeScript 类型检查与测试、构建、受控的顺序迁移、移除开发依赖并 `pm2 startOrReload`。只有本机 `/healthz` 成功才会写入 `.deployed-sha`。迁移失败或健康检查失败时脚本以非零状态退出；迁移本身不可自动回滚，因此上线前必须具备已验证的数据库备份和回滚提交。模板环境检查：
 
 ```bash
 pm2 status cmhub-cloud-api
