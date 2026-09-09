@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { it } from 'node:test';
 
 function check(serviceEnvironment: string | undefined, keyEnvironment: 'test' | 'live', expected: number) {
-  const env = { ...process.env, NODE_ENV: 'production', MYSQL_HOST: '127.0.0.1', MYSQL_DATABASE: 'unit_test', MYSQL_USER: 'unit_test', MYSQL_PASSWORD: 'unit_test', REDIS_URL: 'redis://127.0.0.1:6379', LABEL_STORAGE_BACKEND: 'filesystem', LABEL_STORAGE_ROOT: './test-labels', OUTBOUND_WEBHOOK_ENABLED: 'false' };
+  const env = { ...process.env, DOTENV_CONFIG_PATH: process.platform === 'win32' ? 'NUL' : '/dev/null', NODE_ENV: 'production', MYSQL_HOST: '127.0.0.1', MYSQL_DATABASE: 'unit_test', MYSQL_USER: 'unit_test', MYSQL_PASSWORD: 'unit_test', REDIS_URL: 'redis://127.0.0.1:6379', LABEL_STORAGE_BACKEND: 'filesystem', LABEL_STORAGE_ROOT: './test-labels', OUTBOUND_WEBHOOK_ENABLED: 'false' };
   if (serviceEnvironment) Object.assign(env, { API_KEY_ENVIRONMENT: serviceEnvironment });
   else delete (env as Record<string, string | undefined>).API_KEY_ENVIRONMENT;
   const script = `
