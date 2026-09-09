@@ -148,6 +148,7 @@ export function createCosLabelStorage(
     SecretId: options.secretId,
     SecretKey: options.secretKey,
     SecurityToken: options.securityToken,
+    Timeout: 20_000,
   }) as unknown as CosLabelStorageClient;
   const location = { Bucket: options.bucket, Region: options.region };
   const prefix = normalizedPrefix(options.prefix ?? '');

@@ -1,4 +1,5 @@
 import { ApiError } from './errors.js';
+import { decodeLabelPdfBase64, type ValidatedLabelPdf } from './labelPdf.js';
 
 export type ShipmentStatus = 'RECEIVED' | 'READY_TO_PRINT' | 'PRINTED' | 'BLOCKED' | 'PRINT_FAILED' | 'CANCELLED';
 
@@ -16,6 +17,7 @@ export type ShipmentUpsertInput = {
   carrier?: string;
   labelUrl?: string;
   labelSha256?: string;
+  labelPdf?: ValidatedLabelPdf;
   attributes?: Record<string, unknown>;
   order?: UpstreamOrderDetails;
   rawData: Record<string, unknown>;
@@ -96,14 +98,22 @@ export function parseShipmentUpsert(body: unknown): ShipmentUpsertInput {
     throw new ApiError(400, 'VALIDATION_ERROR', 'labelSha256 必须是 64 位十六进制 SHA-256');
   }
 
+  const labelPdf = Object.hasOwn(rawData, 'labelPdfBase64')
+    ? decodeLabelPdfBase64(rawData.labelPdfBase64, labelSha256) : undefined;
+  const courierTrackingNo = text(rawData.courierTrackingNo, 'courierTrackingNo', 128, Boolean(labelPdf));
+  // Keep fingerprints for idempotency/audit without retaining PDF bytes in MySQL.
+  const retained = labelPdf ? { ...rawData, labelSha256: labelPdf.sha256 } : rawData;
+  if (labelPdf) delete retained.labelPdfBase64;
+
   return {
     firstLegTrackingNo: text(rawData.firstLegTrackingNo, 'firstLegTrackingNo', 128, true)!,
-    courierTrackingNo: text(rawData.courierTrackingNo, 'courierTrackingNo'),
+    courierTrackingNo,
     carrier: text(rawData.carrier, 'carrier', 64),
     labelUrl: verifyHttpsUrl(text(rawData.labelUrl, 'labelUrl', 2048)),
-    labelSha256: labelSha256?.toLowerCase(),
+    labelSha256: labelPdf?.sha256 ?? labelSha256?.toLowerCase(),
+    labelPdf,
     attributes: object(rawData.attributes, 'attributes'),
     order: readUpstreamOrderDetails(rawData),
-    rawData,
+    rawData: retained,
   };
 }

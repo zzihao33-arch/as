@@ -97,7 +97,7 @@ describe('shipment ingestion', () => {
       beginTransaction: async () => { began = true; },
       execute: async (sql: string) => {
         statements.push(sql);
-        if (sql.includes('SELECT * FROM shipments')) {
+        if (sql.includes('FROM shipments')) {
           return [[{
             id: 'shipment-1',
             client_id: 'client-1',
@@ -146,7 +146,7 @@ describe('shipment ingestion', () => {
     assert.equal(statements.length, 6);
     assert.match(statements[0], /INSERT INTO inbound_messages/);
     assert.match(statements[1], /INSERT INTO shipments/);
-    assert.match(statements[2], /SELECT \* FROM shipments/);
+    assert.match(statements[2], /FROM shipments/);
     assert.match(statements[3], /INSERT INTO shipment_events/);
     assert.match(statements[4], /INSERT INTO shipment_delivery_changes/);
     assert.match(statements[5], /UPDATE inbound_messages/);

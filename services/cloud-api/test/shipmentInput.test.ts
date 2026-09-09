@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { createHash } from 'node:crypto';
 import { ApiError } from '../src/errors.js';
 import { parseShipmentUpsert } from '../src/shipmentInput.js';
 
@@ -69,5 +70,36 @@ describe('parseShipmentUpsert', () => {
     for (const labelUrl of ['http://labels.example.com/FL-1006.pdf', '/labels/FL-1006.pdf', 'not a URL']) {
       assertValidationError(() => parseShipmentUpsert({ firstLegTrackingNo: 'FL-1006', labelUrl }));
     }
+  });
+});
+
+describe('inline PDF shipment input', () => {
+  const pdf = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+  const base = { firstLegTrackingNo: 'A', courierTrackingNo: 'B', labelPdfBase64: pdf.toString('base64') };
+
+  it('decodes the three-field push and retains only the PDF fingerprint in raw data', () => {
+    const parsed = parseShipmentUpsert(base);
+    assert.deepEqual(parsed.labelPdf?.content, pdf);
+    assert.equal(parsed.labelSha256, createHash('sha256').update(pdf).digest('hex'));
+    assert.equal(Object.hasOwn(parsed.rawData, 'labelPdfBase64'), false);
+    assert.equal(JSON.stringify(parsed.rawData).includes(base.labelPdfBase64), false);
+    assert.equal(base.labelPdfBase64, pdf.toString('base64'));
+  });
+
+  it('requires a courier number when sending an inline label', () => {
+    assertValidationError(() => parseShipmentUpsert({ ...base, courierTrackingNo: undefined }));
+  });
+
+  it('rejects malformed Base64, empty and non-PDF content', () => {
+    for (const labelPdfBase64 of ['', '%%%!!!', 'data:application/pdf;base64,' + base.labelPdfBase64, 'bm90IHBkZg==', base.labelPdfBase64 + '!']) {
+      assert.throws(() => parseShipmentUpsert({ ...base, labelPdfBase64 }), ApiError);
+    }
+  });
+
+  it('rejects a decoded PDF over 20 MiB and a contradictory declared hash', () => {
+    assert.throws(() => parseShipmentUpsert({ ...base, labelPdfBase64: Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64') }),
+      (error: unknown) => error instanceof ApiError && error.status === 413);
+    assert.throws(() => parseShipmentUpsert({ ...base, labelSha256: '0'.repeat(64) }),
+      (error: unknown) => error instanceof ApiError && error.code === 'LABEL_HASH_MISMATCH');
   });
 });

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Pool } from 'mysql2/promise';
 import { createLabelAssetModule } from '../src/labelAssets.js';
-import { ApiError } from '../src/errors.js';
 import type { LabelStorage } from '../src/labelStorage.js';
 
 const client = {
@@ -64,24 +63,24 @@ describe('label asset module', () => {
       pdf: { content, sha256: 'a'.repeat(64), byteSize: content.length },
     });
 
-    assert.match(storedKey, /^labels\/client-1\/shipment-1\/a{64}\.pdf$/);
+    assert.match(storedKey, /^labels\/client-1\/uploads\/[a-f0-9-]+\/a{64}\.pdf$/);
     assert.equal(result.shipmentStatus, 'READY_TO_PRINT');
     assert.equal(result.reused, false);
     assert.equal(statements.filter((sql) => sql.includes('INSERT INTO shipment_events')).length, 1);
-    assert.ok(statements.findIndex((sql) => sql.includes('INSERT INTO label_assets')) < statements.findIndex((sql) => sql.includes("asset_status = 'READY'")));
+    assert.ok(statements.findIndex((sql) => sql.includes('INSERT INTO label_assets')) < statements.findIndex((sql) => sql.includes('UPDATE shipments')));
   });
 
-  it('rejects content that differs from the shipment declaration before touching storage', async () => {
+  it('replaces a previous PDF directly without requiring a separate hash declaration update', async () => {
     let stored = false;
     let rolledBack = false;
     const connection = {
       beginTransaction: async () => undefined,
-      execute: async () => [[{
+      execute: async (sql: string) => sql.includes('FROM label_assets') ? [[]] : sql.includes('FROM shipments') ? [[{
         id: 'shipment-1',
         label_sha256: 'b'.repeat(64),
         current_label_asset_id: null,
-        status: 'RECEIVED',
-      }]],
+        status: 'PRINTED',
+      }]] : [{ affectedRows: 1 }],
       commit: async () => undefined,
       rollback: async () => { rolledBack = true; },
       release: () => undefined,
@@ -93,20 +92,15 @@ describe('label asset module', () => {
       open: async () => { throw new Error('not used'); },
     } as unknown as LabelStorage;
 
-    await assert.rejects(
-      createLabelAssetModule({ mysql, storage }).storePushedPdf({
+    const result = await createLabelAssetModule({ mysql, storage }).storePushedPdf({
         client: { ...client, scopes: ['labels:write'] },
         requestId: 'request-2',
         firstLegTrackingNo: 'FL-1001',
         pdf: { content: Buffer.from('pdf'), sha256: 'a'.repeat(64), byteSize: 3 },
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof ApiError);
-        assert.equal(error.code, 'LABEL_HASH_MISMATCH');
-        return true;
-      },
-    );
-    assert.equal(rolledBack, true);
-    assert.equal(stored, false);
+      });
+    assert.equal(result.sha256, 'a'.repeat(64));
+    assert.equal(result.shipmentStatus, 'PRINTED');
+    assert.equal(rolledBack, false);
+    assert.equal(stored, true);
   });
 });

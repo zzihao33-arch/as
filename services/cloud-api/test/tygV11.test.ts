@@ -54,3 +54,64 @@ describe('TYG v1.1 contract', () => {
     assert.equal(air.weightUnit, 'KG');
   });
 });
+
+const labelBody = { airWaybillNo: '180-98109734', originalTrackingNo: 'ORIGINAL-1', transferTrackingNo: 'TRANSFER-1', labelBase64: pdf };
+function atomicFixture(existing = false, expired = false, failure = '') {
+  const calls: { sql: string; params: unknown[] }[] = [], steps: string[] = [], keys: string[] = [];
+  const client = { id: 'client', apiKeyId: 'key', scopes: ['labels:write' as const], rateLimitPerMinute: 60 };
+  const connection = {
+    beginTransaction: async () => { steps.push('begin'); }, commit: async () => { steps.push('commit'); }, rollback: async () => { steps.push('rollback'); }, release: () => {},
+    execute: async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      if (sql.includes('FROM customer_profiles')) return [[{ customer_profile_id: 'profile' }]];
+      if (sql.includes('FROM air_pickup_orders')) return [[{ id: 'air', client_id: 'client', customer_profile_id: 'profile', order_status: 'HANDED_OVER' }]];
+      if (sql.includes('FROM shipments') && sql.includes('first_leg_tracking_no =')) return [existing ? [{ id: 'shipment', air_pickup_order_id: 'air', courier_tracking_no: 'TRANSFER-1', current_label_asset_id: 'asset', status: 'PRINTED' }] : []];
+      if (sql.includes('FROM shipments')) return [[]];
+      if (sql.includes('FROM label_assets') && sql.includes('WHERE id =')) return [[{ id: 'asset', content_sha256: parseTygLabelPush(labelBody).pdf.sha256, asset_status: 'READY', expires_at: new Date(Date.now() + (expired ? -1000 : 86400000)), bytes_deleted_at: null }]];
+      if (sql.includes('FROM label_assets')) return [existing ? [{ id: 'asset' }] : []];
+      if (sql.includes('FROM print_attempts')) return [[{ printed: 1 }]];
+      if (sql.includes('MAX(version_no)')) return [[{ version_no: existing ? 3 : null }]];
+      if (sql.startsWith('INSERT INTO inbound_messages') && failure === 'message') throw new Error('message failed');
+      return [{ affectedRows: 1 }];
+    },
+  };
+  const api = createTygV11Integration({ mysql: { execute: async () => [[]], getConnection: async () => { steps.push('connection'); return connection; } } as never, redis: { set: async () => 'OK', eval: async () => 1 } as never, storage: { put: async (key: string) => { steps.push('storage'); keys.push(key); if (failure === 'storage') throw new Error('storage failed'); } } as never });
+  return { calls, steps, keys, push: () => api.pushLabel({ client, requestId: 'request', idempotencyKey: 'tyg-label-test', body: labelBody }) };
+}
+describe('TYG v1.1 atomic publication', () => {
+  it('stages before the only transaction, retaining hashes without Base64', async () => {
+    const parsed = parseTygLabelPush(labelBody);
+    assert.equal(parsed.body.labelBase64, undefined);
+    assert.equal(parsed.body.labelSha256, parsed.pdf.sha256);
+    assert.equal(labelBody.labelBase64, pdf);
+    const f = atomicFixture(); const result = await f.push();
+    assert.deepEqual(f.steps, ['storage', 'connection', 'begin', 'commit']);
+    assert.equal((result.body.data as Record<string, unknown>).operation, 'CREATED');
+    assert.equal((result.body.data as Record<string, unknown>).latePush, true);
+    assert.ok(!JSON.stringify(f.calls).includes(pdf));
+    assert.ok(f.calls.some(c => c.sql.includes('retention_expires_at = expires_at')));
+  });
+  it('staging failure never opens a database transaction', async () => {
+    const f = atomicFixture(false, false, 'storage');
+    await assert.rejects(f.push(), { code: 'LABEL_STORAGE_UNAVAILABLE' });
+    assert.deepEqual(f.steps, ['storage']); assert.equal(f.calls.length, 0);
+  });
+  it('same-content new requests renew immutable storage without incrementing duplicate versions', async () => {
+    const f = atomicFixture(true); const result = await f.push(); await f.push();
+    assert.notEqual(f.keys[0], f.keys[1]);
+    assert.equal((result.body.data as Record<string, unknown>).operation, 'DUPLICATE');
+    assert.equal((result.body.data as Record<string, unknown>).labelVersion, 3);
+    assert.ok(!f.calls.some(c => c.sql.includes('INSERT INTO tyg_label_versions')));
+    assert.ok(f.calls.some(c => c.sql.includes('UPDATE label_assets SET storage_key')));
+  });
+  it('expired content restores with a new version', async () => {
+    const f = atomicFixture(true, true); const result = await f.push();
+    assert.equal((result.body.data as Record<string, unknown>).operation, 'FILE_RESTORED');
+    assert.equal((result.body.data as Record<string, unknown>).labelVersion, 4);
+    assert.equal((result.body.data as Record<string, unknown>).reprintRequired, true);
+  });
+  it('response persistence failure rolls back publication and version together', async () => {
+    const f = atomicFixture(false, false, 'message'); await assert.rejects(f.push(), /message failed/);
+    assert.deepEqual(f.steps, ['storage', 'connection', 'begin', 'rollback']);
+  });
+});

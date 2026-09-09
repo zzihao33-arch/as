@@ -138,9 +138,8 @@ export const config = {
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: asPort('PORT', 8080),
   jsonLimit: process.env.JSON_BODY_LIMIT ?? '256kb',
-  inboundBatchJsonLimit: process.env.INBOUND_BATCH_JSON_LIMIT ?? '10mb',
-  // TYG v1.1 embeds a maximum 5 MiB PDF as Base64. Keep its larger parser
-  // scoped to that route; legacy JSON requests retain the 256 KiB default.
+  inboundBatchJsonLimit: process.env.INBOUND_BATCH_JSON_LIMIT ?? '32mb',
+  shipmentJsonLimit: process.env.SHIPMENT_JSON_LIMIT ?? '32mb',
   tygLabelPushJsonLimit: process.env.TYG_LABEL_PUSH_JSON_LIMIT ?? '7mb',
   labelPdfLimit: process.env.LABEL_PDF_LIMIT ?? '20mb',
   labelStorage: labelStorageBackend === 'cos' ? {

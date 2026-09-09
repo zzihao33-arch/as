@@ -5,6 +5,7 @@ import { requireApiKey, requireScope } from './auth.js';
 import { closeConnections, mysql, redis } from './db.js';
 import { ApiError, normalizeApiError } from './errors.js';
 import { createLabelAssetModule } from './labelAssets.js';
+import { createLabelRetentionWorker } from './labelRetention.js';
 import { validateLabelPdf } from './labelPdf.js';
 import { createCosLabelStorage, createFilesystemLabelStorage } from './labelStorage.js';
 import { createShipmentIngestor } from './shipmentIngest.js';
@@ -15,7 +16,7 @@ import { createAirPickupOperations } from './airPickupOperations.js';
 import { createCustomerProfiles } from './customerProfiles.js';
 import { createAttendanceOperations } from './attendanceOperations.js';
 import { createOutboundWebhooks } from './outboundWebhooks.js';
-import { toShipment, type ShipmentRow } from './shipmentRecord.js';
+import { shipmentWithLabelSelect, toShipment, type ShipmentRow } from './shipmentRecord.js';
 import { createWarehouseAdministration } from './warehouseAdministration.js';
 import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseWorkspace } from './warehouseAccess.js';
 import { createWarehouseIdentity } from './warehouseIdentity.js';
@@ -36,8 +37,9 @@ app.use((req, res, next) => {
 const jsonBodyParser = express.json({ limit: config.jsonLimit });
 const inboundBatchBodyParser = express.json({ limit: config.inboundBatchJsonLimit });
 const tygLabelPushBodyParser = express.json({ limit: config.tygLabelPushJsonLimit });
+const shipmentBodyParser = express.json({ limit: config.shipmentJsonLimit });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && (req.path === '/api/v1/inbound-batches' || req.path === '/api/v1/label-pushes')) return next();
+  if (req.method === 'POST' && /^\/api\/v1\/(inbound-batches|shipments|label-pushes)\/?$/i.test(req.path)) return next();
   return jsonBodyParser(req, res, next);
 });
 
@@ -54,16 +56,17 @@ function text(value: unknown, field: string, maxLength = 128, required = false):
   return result;
 }
 
-const shipmentIngestor = createShipmentIngestor({ mysql, redis });
-const inboundBatchIngestor = createInboundBatchIngestor({ mysql, redis });
 const labelStorage = config.labelStorage.backend === 'cos'
   ? createCosLabelStorage(config.labelStorage)
   : createFilesystemLabelStorage(config.labelStorage.root);
+const shipmentIngestor = createShipmentIngestor({ mysql, redis, storage: labelStorage });
+const inboundBatchIngestor = createInboundBatchIngestor({ mysql, redis, storage: labelStorage });
 const labelAssets = createLabelAssetModule({
   mysql,
   storage: labelStorage,
 });
 const tygV11 = createTygV11Integration({ mysql, redis, storage: labelStorage });
+const labelRetention = createLabelRetentionWorker({ mysql, storage: labelStorage });
 const warehouseIdentity = createWarehouseIdentity({
   mysql,
   redis,
@@ -105,7 +108,7 @@ app.get('/healthz', async (_req, res, next) => {
 
 const upstreamRouter = express.Router();
 
-upstreamRouter.post('/shipments', requireScope('shipments:write'), async (req, res, next) => {
+upstreamRouter.post('/shipments', requireScope('shipments:write'), shipmentBodyParser, async (req, res, next) => {
   try {
     const result = await shipmentIngestor.ingest({
       client: req.client!,
@@ -179,7 +182,7 @@ upstreamRouter.get('/shipments/by-first-leg/:firstLegTrackingNo', requireScope('
   try {
     const firstLegTrackingNo = text(req.params.firstLegTrackingNo, 'firstLegTrackingNo', 128, true)!;
     const [rows] = await mysql.execute<ShipmentRow[]>(
-      `SELECT * FROM shipments WHERE client_id = ? AND first_leg_tracking_no = ? LIMIT 1`,
+      `${shipmentWithLabelSelect} WHERE s.client_id = ? AND s.first_leg_tracking_no = ? LIMIT 1`,
       [req.client!.id, firstLegTrackingNo],
     );
     if (!rows[0]) throw new ApiError(404, 'SHIPMENT_NOT_FOUND', '未找到对应物流单据');
@@ -1011,6 +1014,17 @@ app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
 
 let server: ReturnType<typeof app.listen> | null = null;
 let attendanceRetentionTimer: ReturnType<typeof setInterval> | null = null;
+let labelRetentionTimer: ReturnType<typeof setInterval> | null = null;
+let labelRetentionTask: Promise<void> | null = null;
+
+function runLabelRetention(): void {
+  if (labelRetentionTask) return;
+  labelRetentionTask = labelRetention.runOnce().then(result => {
+    if (result.deleted || result.deleteFailures) console.log('Label retention:', result);
+  }).catch(() => {
+    console.error('Label retention failed; the next scheduled sweep will retry.');
+  }).finally(() => { labelRetentionTask = null; });
+}
 
 async function runAttendanceRetention(): Promise<void> {
   try {
@@ -1022,10 +1036,15 @@ async function runAttendanceRetention(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  // Fail startup clearly if the required migration has not been applied.
+  await mysql.query('SELECT expires_at, bytes_deleted_at FROM label_assets LIMIT 0');
   await outboundWebhooks.start();
   await runAttendanceRetention();
   attendanceRetentionTimer = setInterval(() => void runAttendanceRetention(), 60 * 60_000);
   attendanceRetentionTimer.unref();
+  runLabelRetention();
+  labelRetentionTimer = setInterval(runLabelRetention, 60_000);
+  labelRetentionTimer.unref();
   server = app.listen(config.port, config.host, () => {
     console.log(`CM-HUB cloud API listening on ${config.host}:${config.port} (${config.environment})`);
   });
@@ -1035,12 +1054,14 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}; shutting down.`);
   outboundWebhooks.stop();
   if (attendanceRetentionTimer) clearInterval(attendanceRetentionTimer);
+  if (labelRetentionTimer) clearInterval(labelRetentionTimer);
   if (!server) {
     await closeConnections();
     process.exit(0);
     return;
   }
   server.close(async () => {
+    if (labelRetentionTask) await labelRetentionTask;
     await closeConnections();
     process.exit(0);
   });

@@ -16,6 +16,8 @@ These MySQL 8.0 migrations are an immutable, ordered history. For a new database
 12. `012_add_attendance_and_payroll.sql` adds cloud attendance locations, effective-dated shift rules, accepted/rejected punch evidence, daily results, supervisor-reviewed appeals, effective-dated pay rates, payroll adjustments, and immutable payroll-run snapshots.
 13. `013_add_tyg_v11_label_versions.sql` adds immutable TYG v1.1 PDF label-version records and retention metadata.
 14. `014_add_customer_profiles.sql` separates manually managed business/upstream customer profiles from API integration identities, backfills integrated upstream customers, and records the single customer ownership of each air-pickup order.
+15. `015_add_air_pickup_documents.sql` adds private pickup documents linked to retained air-pickup orders.
+16. `016_add_label_retention.sql` adds seven-day PDF expiry and byte-deletion markers. Apply before starting the unified TYG API. Its non-null expression default covers legacy inserts during rolling deployment; MySQL 8.0.13+ is required. See `docs/operations/tyg-label-retention.md` for the worker and private COS lifecycle acceptance checks.
 
 Do not edit, skip, or replay a migration after it has been applied to a shared environment. A repository checkout does not prove which migrations production has received: verify the live schema and deployment record first, take a backup, test against a production-like copy, and schedule the DDL/backfill for an approved change window. Add future changes as the next numbered migration. In particular, do not use `001` to rotate an existing MySQL password; `CREATE USER IF NOT EXISTS` leaves an existing account unchanged.
 

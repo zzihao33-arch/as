@@ -4,12 +4,33 @@ import { ApiError } from './errors.js';
 const pdfHeader = Buffer.from('%PDF-', 'ascii');
 const pdfEof = Buffer.from('%%EOF', 'ascii');
 export const MAX_TYG_LABEL_BYTES = 5 * 1024 * 1024;
+export const MAX_LABEL_PDF_BYTES = 20 * 1024 * 1024;
 
 export type ValidatedLabelPdf = {
   content: Buffer;
   sha256: string;
   byteSize: number;
 };
+
+export function decodeLabelPdfBase64(value: unknown, declaredSha256?: string): ValidatedLabelPdf {
+  if (typeof value !== 'string' || !value) {
+    throw new ApiError(400, 'LABEL_PDF_REQUIRED', 'labelPdfBase64 必须包含 PDF 文件的 Base64。');
+  }
+  // Bound allocation before decoding. Accept canonical RFC 4648 Base64 only,
+  // not data URLs or Buffer.from's otherwise silently tolerated garbage.
+  if (value.length > 4 * Math.ceil(MAX_LABEL_PDF_BYTES / 3)) {
+    throw new ApiError(413, 'PAYLOAD_TOO_LARGE', '单个 PDF 不得超过 20 MiB。');
+  }
+  const content = Buffer.from(value, 'base64');
+  if (content.length > MAX_LABEL_PDF_BYTES) {
+    throw new ApiError(413, 'PAYLOAD_TOO_LARGE', '单个 PDF 不得超过 20 MiB。');
+  }
+  if (content.toString('base64') !== value) {
+    throw new ApiError(400, 'INVALID_LABEL_BASE64', 'labelPdfBase64 必须使用标准 Base64 编码。');
+  }
+  const hash = createHash('sha256').update(content).digest('hex');
+  return validateLabelPdf(content, declaredSha256 ?? hash);
+}
 
 export function validateLabelPdf(content: unknown, declaredSha256: string | undefined): ValidatedLabelPdf {
   if (!Buffer.isBuffer(content) || content.length === 0) {

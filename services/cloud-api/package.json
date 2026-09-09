@@ -10,6 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "migrate": "node scripts/applyMigrations.mjs ../../database",
+    "load:tyg:test": "node scripts/loadTygApi.mjs",
+    "retention:metadata": "node dist/scripts/purgeExpiredIntegrationData.js",
     "create-client-key": "node dist/scripts/createClientKey.js",
     "revoke-client-key": "node dist/scripts/revokeClientKey.js",
     "create-warehouse-admin": "node dist/scripts/createWarehouseAdmin.js",

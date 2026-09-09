@@ -154,7 +154,8 @@ MYSQL_USER=cmhub_api
 MYSQL_PASSWORD=<真实随机密码>
 REDIS_URL=redis://127.0.0.1:6379/0
 JSON_BODY_LIMIT=256kb
-INBOUND_BATCH_JSON_LIMIT=10mb
+INBOUND_BATCH_JSON_LIMIT=32mb
+SHIPMENT_JSON_LIMIT=32mb
 LABEL_PDF_LIMIT=20mb
 LABEL_STORAGE_BACKEND=filesystem
 LABEL_STORAGE_ROOT=/var/lib/cmhub/labels
@@ -177,7 +178,7 @@ OUTBOUND_WEBHOOK_TIMEOUT_MS=10000
 OUTBOUND_WEBHOOK_MAX_ATTEMPTS=12
 ```
 
-`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。`INBOUND_BATCH_JSON_LIMIT=10mb` 仅用于已通过 API Key 与作用域校验的批量入口，以支持约 2,000 条物流映射；普通 JSON 接口继续受 `JSON_BODY_LIMIT=256kb` 限制。两者均不得无限放大。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。文件系统模式下，`LABEL_STORAGE_ROOT` 必须位于美国服务器持久磁盘且不得映射成 Nginx `root` 或 `alias`；COS 模式必须使用私有桶、美国区地域、独立环境前缀和最小权限 CAM 凭据。
+`WAREHOUSE_ALLOWED_ORIGINS` 必须是允许携带仓库 Cookie 的精确前端 Origin 列表，不能使用 `*`。`INBOUND_BATCH_JSON_LIMIT=32mb` 与 `SHIPMENT_JSON_LIMIT=32mb` 分别用于已通过 API Key 与作用域校验的批量、单票推送入口，支持 PDF Base64；其他 JSON 接口继续受 `JSON_BODY_LIMIT=256kb` 限制。两者均不得无限放大。Redis 不可用时，登录和上游请求会失败，以避免绕过限流和幂等保护。文件系统模式下，`LABEL_STORAGE_ROOT` 必须位于美国服务器持久磁盘且不得映射成 Nginx `root` 或 `alias`；COS 模式必须使用私有桶、美国区地域、独立环境前缀和最小权限 CAM 凭据。
 
 主密钥与每客户 HMAC 密钥是两类不同凭据。主密钥只存在于 CM-HUB 服务环境和备份密钥库；客户密钥由 `generate-webhook-secret` 生成，经安全渠道交付客户，并通过 `CMHUB_WEBHOOK_SIGNING_SECRET` 临时环境变量写入密文。先保持 worker 关闭完成联调：
 
@@ -232,7 +233,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 
 将仓库 [Nginx 模板](../../deploy/ubuntu/nginx/cmhub-cloud-api.conf) 复制到新环境后，把 `server_name _;` 替换为获批域名，再配置证书：
 
-模板的 `client_max_body_size 20m` 与默认 `LABEL_PDF_LIMIT` 对齐。若调整文件上限，必须同时调整两处并重新测试 `413` 行为；JSON 仍由 `JSON_BODY_LIMIT` 单独限制。
+Nginx 模板的 `client_max_body_size 32m` 覆盖含 Base64 的 JSON 请求；单个解码 PDF 仍限制为 20 MiB。需同步检查网关与应用的 `413` 行为。普通 JSON 使用 `JSON_BODY_LIMIT`，上游批次和单票分别使用专用限制。新版本部署前必须先应用数据库迁移 016，详见 `docs/operations/tyg-api-acceptance.md`。
 
 ```bash
 sudo cp /opt/cmhub-api/deploy/ubuntu/nginx/cmhub-cloud-api.conf /etc/nginx/sites-available/cmhub-cloud-api

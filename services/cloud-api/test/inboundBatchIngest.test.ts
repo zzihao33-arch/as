@@ -44,10 +44,26 @@ test('rejects duplicate first-leg numbers inside one atomic batch', () => {
   ));
 });
 
-test('requires the air-pickup forecast and at least one shipment', () => {
+test('accepts a forecast before any shipments arrive', () => {
   const raw = baseRequest(1);
   raw.shipments = [];
+  assert.equal(parseInboundBatchInput(raw).shipments.length, 0);
+});
+
+test('requires a valid air-pickup forecast even without shipments', () => {
+  const raw = baseRequest(1);
+  raw.shipments = [];
+  raw.airPickup.forecastWeight = 0;
   assert.throws(() => parseInboundBatchInput(raw), (error: unknown) => (
     error instanceof ApiError && error.code === 'VALIDATION_ERROR'
   ));
+});
+
+test('does not persist embedded label bytes in the batch raw payload', () => {
+  const raw = baseRequest(1);
+  const encoded = Buffer.from('%PDF-1.7\n%%EOF\n').toString('base64');
+  Object.assign(raw.shipments[0], { labelPdfBase64: encoded });
+  const parsed = parseInboundBatchInput(raw);
+  assert.equal(JSON.stringify(parsed.body).includes(encoded), false);
+  assert.equal(JSON.stringify(parsed.shipments[0].rawData).includes(encoded), false);
 });

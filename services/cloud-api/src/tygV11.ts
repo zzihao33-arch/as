@@ -8,6 +8,7 @@ import { ApiError } from './errors.js';
 import { decodeTygLabelBase64, type ValidatedLabelPdf } from './labelPdf.js';
 import type { LabelStorage } from './labelStorage.js';
 import { hashInboundPayload } from './shipmentIngest.js';
+import { stageInlineLabels, publishInlineLabel } from './inlineLabels.js';
 
 const LOCK_SECONDS = 300;
 const AIR_OPERATION = 'tyg.v1_1.air_shipments';
@@ -16,7 +17,7 @@ const LABEL_OPERATION = 'tyg.v1_1.label_pushes';
 type MessageRow = RowDataPacket & { payload_sha256: string; processing_status: 'PROCESSING' | 'COMPLETED'; response_status: number | null; response_body: string | Record<string, unknown> | null };
 type AirRow = RowDataPacket & { id: string; client_id: string | null; customer_profile_id: string | null; order_status: 'RECORDED' | 'RECEIVED' | 'HANDED_OVER' | 'VOIDED'; forecast_cartons: number; forecast_packages: number; forecast_weight: number | string; forecast_weight_unit: 'KG' | 'LB' };
 type ShipmentRow = RowDataPacket & { id: string; air_pickup_order_id: string | null; courier_tracking_no: string | null; current_label_asset_id: string | null; status: string };
-type AssetRow = RowDataPacket & { id: string; storage_key: string; asset_status: 'STORING' | 'READY' | 'FAILED'; content_sha256: string };
+type AssetRow = RowDataPacket & { id: string; storage_key: string; asset_status: 'STORING' | 'READY' | 'FAILED'; content_sha256: string; expires_at: Date; bytes_deleted_at: Date | null };
 
 export type TygV11Result = { status: number; body: Record<string, unknown> };
 
@@ -66,13 +67,16 @@ export function parseTygAirShipment(bodyValue: unknown) {
 
 export function parseTygLabelPush(bodyValue: unknown): { body: Record<string, unknown>; bill: ReturnType<typeof normalizeAirBillNo>; originalTrackingNo: string; transferTrackingNo: string; replacementReason: string; pdf: ValidatedLabelPdf } {
   const body = object(bodyValue);
+  const pdf = decodeTygLabelBase64(body.labelBase64);
+  const retained: Record<string, unknown> = { ...body, labelSha256: pdf.sha256 };
+  delete retained.labelBase64;
   return {
-    body,
+    body: retained,
     bill: normalizeAirBillNo(text(body.airWaybillNo, 'airWaybillNo', 32)!),
     originalTrackingNo: text(body.originalTrackingNo, 'originalTrackingNo', 128)!,
     transferTrackingNo: text(body.transferTrackingNo, 'transferTrackingNo', 128)!,
     replacementReason: text(body.replacementReason, 'replacementReason', 200, false) ?? 'TYG v1.1 label push',
-    pdf: decodeTygLabelBase64(body.labelBase64),
+    pdf,
   };
 }
 
@@ -127,8 +131,6 @@ async function withIdempotency<T>(dependencies: { mysql: Pool; redis: Redis }, r
   } finally { await release(dependencies.redis, lockKey, token).catch(() => undefined); }
 }
 
-function storageKey(clientId: string, shipmentId: string, sha256: string): string { return `labels/${clientId}/${shipmentId}/${sha256}.pdf`; }
-
 export function createTygV11Integration(dependencies: { mysql: Pool; redis: Redis; storage: LabelStorage }) {
   return {
     async upsertAirShipment(request: { client: AuthenticatedClient; requestId: string; idempotencyKey: string | undefined; body: unknown }): Promise<TygV11Result> {
@@ -163,8 +165,9 @@ export function createTygV11Integration(dependencies: { mysql: Pool; redis: Redi
     async pushLabel(request: { client: AuthenticatedClient; requestId: string; idempotencyKey: string | undefined; body: unknown }): Promise<TygV11Result> {
       const input = parseTygLabelPush(request.body);
       return withIdempotency(dependencies, request, LABEL_OPERATION, async (key, hash) => {
+        // Replays above do not upload; every new request stages an immutable generation.
+        const [label] = await stageInlineLabels(request.client.id, [{ labelPdf: input.pdf }], dependencies.storage);
         const connection = await dependencies.mysql.getConnection();
-        let shipmentId = ''; let asset!: AssetRow; let needsWrite = false; let createdShipment = false; let resultData!: Record<string, unknown>;
         try {
           await connection.beginTransaction();
           const [profileRows] = await connection.execute<(RowDataPacket & { customer_profile_id: string })[]>(
@@ -178,14 +181,14 @@ export function createTygV11Integration(dependencies: { mysql: Pool; redis: Redi
           const originalIsBoundToAnotherAirShipment = Boolean(shipment?.air_pickup_order_id && shipment.air_pickup_order_id !== air.id);
           const [boundRows] = await connection.execute<ShipmentRow[]>('SELECT id, air_pickup_order_id, courier_tracking_no, current_label_asset_id, status FROM shipments WHERE client_id = ? AND courier_tracking_no = ? AND first_leg_tracking_no <> ? LIMIT 1 FOR UPDATE', [request.client.id, input.transferTrackingNo, input.originalTrackingNo]);
           const transferIsBoundToAnother = Boolean(boundRows[0]);
-          shipmentId = shipment?.id ?? randomUUID();
-          createdShipment = !shipment;
+          const shipmentId = shipment?.id ?? randomUUID();
           let currentHash: string | undefined;
           let currentAssetReady = false;
           if (shipment?.current_label_asset_id) {
-            const [currentAssets] = await connection.execute<AssetRow[]>('SELECT id, storage_key, asset_status, content_sha256 FROM label_assets WHERE id = ? LIMIT 1', [shipment.current_label_asset_id]);
+            const [currentAssets] = await connection.execute<AssetRow[]>('SELECT id, storage_key, asset_status, content_sha256, expires_at, bytes_deleted_at FROM label_assets WHERE id = ? LIMIT 1', [shipment.current_label_asset_id]);
             currentHash = currentAssets[0]?.content_sha256;
-            currentAssetReady = currentAssets[0]?.asset_status === 'READY';
+            currentAssetReady = currentAssets[0]?.asset_status === 'READY'
+              && currentAssets[0].expires_at.getTime() > Date.now() && !currentAssets[0].bytes_deleted_at;
           }
           const sameRelationAndHash = Boolean(shipment && shipment.courier_tracking_no === input.transferTrackingNo && currentHash === input.pdf.sha256);
           const same = sameRelationAndHash && currentAssetReady;
@@ -193,47 +196,21 @@ export function createTygV11Integration(dependencies: { mysql: Pool; redis: Redi
           const latePush = air.order_status !== 'RECORDED';
           const relationshipChanged = Boolean(shipment && shipment.courier_tracking_no !== input.transferTrackingNo);
           const decision = tygLabelDecision({ exists: Boolean(shipment), sameRelationAndPdf: same, relationshipChanged, transferIsBoundToAnother, originalIsBoundToAnotherAirShipment });
-          if (same) {
-            resultData = { airWaybillNo: input.bill.display, originalTrackingNo: input.originalTrackingNo, transferTrackingNo: input.transferTrackingNo, operation: 'DUPLICATE', labelVersion: await nextVersion(connection, shipmentId, false), duplicate: true, latePush, relationshipChanged: false, reprintRequired: false };
-            await completeMessage(connection, request, LABEL_OPERATION, key, hash, input.body, shipmentId, { code: 'SUCCESS', message: '接收成功', data: resultData, requestId: request.requestId });
-            await connection.commit();
-            return { status: 200, body: { code: 'SUCCESS', message: '接收成功', data: resultData, requestId: request.requestId } };
-          }
-          if (!shipment) await connection.execute(`INSERT INTO shipments (id, client_id, air_pickup_order_id, first_leg_tracking_no, courier_tracking_no, raw_data, status) VALUES (?, ?, ?, ?, ?, ?, 'RECEIVED')`, [shipmentId, request.client.id, air.id, input.originalTrackingNo, input.transferTrackingNo, JSON.stringify({ contract: 'TYG-v1.1' })]);
-          const [assets] = await connection.execute<AssetRow[]>('SELECT id, storage_key, asset_status, content_sha256 FROM label_assets WHERE shipment_id = ? AND content_sha256 = ? LIMIT 1 FOR UPDATE', [shipmentId, input.pdf.sha256]);
-          asset = assets[0] ?? { id: randomUUID(), storage_key: storageKey(request.client.id, shipmentId, input.pdf.sha256), asset_status: 'STORING', content_sha256: input.pdf.sha256 } as AssetRow;
-          if (!assets[0]) await connection.execute(`INSERT INTO label_assets (id, client_id, shipment_id, uploaded_by_api_key_id, source_type, storage_key, content_sha256, content_type, byte_size, asset_status) VALUES (?, ?, ?, ?, 'UPSTREAM_PUSH', ?, ?, 'application/pdf', ?, 'STORING')`, [asset.id, request.client.id, shipmentId, request.client.apiKeyId, asset.storage_key, input.pdf.sha256, input.pdf.byteSize]);
-          needsWrite = asset.asset_status !== 'READY';
-          const [printed] = shipment?.current_label_asset_id ? await connection.execute<RowDataPacket[]>('SELECT 1 AS printed FROM print_attempts WHERE shipment_id = ? AND label_asset_id = ? AND outcome = \'SUBMITTED\' LIMIT 1', [shipmentId, shipment.current_label_asset_id]) : [[]] as unknown as [RowDataPacket[]];
-          resultData = { airWaybillNo: input.bill.display, originalTrackingNo: input.originalTrackingNo, transferTrackingNo: input.transferTrackingNo, operation: fileRestore ? 'FILE_RESTORED' : decision, duplicate: false, latePush, relationshipChanged, reprintRequired: Boolean(printed[0]) };
-          await connection.commit();
-        } catch (error) { await connection.rollback().catch(() => undefined); throw error; } finally { connection.release(); }
-
-        try { if (needsWrite) await dependencies.storage.put(asset.storage_key, input.pdf.content); }
-        catch (error) {
-          const cleanup = await dependencies.mysql.getConnection();
-          try { await cleanup.beginTransaction(); await cleanup.execute('UPDATE label_assets SET asset_status = \'FAILED\', failure_code = \'STORAGE_WRITE_FAILED\' WHERE id = ?', [asset.id]); if (createdShipment) { await cleanup.execute('DELETE FROM label_assets WHERE id = ?', [asset.id]); await cleanup.execute('DELETE FROM shipments WHERE id = ?', [shipmentId]); } await cleanup.commit(); }
-          catch { await cleanup.rollback().catch(() => undefined); } finally { cleanup.release(); }
-          throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单存储暂时不可用，请使用原幂等键重试');
-        }
-
-        const finalize = await dependencies.mysql.getConnection();
-        try {
-          await finalize.beginTransaction();
-          const [shipmentRows] = await finalize.execute<ShipmentRow[]>('SELECT id, air_pickup_order_id, courier_tracking_no, current_label_asset_id, status FROM shipments WHERE id = ? LIMIT 1 FOR UPDATE', [shipmentId]);
-          if (!shipmentRows[0]) throw new ApiError(409, 'LABEL_SUPERSEDED', '面单更新被中断，请使用原幂等键重试');
-          await finalize.execute('UPDATE label_assets SET asset_status = \'READY\', failure_code = NULL, ready_at = CURRENT_TIMESTAMP(3), retention_expires_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL 7 DAY) WHERE id = ?', [asset.id]);
-          await finalize.execute(`UPDATE shipments SET courier_tracking_no = ?, current_label_asset_id = ?, label_sha256 = ?, status = CASE WHEN status = 'RECEIVED' THEN 'READY_TO_PRINT' ELSE status END, version = version + 1 WHERE id = ?`, [input.transferTrackingNo, asset.id, input.pdf.sha256, shipmentId]);
-          const labelVersion = await nextVersion(finalize, shipmentId, true);
-          await finalize.execute('INSERT INTO tyg_label_versions (id, shipment_id, label_asset_id, version_no, original_tracking_no, transfer_tracking_no, replacement_reason) VALUES (?, ?, ?, ?, ?, ?, ?)', [randomUUID(), shipmentId, asset.id, labelVersion, input.originalTrackingNo, input.transferTrackingNo, input.replacementReason]);
-          await finalize.execute(`INSERT INTO shipment_events (id, client_id, shipment_id, request_id, event_type, actor_type, actor_id, event_data) VALUES (?, ?, ?, ?, 'TYG_LABEL_PUSHED', 'UPSTREAM_API_KEY', ?, ?)`, [randomUUID(), request.client.id, shipmentId, request.requestId, request.client.apiKeyId, JSON.stringify({ ...resultData, labelVersion, sha256: input.pdf.sha256, byteSize: input.pdf.byteSize })]);
-          await finalize.execute(`INSERT INTO shipment_delivery_changes (client_id, shipment_id, change_type) VALUES (?, ?, 'LABEL_READY')`, [request.client.id, shipmentId]);
-          resultData.labelVersion = labelVersion;
+          if (!shipment) await connection.execute(`INSERT INTO shipments (id, client_id, air_pickup_order_id, first_leg_tracking_no, courier_tracking_no, raw_data, status) VALUES (?, ?, ?, ?, ?, ?, 'RECEIVED')`, [shipmentId, request.client.id, air.id, input.originalTrackingNo, input.transferTrackingNo, JSON.stringify(input.body)]);
+          const [printed] = !same && shipment?.current_label_asset_id ? await connection.execute<RowDataPacket[]>("SELECT 1 AS printed FROM print_attempts WHERE shipment_id = ? AND label_asset_id = ? AND outcome = 'SUBMITTED' LIMIT 1", [shipmentId, shipment.current_label_asset_id]) : [[]] as unknown as [RowDataPacket[]];
+          await connection.execute('UPDATE shipments SET courier_tracking_no = ?, raw_data = ? WHERE id = ? AND client_id = ?', [input.transferTrackingNo, JSON.stringify(input.body), shipmentId, request.client.id]);
+          const asset = await publishInlineLabel(connection, { client: request.client, shipmentId, requestId: request.requestId, label: label! });
+          // Legacy retention column follows the common seven-day expiry.
+          await connection.execute('UPDATE label_assets SET retention_expires_at = expires_at WHERE id = ?', [asset.assetId]);
+          const labelVersion = await nextVersion(connection, shipmentId, !same);
+          if (!same) await connection.execute('INSERT INTO tyg_label_versions (id, shipment_id, label_asset_id, version_no, original_tracking_no, transfer_tracking_no, replacement_reason) VALUES (?, ?, ?, ?, ?, ?, ?)', [randomUUID(), shipmentId, asset.assetId, labelVersion, input.originalTrackingNo, input.transferTrackingNo, input.replacementReason]);
+          const resultData = { airWaybillNo: input.bill.display, originalTrackingNo: input.originalTrackingNo, transferTrackingNo: input.transferTrackingNo, operation: fileRestore ? 'FILE_RESTORED' : decision, labelVersion, duplicate: same, latePush, relationshipChanged, reprintRequired: !same && Boolean(printed[0]) };
+          await connection.execute(`INSERT INTO shipment_events (id, client_id, shipment_id, request_id, event_type, actor_type, actor_id, event_data) VALUES (?, ?, ?, ?, 'TYG_LABEL_PUSHED', 'UPSTREAM_API_KEY', ?, ?)`, [randomUUID(), request.client.id, shipmentId, request.requestId, request.client.apiKeyId, JSON.stringify({ ...resultData, sha256: input.pdf.sha256, byteSize: input.pdf.byteSize })]);
           const body = { code: 'SUCCESS', message: '接收成功', data: resultData, requestId: request.requestId };
-          await completeMessage(finalize, request, LABEL_OPERATION, key, hash, input.body, shipmentId, body);
-          await finalize.commit();
+          await completeMessage(connection, request, LABEL_OPERATION, key, hash, input.body, shipmentId, body);
+          await connection.commit();
           return { status: 200, body };
-        } catch (error) { await finalize.rollback().catch(() => undefined); throw error; } finally { finalize.release(); }
+        } catch (error) { await connection.rollback().catch(() => undefined); throw error; } finally { connection.release(); }
       });
     },
   };

@@ -11,6 +11,9 @@ export type ShipmentRow = RowDataPacket & {
   label_url: string | null;
   label_sha256: string | null;
   current_label_asset_id: string | null;
+  label_expires_at?: Date | null;
+  label_asset_status?: string | null;
+  label_bytes_deleted_at?: Date | null;
   recipient_name: string | null;
   recipient_phone: string | null;
   recipient_address: string | Record<string, unknown> | null;
@@ -41,7 +44,10 @@ export function toShipment(row: ShipmentRow) {
     carrier: row.carrier,
     labelUrl: row.label_url,
     labelSha256: row.label_sha256,
-    labelAssetReady: Boolean(row.current_label_asset_id),
+    labelAssetReady: Boolean(row.current_label_asset_id) && row.label_asset_status === 'READY'
+      && row.label_expires_at instanceof Date && row.label_expires_at.getTime() > Date.now()
+      && !row.label_bytes_deleted_at,
+    labelExpiresAt: row.label_expires_at?.toISOString() ?? null,
     recipientName: row.recipient_name,
     phone: row.recipient_phone,
     address: parseJson(row.recipient_address),
@@ -56,3 +62,7 @@ export function toShipment(row: ShipmentRow) {
 }
 
 export type ShipmentView = ReturnType<typeof toShipment>;
+
+export const shipmentWithLabelSelect = `SELECT s.*, la.expires_at AS label_expires_at,
+  la.asset_status AS label_asset_status, la.bytes_deleted_at AS label_bytes_deleted_at
+  FROM shipments s LEFT JOIN label_assets la ON la.id = s.current_label_asset_id`;

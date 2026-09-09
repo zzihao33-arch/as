@@ -67,6 +67,23 @@ describe('global warehouse visibility', () => {
   });
 });
 
+describe('PDF availability', () => {
+  it('rejects an expired PDF before opening storage even when its pointer is still current', async () => {
+    let opened = false;
+    const mysql = {
+      execute: async () => [[{
+        id: 'old-label', content_sha256: 'a'.repeat(64), content_type: 'application/pdf',
+        byte_size: 20, storage_key: 'labels/old.pdf', expires_at: new Date('2020-01-01'), bytes_deleted_at: null,
+      }]],
+    } as unknown as Pool;
+    const labelStorage = { open: async () => { opened = true; throw new Error('should not open'); } } as unknown as LabelStorage;
+    const operations = createWarehouseOperations({ mysql, storage: labelStorage, outboundWebhooks: { enqueuePrintAttempt: async () => 'unused' } });
+    await assert.rejects(operations.openLabel(session, 'old-label'),
+      (error: unknown) => error instanceof ApiError && error.code === 'LABEL_EXPIRED' && error.status === 410);
+    assert.equal(opened, false);
+  });
+});
+
 describe('warehouse print attempts', () => {
   it('records QZ acceptance without promoting the shipment to physically printed', async () => {
     const statements: string[] = [];

@@ -26,6 +26,8 @@ type LabelDownloadRow = RowDataPacket & {
   content_type: string;
   byte_size: number;
   storage_key: string;
+  expires_at: Date | null;
+  bytes_deleted_at: Date | null;
 };
 type WorkstationAccessRow = RowDataPacket & { id: string };
 type PrintTargetRow = RowDataPacket & {
@@ -109,6 +111,7 @@ export function createWarehouseOperations(dependencies: {
          FROM shipment_delivery_changes d
          INNER JOIN shipments s ON s.id = d.shipment_id
          LEFT JOIN label_assets la ON la.id = s.current_label_asset_id
+           AND la.expires_at > CURRENT_TIMESTAMP(3) AND la.bytes_deleted_at IS NULL
          WHERE 1 = 1 ${cursorClause}
          ORDER BY d.revision ASC
          LIMIT ?`,
@@ -142,14 +145,17 @@ export function createWarehouseOperations(dependencies: {
     async openLabel(_session: WarehouseSession, assetIdValue: unknown): Promise<{ metadata: LabelDownloadRow; object: LabelStorageObject }> {
       const assetId = text(assetIdValue, 'assetId', 36)!;
       const [rows] = await mysql.execute<LabelDownloadRow[]>(
-        `SELECT la.id, la.content_sha256, la.content_type, la.byte_size, la.storage_key
+        `SELECT la.id, la.content_sha256, la.content_type, la.byte_size, la.storage_key, la.expires_at, la.bytes_deleted_at
          FROM label_assets la
          INNER JOIN shipments s ON s.id = la.shipment_id AND s.current_label_asset_id = la.id
          WHERE la.id = ? AND la.asset_status = 'READY'
          LIMIT 1`,
         [assetId],
       );
-      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在、尚未就绪或已失效');
+      if (!rows[0]) throw new ApiError(404, 'LABEL_NOT_FOUND', '面单不存在、尚未就绪或已失效。');
+      if (!rows[0].expires_at || rows[0].expires_at.getTime() <= Date.now() || rows[0].bytes_deleted_at) {
+        throw new ApiError(410, 'LABEL_EXPIRED', '面单已超过七天保留期，请上游重新推送。');
+      }
       const object = await storage.open(rows[0].storage_key).catch(() => {
         throw new ApiError(503, 'LABEL_STORAGE_UNAVAILABLE', '面单文件暂时不可用');
       });
@@ -203,6 +209,7 @@ export function createWarehouseOperations(dependencies: {
                   s.first_leg_tracking_no, s.courier_tracking_no, s.carrier, s.status, s.version
            FROM shipments s
            INNER JOIN label_assets la ON la.id = s.current_label_asset_id AND la.asset_status = 'READY'
+             AND la.expires_at > CURRENT_TIMESTAMP(3) AND la.bytes_deleted_at IS NULL
            WHERE s.id = ? AND la.id = ? LIMIT 1`,
           [shipmentId, labelAssetId],
         );

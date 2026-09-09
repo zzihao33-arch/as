@@ -5,7 +5,9 @@ import type { Redis } from 'ioredis';
 import type { AuthenticatedClient } from './auth.js';
 import { ApiError } from './errors.js';
 import { parseShipmentUpsert } from './shipmentInput.js';
-import { toShipment, type ShipmentRow } from './shipmentRecord.js';
+import { shipmentWithLabelSelect, toShipment, type ShipmentRow } from './shipmentRecord.js';
+import type { LabelStorage } from './labelStorage.js';
+import { publishInlineLabel, requireInlineLabelScope, stageInlineLabels } from './inlineLabels.js';
 
 const operation = 'shipments.upsert';
 const lockSeconds = 120;
@@ -122,12 +124,14 @@ async function releaseLock(redis: Redis, key: string, token: string): Promise<vo
   );
 }
 
-export function createShipmentIngestor(dependencies: { mysql: Pool; redis: Redis }) {
+export function createShipmentIngestor(dependencies: { mysql: Pool; redis: Redis; storage?: LabelStorage }) {
   return {
     async ingest(request: ShipmentIngestRequest): Promise<ShipmentIngestResult> {
       const idempotencyKey = validateIdempotencyKey(request.idempotencyKey);
       const input = parseShipmentUpsert(request.body);
-      const payloadHash = hashInboundPayload(input.rawData);
+      requireInlineLabelScope(request.client, [input]);
+      const payloadHash = hashInboundPayload(input.labelPdf
+        ? { kind: 'inline-label', payload: input.rawData } : input.rawData);
 
       const existing = replayFrom(
         await findInboundMessage(dependencies.mysql, request.client.id, idempotencyKey),
@@ -151,6 +155,8 @@ export function createShipmentIngestor(dependencies: { mysql: Pool; redis: Redis
           payloadHash,
         );
         if (replayAfterLock) return replayAfterLock;
+
+        const [stagedLabel] = await stageInlineLabels(request.client.id, [input], dependencies.storage);
 
         const inboundMessageId = randomUUID();
         const proposedShipmentId = randomUUID();
@@ -220,10 +226,18 @@ export function createShipmentIngestor(dependencies: { mysql: Pool; redis: Redis
           );
 
           const [rows] = await connection.execute<ShipmentRow[]>(
-            `SELECT * FROM shipments WHERE client_id = ? AND first_leg_tracking_no = ? LIMIT 1`,
+            `${shipmentWithLabelSelect} WHERE s.client_id = ? AND s.first_leg_tracking_no = ? LIMIT 1`,
             [request.client.id, input.firstLegTrackingNo],
           );
           if (!rows[0]) throw new Error('Shipment was not found after upsert.');
+          if (stagedLabel) {
+            await publishInlineLabel(connection, { client: request.client, shipmentId: rows[0].id, requestId: request.requestId, label: stagedLabel });
+            const [updatedRows] = await connection.execute<ShipmentRow[]>(
+              `${shipmentWithLabelSelect} WHERE s.client_id = ? AND s.first_leg_tracking_no = ? LIMIT 1`,
+              [request.client.id, input.firstLegTrackingNo],
+            );
+            rows[0] = updatedRows[0];
+          }
           const shipment = toShipment(rows[0]);
           const responseBody = { data: shipment, requestId: request.requestId };
 

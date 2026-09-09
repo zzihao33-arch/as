@@ -7,6 +7,8 @@ import { ApiError } from './errors.js';
 import { normalizeAirBillNo } from './airPickupOperations.js';
 import { hashInboundPayload } from './shipmentIngest.js';
 import { parseShipmentUpsert, type ShipmentUpsertInput } from './shipmentInput.js';
+import type { LabelStorage } from './labelStorage.js';
+import { publishInlineLabel, requireInlineLabelScope, stageInlineLabels } from './inlineLabels.js';
 
 const OPERATION = 'inbound-batches.upsert';
 const MAX_SHIPMENTS = 5_000;
@@ -109,8 +111,8 @@ export function parseInboundBatchInput(bodyValue: unknown) {
   const air = requiredObject(body.airPickup, 'airPickup');
   const bill = normalizeAirBillNo(air.billNo);
   const shipmentsValue = body.shipments;
-  if (!Array.isArray(shipmentsValue) || shipmentsValue.length < 1 || shipmentsValue.length > MAX_SHIPMENTS) {
-    throw new ApiError(400, 'VALIDATION_ERROR', `shipments 每批需包含 1 到 ${MAX_SHIPMENTS} 条`);
+  if (!Array.isArray(shipmentsValue) || shipmentsValue.length > MAX_SHIPMENTS) {
+    throw new ApiError(400, 'VALIDATION_ERROR', `shipments 每批最多 ${MAX_SHIPMENTS} 条；仅预报时传空数组。`);
   }
   const shipments = shipmentsValue.map((value, index) => {
     try { return parseShipmentUpsert(value); }
@@ -124,7 +126,7 @@ export function parseInboundBatchInput(bodyValue: unknown) {
     throw new ApiError(400, 'DUPLICATE_SHIPMENT', '同一批次不能包含重复的头程单号');
   }
   return {
-    body,
+    body: shipments.some(item => item.labelPdf) ? { ...body, shipments: shipments.map(item => item.rawData) } : body,
     externalBatchId,
     bill,
     cargoName: text(air.cargoName, 'airPickup.cargoName', 100, false),
@@ -231,12 +233,15 @@ async function upsertShipment(connection: PoolConnection, input: {
   return shipmentId;
 }
 
-export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: Redis }) {
+export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: Redis; storage?: LabelStorage }) {
   return {
     async ingest(request: InboundBatchRequest) {
       const key = idempotencyKey(request.idempotencyKey);
       const input = parseInboundBatchInput(request.body);
-      const payloadHash = hashInboundPayload(input.body);
+      requireInlineLabelScope(request.client, input.shipments);
+      const inlineLabels = input.shipments.map(shipment => Boolean(shipment.labelPdf));
+      const payloadHash = hashInboundPayload(inlineLabels.some(Boolean)
+        ? { kind: 'inline-label-batch', inlineLabels, payload: input.body } : input.body);
       const existing = replay(await findMessage(dependencies.mysql, request.client.id, key), payloadHash);
       if (existing) return existing;
 
@@ -250,6 +255,7 @@ export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: R
       try {
         const replayAfterLock = replay(await findMessage(dependencies.mysql, request.client.id, key), payloadHash);
         if (replayAfterLock) return replayAfterLock;
+        const stagedLabels = await stageInlineLabels(request.client.id, input.shipments, dependencies.storage);
         const connection = await dependencies.mysql.getConnection();
         const messageId = randomUUID();
         try {
@@ -328,8 +334,13 @@ export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: R
               JSON.stringify({ source: 'UPSTREAM', externalBatchId: input.externalBatchId, shipmentCount: input.shipments.length })],
           );
 
-          for (const shipment of input.shipments) {
-            await upsertShipment(connection, { client: request.client, airPickupOrderId, shipment, requestId: request.requestId });
+          // Stable ordering avoids reversed batches acquiring shipment locks in
+          // opposite order. Labels remain paired with their original indices.
+          const ordered = input.shipments.map((shipment, index) => ({ shipment, label: stagedLabels[index] }))
+            .sort((a, b) => a.shipment.firstLegTrackingNo.toUpperCase().localeCompare(b.shipment.firstLegTrackingNo.toUpperCase()));
+          for (const { shipment, label } of ordered) {
+            const shipmentId = await upsertShipment(connection, { client: request.client, airPickupOrderId, shipment, requestId: request.requestId });
+            if (label) await publishInlineLabel(connection, { client: request.client, shipmentId, requestId: request.requestId, label });
           }
 
           const responseBody = {
@@ -339,6 +350,7 @@ export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: R
               billNo: input.bill.display,
               clientName: clients[0].display_name,
               shipmentCount: input.shipments.length,
+              labelCount: stagedLabels.filter(Boolean).length,
             },
             requestId: request.requestId,
           };

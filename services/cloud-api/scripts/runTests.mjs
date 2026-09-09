@@ -33,6 +33,11 @@ try {
       join(outputDirectory, 'test', 'labelStorage.test.js'),
       join(outputDirectory, 'test', 'shipmentInput.test.js'),
       join(outputDirectory, 'test', 'shipmentIngest.test.js'),
+      join(outputDirectory, 'test', 'unifiedIngest.test.js'),
+      join(outputDirectory, 'test', 'shipmentRecord.test.js'),
+      join(outputDirectory, 'test', 'labelRetention.test.js'),
+      join(outputDirectory, 'test', 'inlineLabels.test.js'),
+      join(outputDirectory, 'test', 'metadataRetention.test.js'),
       join(outputDirectory, 'test', 'errors.test.js'),
       join(outputDirectory, 'test', 'warehouseSecurity.test.js'),
       join(outputDirectory, 'test', 'warehouseOperations.test.js'),
@@ -43,6 +48,7 @@ try {
       join(outputDirectory, 'test', 'inboundBatchIngest.test.js'),
       join(outputDirectory, 'test', 'tygV11.test.js'),
       join(outputDirectory, 'test', 'attendanceCalculations.test.js'),
+      join(packageDirectory, 'scripts', 'loadTygApi.test.mjs'),
     ], { cwd: packageDirectory, stdio: 'inherit' });
     process.exitCode = tests.status ?? 1;
   }
