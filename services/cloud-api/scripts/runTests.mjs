@@ -28,6 +28,7 @@ try {
     const tests = spawnSync(process.execPath, [
       '--test',
       join(outputDirectory, 'test', 'apiKeys.test.js'),
+      join(outputDirectory, 'test', 'authEnvironment.test.js'),
       join(outputDirectory, 'test', 'labelAssets.test.js'),
       join(outputDirectory, 'test', 'labelPdf.test.js'),
       join(outputDirectory, 'test', 'labelStorage.test.js'),

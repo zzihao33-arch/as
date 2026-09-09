@@ -135,6 +135,7 @@ if (outboundWebhookLeaseSeconds * 1000 < outboundWebhookTimeoutMs + 10_000) {
 
 export const config = {
   environment,
+  apiKeyEnvironment: asChoice('API_KEY_ENVIRONMENT', ['live', 'test'] as const, environment === 'production' ? 'live' : 'test'),
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: asPort('PORT', 8080),
   jsonLimit: process.env.JSON_BODY_LIMIT ?? '256kb',

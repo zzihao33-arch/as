@@ -105,6 +105,7 @@ jobs:
             {
               printf '%s\n' \
                 'NODE_ENV=production' \
+                'API_KEY_ENVIRONMENT=test' \
                 'HOST=127.0.0.1' \
                 'PORT=8080' \
                 'MYSQL_HOST=10.200.0.10' \

@@ -11,7 +11,8 @@ module.exports = {
       exp_backoff_restart_delay: 100,
       time: true,
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        API_KEY_ENVIRONMENT: 'test'
       }
     }
   ]

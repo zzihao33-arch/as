@@ -52,8 +52,8 @@ export async function requireApiKey(req: Request, _res: Response, next: NextFunc
     if (!apiKey || !parsed) {
       throw new ApiError(401, 'INVALID_API_KEY', '缺少或无效的 X-API-Key');
     }
-    if (config.environment === 'production' && parsed.environment !== 'live') {
-      throw new ApiError(401, 'INVALID_API_KEY', '测试环境 API Key 不能用于生产服务');
+    if (parsed.environment !== config.apiKeyEnvironment) {
+      throw new ApiError(401, 'INVALID_API_KEY', 'API Key 与当前服务环境不匹配');
     }
 
     const [rows] = await mysql.execute<ClientRow[]>(
@@ -61,12 +61,13 @@ export async function requireApiKey(req: Request, _res: Response, next: NextFunc
        FROM integration_api_keys k
        INNER JOIN clients c ON c.id = k.client_id
        WHERE k.key_id = ?
+         AND k.environment = ?
          AND k.key_status = 'ACTIVE'
          AND k.revoked_at IS NULL
          AND (k.expires_at IS NULL OR k.expires_at > CURRENT_TIMESTAMP(3))
          AND c.client_status = 'ACTIVE'
        LIMIT 1`,
-      [parsed.keyId],
+      [parsed.keyId, config.apiKeyEnvironment.toUpperCase()],
     );
     const row = rows[0];
     const suppliedHash = hashApiKey(apiKey);
