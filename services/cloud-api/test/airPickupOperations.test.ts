@@ -78,7 +78,7 @@ function pickupContractDatabase() {
   };
   const connection = { execute, beginTransaction: async () => { db.exec('BEGIN'); },
     commit: async () => { db.exec('COMMIT'); }, rollback: async () => { if (db.isTransaction) db.exec('ROLLBACK'); }, release() {} };
-  const mysql = { execute, getConnection: async () => connection } as unknown as Pool;
+  const mysql = { execute, query: execute, getConnection: async () => connection } as unknown as Pool;
   const operations = createAirPickupOperations({ mysql, storage: {} as LabelStorage });
   return { db, operations };
 }
@@ -112,6 +112,34 @@ test('both identifiers are accepted only when they reference the same upstream c
     ...pickupInput, clientId: legacyClientId, customerId: upstreamCustomerId,
   });
   assert.equal(order.customerId, upstreamCustomerId);
+});
+
+test('listOrders handles an empty list, paginates total rows, and normalizes matching search', async t => {
+  const { db, operations } = pickupContractDatabase();
+  t.after(() => db.close());
+
+  const empty = await operations.listOrders({ search: '', page: 1, pageSize: 20 });
+  assert.deepEqual(empty.orders, []);
+  assert.equal(empty.total, 0);
+  assert.deepEqual(empty.summary, { recorded: 0, received: 0, handedOver: 0, voided: 0, evidencePending: 0 });
+
+  await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, clientId: legacyClientId });
+  await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, billNo: 'BIZ-456', customerId: businessCustomerId });
+  await operations.createOrder(pickupSession, pickupAudit, {
+    ...pickupInput, billNo: 'OTHER-789', clientId: '00000000-0000-4000-8000-000000000202',
+  });
+
+  const secondPage = await operations.listOrders({ page: 2, pageSize: 2 });
+  assert.equal(secondPage.orders.length, 1);
+  assert.equal(secondPage.total, 3);
+  assert.equal(secondPage.page, 2);
+  assert.equal(secondPage.pageSize, 2);
+  assert.equal(secondPage.summary.recorded, 3);
+
+  const matching = await operations.listOrders({ search: 'legacy - 123', page: 1, pageSize: 20 });
+  assert.equal(matching.orders.length, 1);
+  assert.equal(matching.orders[0].billNo, 'LEGACY-123');
+  assert.equal(matching.total, 1);
 });
 
 for (const scenario of [

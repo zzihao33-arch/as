@@ -361,12 +361,12 @@ function toOrder(row: OrderRow) {
   };
 }
 
-const ORDER_SELECT = `SELECT o.*, rb.batch_no AS receipt_batch_no, hb.batch_no AS handover_batch_no,
+const ORDER_SELECT_COLUMNS = `o.*, rb.batch_no AS receipt_batch_no, hb.batch_no AS handover_batch_no,
     COALESCE(progress.total_count, 0) AS total_shipment_count,
     COALESCE(progress.changed_count, 0) AS changed_shipment_count,
     COALESCE(progress.intercepted_count, 0) AS intercepted_shipment_count,
-    COALESCE(progress.exception_count, 0) AS exception_shipment_count
-  FROM air_pickup_orders o
+    COALESCE(progress.exception_count, 0) AS exception_shipment_count`;
+const ORDER_FROM = `FROM air_pickup_orders o
   LEFT JOIN air_receipt_batches rb ON rb.id = o.receipt_batch_id
   LEFT JOIN air_handover_batches hb ON hb.id = o.handover_batch_id
   LEFT JOIN (
@@ -385,6 +385,7 @@ const ORDER_SELECT = `SELECT o.*, rb.batch_no AS receipt_batch_no, hb.batch_no A
     WHERE s.air_pickup_order_id IS NOT NULL
     GROUP BY s.air_pickup_order_id
   ) progress ON progress.air_pickup_order_id = o.id`;
+const ORDER_SELECT = `SELECT ${ORDER_SELECT_COLUMNS} ${ORDER_FROM}`;
 
 function parseJson(value: unknown): unknown {
   if (typeof value !== 'string') return value;
@@ -461,7 +462,8 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const offset = (page - 1) * pageSize;
       const normalizedSearch = search ? `%${search.replace(/[\s\u3000\-－—–]+/g, '').toUpperCase()}%` : null;
       const [rows] = await mysql.query<OrderRow[]>(
-        `${ORDER_SELECT}, COUNT(*) OVER () AS total_count
+        `SELECT ${ORDER_SELECT_COLUMNS}, COUNT(*) OVER () AS total_count
+         ${ORDER_FROM}
          WHERE (? IS NULL OR o.bill_no_normalized LIKE ? OR o.cargo_name LIKE ? OR COALESCE(o.customer_name_snapshot, o.client_name_snapshot) LIKE ?)
            AND (? IS NULL OR o.customer_profile_id = ?)
            AND (? IS NULL OR o.order_status = ?)
