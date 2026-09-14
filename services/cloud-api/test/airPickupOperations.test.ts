@@ -30,7 +30,7 @@ const pickupAudit = { requestId: 'legacy-contract-test', ip: '127.0.0.1' };
 // Exercise the service's actual SQL and persisted result against a small relational
 // database. Only MySQL connection plumbing and its Date conversion are adapted;
 // customer lookup/filtering, inserts, transactions, and detail reads run as SQL.
-function pickupContractDatabase() {
+function pickupContractDatabase(databaseTimeOffsetMinutes = 0) {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE clients (id TEXT PRIMARY KEY, display_name TEXT, client_status TEXT);
@@ -51,10 +51,20 @@ function pickupContractDatabase() {
       handover_batch_id TEXT, event_type TEXT, actor_user_id TEXT, actor_reference TEXT, request_id TEXT,
       ip_address TEXT, reason TEXT, event_data TEXT, occurred_at TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE air_receipt_batches (id TEXT, batch_no TEXT);
-    CREATE TABLE air_handover_batches (id TEXT, batch_no TEXT);
+    CREATE TABLE air_handover_batches (id TEXT, batch_no TEXT, batch_status TEXT, vehicle_no TEXT,
+      driver_name TEXT, driver_phone TEXT, handed_over_at TEXT, created_by_user_id TEXT,
+      created_by_reference TEXT, confirmed_by_reference TEXT, version INTEGER, confirmed_at TEXT,
+      created_at TEXT, updated_at TEXT);
     CREATE TABLE shipments (id TEXT, air_pickup_order_id TEXT);
     CREATE TABLE print_attempts (id TEXT, shipment_id TEXT, outcome TEXT, occurred_at TEXT, created_at TEXT);
-    CREATE TABLE air_pickup_document_assets (order_id TEXT, asset_status TEXT, created_at TEXT);
+    CREATE TABLE air_pickup_document_assets (id TEXT, order_id TEXT, original_filename TEXT, storage_key TEXT,
+      content_sha256 TEXT, content_type TEXT, byte_size INTEGER, asset_status TEXT, uploaded_by_reference TEXT, created_at TEXT);
+    CREATE TABLE air_receipt_evidence_assets (id TEXT, receipt_batch_id TEXT, original_filename TEXT, storage_key TEXT,
+      content_sha256 TEXT, content_type TEXT, byte_size INTEGER, pixel_width INTEGER, pixel_height INTEGER,
+      quality_warnings TEXT, quality_override INTEGER, asset_status TEXT, uploaded_by_reference TEXT, created_at TEXT);
+    CREATE TABLE air_handover_evidence_assets (id TEXT, handover_batch_id TEXT, evidence_type TEXT, original_filename TEXT, storage_key TEXT,
+      content_sha256 TEXT, content_type TEXT, byte_size INTEGER, pixel_width INTEGER, pixel_height INTEGER,
+      quality_warnings TEXT, quality_override INTEGER, asset_status TEXT, uploaded_by_reference TEXT, created_at TEXT);
   `);
   db.prepare('INSERT INTO clients VALUES (?, ?, ?)').run(legacyClientId, 'Legacy integration', 'ACTIVE');
   db.prepare('INSERT INTO clients VALUES (?, ?, ?)').run('00000000-0000-4000-8000-000000000202', 'Other integration', 'ACTIVE');
@@ -67,7 +77,7 @@ function pickupContractDatabase() {
     const parameters = values.map(value => typeof value === 'boolean' ? Number(value) : value);
     if (/^\s*SELECT\b/i.test(sql)) {
       const rows = statement.all(...parameters).map(row => {
-        for (const name of ['created_at', 'updated_at', 'occurred_at']) {
+        for (const name of ['created_at', 'updated_at', 'occurred_at', 'received_at', 'handed_over_at', 'confirmed_at']) {
           if (typeof row[name] === 'string') (row as Record<string, unknown>)[name] = new Date(`${row[name]}Z`);
         }
         return row;
@@ -79,8 +89,80 @@ function pickupContractDatabase() {
   const connection = { execute, beginTransaction: async () => { db.exec('BEGIN'); },
     commit: async () => { db.exec('COMMIT'); }, rollback: async () => { if (db.isTransaction) db.exec('ROLLBACK'); }, release() {} };
   const mysql = { execute, query: execute, getConnection: async () => connection } as unknown as Pool;
-  const operations = createAirPickupOperations({ mysql, storage: {} as LabelStorage });
+  const timeOptions = { databaseTimeOffsetMinutes };
+  const operations = createAirPickupOperations({ mysql, storage: {} as LabelStorage, ...timeOptions });
   return { db, operations };
+}
+
+test('handover, receipt evidence and pickup documents decode generated dates but preserve the supplied handover instant', async t => {
+  const { db, operations } = pickupContractDatabase(480);
+  t.after(() => db.close());
+  const order = await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, clientId: legacyClientId });
+  const batch = '00000000-0000-4000-8000-000000000501';
+  const receipt = '00000000-0000-4000-8000-000000000502';
+  const wallTime = '2026-09-14 23:27:16.534';
+  const expected = '2026-09-14T15:27:16.534Z';
+  db.prepare('INSERT INTO air_receipt_batches VALUES (?, ?)').run(receipt, 'RECEIPT-TIME-TEST');
+  db.prepare('INSERT INTO air_handover_batches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(batch, 'HANDOVER-TIME-TEST', 'DRAFT', null, null, null, '2026-09-14 15:40:00.000',
+      pickupSession.userId, 'test', null, 1, null, wallTime, wallTime);
+  db.prepare('UPDATE air_pickup_orders SET receipt_batch_id = ?, handover_batch_id = ?, created_at = ?, updated_at = ? WHERE id = ?')
+    .run(receipt, batch, wallTime, wallTime, order.id);
+  db.prepare('INSERT INTO air_pickup_document_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('document', order.id, 'test.pdf', 'synthetic/document', '0'.repeat(64), 'application/pdf', 123, 'READY', 'test', wallTime);
+  db.prepare('INSERT INTO air_receipt_evidence_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('receipt-image', receipt, 'test.png', 'synthetic/receipt', '0'.repeat(64), 'image/png', 123, 800, 600, null, 0, 'READY', 'test', wallTime);
+  db.prepare('INSERT INTO air_handover_evidence_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('handover-image', batch, 'POD', 'test.png', 'synthetic/handover', '0'.repeat(64), 'image/png', 123, 800, 600, null, 0, 'READY', 'test', wallTime);
+  const detail = await operations.getOrder(order.id);
+  assert.equal(detail.receiptEvidence[0].createdAt, expected);
+  assert.equal(detail.handoverEvidence[0].createdAt, expected);
+  assert.equal(detail.pickupDocuments[0].createdAt, expected);
+  const draft = await operations.getHandoverBatch(batch);
+  assert.equal(draft.confirmedAt, null);
+  db.prepare('UPDATE air_handover_batches SET confirmed_at = ?, batch_status = ? WHERE id = ?').run(wallTime, 'CONFIRMED', batch);
+  const confirmed = await operations.getHandoverBatch(batch);
+  assert.equal(confirmed.confirmedAt, expected);
+  assert.equal(confirmed.createdAt, expected);
+  assert.equal(confirmed.updatedAt, expected);
+  assert.equal(confirmed.orders[0].updatedAt, expected);
+  assert.equal(confirmed.evidence[0].createdAt, expected);
+  assert.equal(confirmed.handedOverAt, '2026-09-14T15:40:00.000Z');
+});
+
+test('air pickup service rejects invalid injected database offsets before using the database', () => {
+  for (const databaseTimeOffsetMinutes of [NaN, Infinity, 841, -841, 1.5]) {
+    assert.throws(() => createAirPickupOperations({ mysql: {} as Pool, storage: {} as LabelStorage, databaseTimeOffsetMinutes }),
+      /Invalid air-pickup database time offset/);
+  }
+});
+
+for (const fixture of [
+  { offset: 480, stored: '2026-09-14 23:27:16.534', expected: '2026-09-14T15:27:16.534Z', nyHour: '11' },
+  { offset: 480, stored: '2026-01-15 00:15:00.125', expected: '2026-01-14T16:15:00.125Z', nyHour: '11' },
+  { offset: 0, stored: '2026-09-14 15:27:16.534', expected: '2026-09-14T15:27:16.534Z', nyHour: '11' },
+  { offset: -300, stored: '2026-09-14 10:27:16.534', expected: '2026-09-14T15:27:16.534Z', nyHour: '11' },
+]) {
+  test(`order list and detail decode database-generated time at offset ${fixture.offset}: ${fixture.stored}`, async t => {
+    const { db, operations } = pickupContractDatabase(fixture.offset);
+    t.after(() => db.close());
+    const order = await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, clientId: legacyClientId });
+    db.prepare('UPDATE air_pickup_orders SET created_at = ?, updated_at = ?, received_at = ?, handed_over_at = ? WHERE id = ?')
+      .run(fixture.stored, fixture.stored, '2026-09-14 15:30:00.000', '2026-09-14 15:40:00.000', order.id);
+    db.prepare('UPDATE air_pickup_events SET occurred_at = ?').run(fixture.stored);
+    const detail = await operations.getOrder(order.id);
+    const page = await operations.listOrders({ page: 1, pageSize: 20 });
+    for (const result of [detail, page.orders[0]]) {
+      assert.equal(result.createdAt, fixture.expected);
+      assert.equal(result.updatedAt, fixture.expected);
+      assert.equal(result.receivedAt, '2026-09-14T15:30:00.000Z');
+      assert.equal(result.handedOverAt, '2026-09-14T15:40:00.000Z');
+      assert.equal(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' })
+        .format(new Date(result.updatedAt)), fixture.nyHour);
+    }
+    assert.equal(detail.events[0].occurredAt, fixture.expected);
+    assert.equal(db.prepare('SELECT updated_at FROM air_pickup_orders WHERE id = ?').get(order.id)?.updated_at, fixture.stored);
+  });
 }
 
 test('legacy clientId creates a manual order belonging to the linked upstream profile, even when IDs differ', async t => {

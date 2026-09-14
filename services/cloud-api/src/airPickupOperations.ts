@@ -329,7 +329,11 @@ function canCorrect(session: WarehouseSession): boolean {
   return session.platformRole === 'SYSTEM_ADMIN' || session.permissions.includes('air_pickups.correct');
 }
 
-function toOrder(row: OrderRow) {
+// mysql2 parses DATETIME with timezone Z, while CURRENT_TIMESTAMP writes the
+// database session wall clock. Apply this only to audited DB-generated fields.
+type DatabaseTime = (value: Date) => string;
+
+function toOrder(row: OrderRow, databaseTime: DatabaseTime) {
   const total = Number(row.total_shipment_count ?? 0);
   const changed = Number(row.changed_shipment_count ?? 0);
   const intercepted = Number(row.intercepted_shipment_count ?? 0);
@@ -357,7 +361,7 @@ function toOrder(row: OrderRow) {
       processed: changed + intercepted,
       pending: Math.max(0, total - changed - intercepted),
     },
-    createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
+    createdAt: databaseTime(row.created_at), updatedAt: databaseTime(row.updated_at),
   };
 }
 
@@ -392,24 +396,24 @@ function parseJson(value: unknown): unknown {
   try { return JSON.parse(value); } catch { return null; }
 }
 
-function handoverEvidenceView(asset: EvidenceRow) {
+function handoverEvidenceView(asset: EvidenceRow, databaseTime: DatabaseTime) {
   return { id: asset.id, type: asset.evidence_type, filename: asset.original_filename,
     contentType: asset.content_type, byteSize: Number(asset.byte_size), width: asset.pixel_width, height: asset.pixel_height,
     qualityWarnings: asset.quality_warnings ? parseJson(asset.quality_warnings) : [], qualityOverride: Boolean(asset.quality_override),
-    downloadPath: `/warehouse/v1/air-evidence-assets/${asset.id}/content`, createdAt: asset.created_at.toISOString() };
+    downloadPath: `/warehouse/v1/air-evidence-assets/${asset.id}/content`, createdAt: databaseTime(asset.created_at) };
 }
 
-function receiptEvidenceView(asset: ReceiptEvidenceRow) {
+function receiptEvidenceView(asset: ReceiptEvidenceRow, databaseTime: DatabaseTime) {
   return { id: asset.id, type: 'RECEIPT' as const, filename: asset.original_filename,
     contentType: asset.content_type, byteSize: Number(asset.byte_size), width: asset.pixel_width, height: asset.pixel_height,
     qualityWarnings: asset.quality_warnings ? parseJson(asset.quality_warnings) : [], qualityOverride: Boolean(asset.quality_override),
-    downloadPath: `/warehouse/v1/air-receipt-evidence-assets/${asset.id}/content`, createdAt: asset.created_at.toISOString() };
+    downloadPath: `/warehouse/v1/air-receipt-evidence-assets/${asset.id}/content`, createdAt: databaseTime(asset.created_at) };
 }
 
-function pickupDocumentView(asset: PickupDocumentRow) {
+function pickupDocumentView(asset: PickupDocumentRow, databaseTime: DatabaseTime) {
   return { id: asset.id, filename: asset.original_filename, contentType: asset.content_type,
     byteSize: Number(asset.byte_size), downloadPath: `/warehouse/v1/air-pickup-documents/${asset.id}/content`,
-    createdAt: asset.created_at.toISOString() };
+    createdAt: databaseTime(asset.created_at) };
 }
 
 async function addEvent(connection: PoolConnection, session: WarehouseSession, audit: RequestAudit, input: {
@@ -439,8 +443,11 @@ async function recalculateEvidence(connection: PoolConnection, handoverBatchId: 
   return status;
 }
 
-export function createAirPickupOperations(dependencies: { mysql: Pool; storage: LabelStorage }) {
+export function createAirPickupOperations(dependencies: { mysql: Pool; storage: LabelStorage; databaseTimeOffsetMinutes?: number }) {
   const { mysql, storage } = dependencies;
+  const offset = dependencies.databaseTimeOffsetMinutes ?? 0;
+  if (!Number.isInteger(offset) || Math.abs(offset) > 840) throw new Error('Invalid air-pickup database time offset');
+  const databaseTime: DatabaseTime = value => new Date(value.getTime() - offset * 60_000).toISOString();
   return {
     async listClients() {
       const [rows] = await mysql.execute<(RowDataPacket & { id: string; client_code: string; display_name: string })[]>(
@@ -485,7 +492,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
          FROM air_pickup_orders`,
       );
       const summary = summaryRows[0];
-      return { orders: rows.map(toOrder), total: Number(rows[0]?.total_count ?? 0), page, pageSize,
+      return { orders: rows.map(row => toOrder(row, databaseTime)), total: Number(rows[0]?.total_count ?? 0), page, pageSize,
         summary: {
           recorded: Number(summary?.recorded_count ?? 0), received: Number(summary?.received_count ?? 0),
           handedOver: Number(summary?.handed_over_count ?? 0), voided: Number(summary?.voided_count ?? 0),
@@ -515,9 +522,9 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
         `SELECT * FROM air_pickup_document_assets WHERE order_id = ? AND asset_status = 'READY' ORDER BY created_at`,
         [orderId],
       );
-      const receiptEvidence = receiptAssets.map(receiptEvidenceView);
-      const handoverEvidence = handoverAssets.map(handoverEvidenceView);
-      return { ...toOrder(rows[0]), receiptEvidence, handoverEvidence, pickupDocuments: pickupDocuments.map(pickupDocumentView), events: events.map(event => {
+      const receiptEvidence = receiptAssets.map(asset => receiptEvidenceView(asset, databaseTime));
+      const handoverEvidence = handoverAssets.map(asset => handoverEvidenceView(asset, databaseTime));
+      return { ...toOrder(rows[0], databaseTime), receiptEvidence, handoverEvidence, pickupDocuments: pickupDocuments.map(asset => pickupDocumentView(asset, databaseTime)), events: events.map(event => {
         const data = parseJson(event.event_data);
         const eventEvidence = event.event_type === 'ORDER_RECEIVED'
           ? receiptEvidence
@@ -530,7 +537,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
                 : [];
         return {
         revision: Number(event.revision), type: event.event_type, actorReference: event.actor_reference,
-        reason: event.reason, data, evidence: eventEvidence, occurredAt: event.occurred_at.toISOString(),
+        reason: event.reason, data, evidence: eventEvidence, occurredAt: databaseTime(event.occurred_at),
       }; }) };
     },
 
@@ -862,9 +869,9 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const row = batches[0];
       return { id: row.id, batchNo: row.batch_no, status: row.batch_status, vehicleNo: row.vehicle_no,
         driverName: row.driver_name, driverPhone: row.driver_phone, handedOverAt: row.handed_over_at?.toISOString() ?? null,
-        createdByUserId: row.created_by_user_id, version: row.version, confirmedAt: row.confirmed_at?.toISOString() ?? null,
-        createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(), orders: orders.map(toOrder),
-        evidence: assets.map(handoverEvidenceView) };
+        createdByUserId: row.created_by_user_id, version: row.version, confirmedAt: row.confirmed_at ? databaseTime(row.confirmed_at) : null,
+        createdAt: databaseTime(row.created_at), updatedAt: databaseTime(row.updated_at), orders: orders.map(order => toOrder(order, databaseTime)),
+        evidence: assets.map(asset => handoverEvidenceView(asset, databaseTime)) };
     },
 
     async updateHandoverBatch(session: WarehouseSession, audit: RequestAudit, batchIdValue: unknown, input: Record<string, unknown>) {

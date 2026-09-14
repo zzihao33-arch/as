@@ -48,3 +48,24 @@ it('rejects live keys on an explicitly configured test service', () => check('te
 it('rejects test keys on the default production service', () => check(undefined, 'test', 401));
 it('accepts live keys on the default production service with matching stored environment', () => check(undefined, 'live', 200));
 it('rejects an invalid service key environment at startup', () => check('tesst', 'test', 0));
+
+it('loads an explicit fixed offset for database-generated air-pickup times and rejects invalid offsets', () => {
+  const script = `const { config } = await import(${JSON.stringify(new URL('../src/config.js', import.meta.url).href)});
+    console.log(config.airPickupDatabaseTimeOffsetMinutes);`;
+  for (const [input, expected] of [[undefined, 0], ['480', 480], ['-300', -300], ['oops', null], ['841', null], ['1.5', null]] as const) {
+    const env: NodeJS.ProcessEnv = { ...process.env,
+      DOTENV_CONFIG_PATH: process.platform === 'win32' ? 'NUL' : '/dev/null', NODE_ENV: 'test',
+      MYSQL_HOST: '127.0.0.1', MYSQL_DATABASE: 'unit_test', MYSQL_USER: 'unit_test', MYSQL_PASSWORD: 'unit_test',
+      REDIS_URL: 'redis://127.0.0.1:6379', LABEL_STORAGE_BACKEND: 'filesystem', OUTBOUND_WEBHOOK_ENABLED: 'false' };
+    delete env.AIR_PICKUP_DB_TIME_OFFSET_MINUTES;
+    if (input !== undefined) env.AIR_PICKUP_DB_TIME_OFFSET_MINUTES = input;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8', timeout: 15000 });
+    if (expected === null) {
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /AIR_PICKUP_DB_TIME_OFFSET_MINUTES/);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.trim(), String(expected));
+    }
+  }
+});

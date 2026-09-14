@@ -109,6 +109,10 @@ function asOriginList(name: string, fallback: string[]): string[] {
 }
 
 const environment = process.env.NODE_ENV ?? 'development';
+const airPickupDatabaseTimeOffsetMinutes = Number(process.env.AIR_PICKUP_DB_TIME_OFFSET_MINUTES?.trim() || '0');
+if (!Number.isInteger(airPickupDatabaseTimeOffsetMinutes) || Math.abs(airPickupDatabaseTimeOffsetMinutes) > 840) {
+  throw new Error('AIR_PICKUP_DB_TIME_OFFSET_MINUTES must be an integer between -840 and 840');
+}
 const labelStorageBackend = asChoice('LABEL_STORAGE_BACKEND', ['filesystem', 'cos'] as const, 'filesystem');
 const configuredLabelStorageRoot = process.env.LABEL_STORAGE_ROOT?.trim();
 if (environment === 'production' && labelStorageBackend === 'filesystem' && !configuredLabelStorageRoot) {
@@ -164,6 +168,7 @@ export const config = {
     connectionLimit: asPositiveInteger('MYSQL_CONNECTION_LIMIT', 10),
   },
   redisUrl: required('REDIS_URL'),
+  airPickupDatabaseTimeOffsetMinutes,
   warehouse: {
     allowedOrigins: asOriginList('WAREHOUSE_ALLOWED_ORIGINS', environment === 'production'
       ? ['https://cmhubtool.com']

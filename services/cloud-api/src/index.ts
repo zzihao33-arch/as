@@ -82,7 +82,8 @@ const outboundWebhooks = createOutboundWebhooks({
 });
 const warehouseOperations = createWarehouseOperations({ mysql, storage: labelStorage, outboundWebhooks });
 const sharedWarehouseWork = createSharedWarehouseWork({ mysql, storage: labelStorage });
-const airPickupOperations = createAirPickupOperations({ mysql, storage: labelStorage });
+const airPickupOperations = createAirPickupOperations({ mysql, storage: labelStorage,
+  databaseTimeOffsetMinutes: config.airPickupDatabaseTimeOffsetMinutes });
 const customerProfiles = createCustomerProfiles({ mysql });
 const attendanceOperations = createAttendanceOperations({ mysql, storage: labelStorage });
 const warehouseBoundary = createWarehouseHttpBoundary({
