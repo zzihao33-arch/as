@@ -5,6 +5,7 @@ import { createWarehouseOperations, decodeDeliveryCursor, encodeDeliveryCursor }
 import type { Pool } from 'mysql2/promise';
 import type { LabelStorage } from '../src/labelStorage.js';
 import type { WarehouseSession } from '../src/warehouseIdentity.js';
+import { expiryIds, expirySqlFixture } from './labelExpirySqlFixture.js';
 
 const session: WarehouseSession = {
   sessionId: '00000000-0000-4000-8000-000000000001',
@@ -27,6 +28,45 @@ const session: WarehouseSession = {
   absoluteExpiresAt: new Date(Date.now() + 120_000).toISOString(),
 };
 const storage = {} as LabelStorage;
+
+for (const [expiresAt, available] of [
+  ['2026-09-18 01:00:00.000', true],
+  ['2026-09-18 00:00:00.001', true],
+  ['2026-09-18 00:00:00.000', false],
+  ['2026-09-17 23:59:59.999', false],
+] as const) {
+  for (const operation of ['list', 'print'] as const) {
+    it(`${operation} uses UTC expiry ${expiresAt} in a +08:00 session`, async () => {
+      const sqlDb = expirySqlFixture(expiresAt);
+      const execute = async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('FROM workstations')) return [[{ id: 'workstation' }]];
+        if (sql.trimStart().startsWith('SELECT')) {
+          return [sqlDb.select(sql, params).map(row => ({ ...row, updated_at: new Date('2026-09-11T00:00:00Z') }))];
+        }
+        return [{ affectedRows: 1 }];
+      };
+      const connection = { execute, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {} };
+      const operations = createWarehouseOperations({
+        mysql: { execute, getConnection: async () => connection } as unknown as Pool,
+        storage, outboundWebhooks: { enqueuePrintAttempt: async () => 'event' },
+      });
+      try {
+        if (operation === 'list') {
+          const page = await operations.listShipments(session, {});
+          assert.equal(page.shipments[0].labelAsset?.id ?? null, available ? expiryIds.asset : null);
+        } else {
+          const attempt = operations.recordPrintAttempt(session, {
+            workstationId: '00000000-0000-4000-8000-000000000005', shipmentId: expiryIds.shipment,
+            labelAssetId: expiryIds.asset, clientAttemptId: '00000000-0000-4000-8000-000000000009',
+            outcome: 'SUBMITTED', occurredAt: new Date().toISOString(),
+          });
+          if (available) assert.equal((await attempt).outcome, 'SUBMITTED');
+          else await assert.rejects(attempt, { code: 'PRINT_TARGET_STALE' });
+        }
+      } finally { sqlDb.close(); }
+    });
+  }
+}
 
 describe('warehouse delivery cursor', () => {
   it('round-trips an unsigned database revision without losing precision', () => {

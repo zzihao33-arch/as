@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { Pool } from 'mysql2/promise';
+import type { LabelStorage } from '../src/labelStorage.js';
+import type { WarehouseSession } from '../src/warehouseIdentity.js';
 import { ApiError } from '../src/errors.js';
 import {
   evidenceStatusForCounts,
@@ -7,12 +11,133 @@ import {
   receivingValuesDiffer,
   validateAirEvidenceImage,
   validatePickupDocument,
+  createAirPickupOperations,
 } from '../src/airPickupOperations.js';
 
 test('normalizes equivalent air bill numbers to one global key', () => {
   const values = ['abc-123', 'ABC-123', 'ABC123', ' abc 123 ', 'ＡBC123'.replace('Ａ', 'A')];
   assert.deepEqual(values.map(value => normalizeAirBillNo(value).normalized), Array(values.length).fill('ABC123'));
 });
+
+const legacyClientId = '00000000-0000-4000-8000-000000000201';
+const upstreamCustomerId = '00000000-0000-4000-8000-000000000301';
+const businessCustomerId = '00000000-0000-4000-8000-000000000302';
+const otherUpstreamCustomerId = '00000000-0000-4000-8000-000000000303';
+const pickupInput = { billNo: 'LEGACY-123', forecastCartons: 2, forecastPackages: 3, forecastWeight: 4, forecastWeightUnit: 'KG' };
+const pickupSession = { userId: '00000000-0000-4000-8000-000000000101' } as WarehouseSession;
+const pickupAudit = { requestId: 'legacy-contract-test', ip: '127.0.0.1' };
+
+// Exercise the service's actual SQL and persisted result against a small relational
+// database. Only MySQL connection plumbing and its Date conversion are adapted;
+// customer lookup/filtering, inserts, transactions, and detail reads run as SQL.
+function pickupContractDatabase() {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE clients (id TEXT PRIMARY KEY, display_name TEXT, client_status TEXT);
+    CREATE TABLE customer_profiles (id TEXT PRIMARY KEY, display_name TEXT, customer_type TEXT,
+      customer_status TEXT, integration_client_id TEXT);
+    CREATE TABLE air_pickup_orders (id TEXT PRIMARY KEY, client_id TEXT, client_name_snapshot TEXT,
+      customer_profile_id TEXT, customer_name_snapshot TEXT, customer_type_snapshot TEXT, source_type TEXT,
+      external_batch_id TEXT, bill_no_raw TEXT, bill_no_display TEXT, bill_no_normalized TEXT UNIQUE,
+      bill_no_is_standard INTEGER, cargo_name TEXT, forecast_cartons INTEGER, forecast_packages INTEGER,
+      forecast_weight REAL, forecast_weight_unit TEXT, remarks TEXT, created_by_user_id TEXT,
+      created_by_reference TEXT, updated_by_user_id TEXT, updated_by_reference TEXT,
+      order_status TEXT DEFAULT 'RECORDED', evidence_status TEXT DEFAULT 'NONE',
+      actual_cartons INTEGER, actual_packages INTEGER, actual_weight REAL, actual_weight_unit TEXT,
+      difference_reason TEXT, receipt_batch_id TEXT, handover_batch_id TEXT, received_at TEXT,
+      handed_over_at TEXT, version INTEGER DEFAULT 1, void_reason TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE air_pickup_events (revision INTEGER PRIMARY KEY, order_id TEXT, receipt_batch_id TEXT,
+      handover_batch_id TEXT, event_type TEXT, actor_user_id TEXT, actor_reference TEXT, request_id TEXT,
+      ip_address TEXT, reason TEXT, event_data TEXT, occurred_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE air_receipt_batches (id TEXT, batch_no TEXT);
+    CREATE TABLE air_handover_batches (id TEXT, batch_no TEXT);
+    CREATE TABLE shipments (id TEXT, air_pickup_order_id TEXT);
+    CREATE TABLE print_attempts (id TEXT, shipment_id TEXT, outcome TEXT, occurred_at TEXT, created_at TEXT);
+    CREATE TABLE air_pickup_document_assets (order_id TEXT, asset_status TEXT, created_at TEXT);
+  `);
+  db.prepare('INSERT INTO clients VALUES (?, ?, ?)').run(legacyClientId, 'Legacy integration', 'ACTIVE');
+  db.prepare('INSERT INTO clients VALUES (?, ?, ?)').run('00000000-0000-4000-8000-000000000202', 'Other integration', 'ACTIVE');
+  const insertCustomer = db.prepare('INSERT INTO customer_profiles VALUES (?, ?, ?, ?, ?)');
+  insertCustomer.run(upstreamCustomerId, 'Mapped upstream customer', 'UPSTREAM', 'ACTIVE', legacyClientId);
+  insertCustomer.run(businessCustomerId, 'Business customer', 'BUSINESS', 'ACTIVE', null);
+  insertCustomer.run(otherUpstreamCustomerId, 'Other upstream customer', 'UPSTREAM', 'ACTIVE', '00000000-0000-4000-8000-000000000202');
+  const execute = async (sql: string, values: (SQLInputValue | boolean)[] = []) => {
+    const statement = db.prepare(sql.replace(/\s+FOR UPDATE\b/gi, ''));
+    const parameters = values.map(value => typeof value === 'boolean' ? Number(value) : value);
+    if (/^\s*SELECT\b/i.test(sql)) {
+      const rows = statement.all(...parameters).map(row => {
+        for (const name of ['created_at', 'updated_at', 'occurred_at']) {
+          if (typeof row[name] === 'string') (row as Record<string, unknown>)[name] = new Date(`${row[name]}Z`);
+        }
+        return row;
+      });
+      return [rows];
+    }
+    return [{ affectedRows: Number(statement.run(...parameters).changes) }];
+  };
+  const connection = { execute, beginTransaction: async () => { db.exec('BEGIN'); },
+    commit: async () => { db.exec('COMMIT'); }, rollback: async () => { if (db.isTransaction) db.exec('ROLLBACK'); }, release() {} };
+  const mysql = { execute, getConnection: async () => connection } as unknown as Pool;
+  const operations = createAirPickupOperations({ mysql, storage: {} as LabelStorage });
+  return { db, operations };
+}
+
+test('legacy clientId creates a manual order belonging to the linked upstream profile, even when IDs differ', async t => {
+  const { db, operations } = pickupContractDatabase();
+  t.after(() => db.close());
+  const order = await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, clientId: legacyClientId });
+  assert.equal(order.customerId, upstreamCustomerId);
+  assert.equal(order.customerName, 'Mapped upstream customer');
+  assert.equal(order.customerType, 'UPSTREAM');
+  assert.equal(order.sourceType, 'MANUAL');
+  assert.equal(order.sourceClientId, null);
+  assert.equal(order.forecastPackages, 3);
+  const event = db.prepare('SELECT event_data FROM air_pickup_events').get();
+  assert.equal(JSON.parse(String(event?.event_data)).customerId, upstreamCustomerId);
+});
+
+test('customerId-only requests still support business customers', async t => {
+  const { db, operations } = pickupContractDatabase();
+  t.after(() => db.close());
+  const order = await operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, customerId: businessCustomerId });
+  assert.equal(order.customerId, businessCustomerId);
+  assert.equal(order.customerType, 'BUSINESS');
+});
+
+test('both identifiers are accepted only when they reference the same upstream customer', async t => {
+  const { db, operations } = pickupContractDatabase();
+  t.after(() => db.close());
+  const order = await operations.createOrder(pickupSession, pickupAudit, {
+    ...pickupInput, clientId: legacyClientId, customerId: upstreamCustomerId,
+  });
+  assert.equal(order.customerId, upstreamCustomerId);
+});
+
+for (const scenario of [
+  { name: 'conflicting customer and client', input: { customerId: businessCustomerId, clientId: legacyClientId } },
+  { name: 'another upstream customer with the legacy client', input: { customerId: otherUpstreamCustomerId, clientId: legacyClientId } },
+  { name: 'unknown legacy client', input: { clientId: '00000000-0000-4000-8000-000000000299' } },
+  { name: 'profile ID passed as legacy client ID', input: { clientId: upstreamCustomerId } },
+  { name: 'disabled linked customer', input: { clientId: legacyClientId }, setup: "UPDATE customer_profiles SET customer_status = 'DISABLED'" },
+  { name: 'non-upstream linked customer', input: { clientId: legacyClientId }, setup: "UPDATE customer_profiles SET customer_type = 'BUSINESS'" },
+  { name: 'disabled legacy integration', input: { clientId: legacyClientId }, setup: "UPDATE clients SET client_status = 'DISABLED'" },
+  { name: 'missing linked profile', input: { clientId: legacyClientId }, setup: 'DELETE FROM customer_profiles' },
+  { name: 'disabled explicit customer', input: { customerId: businessCustomerId }, setup: "UPDATE customer_profiles SET customer_status = 'DISABLED'" },
+  { name: 'no customer identifier', input: {} },
+  { name: 'explicit empty customer with valid legacy client', input: { customerId: '', clientId: legacyClientId } },
+  { name: 'malformed legacy client with valid customer', input: { customerId: upstreamCustomerId, clientId: 'invalid' } },
+]) {
+  test(`createOrder rejects ${scenario.name} without saving an order or event`, async t => {
+    const { db, operations } = pickupContractDatabase();
+    t.after(() => db.close());
+    if (scenario.setup) db.exec(scenario.setup);
+    await assert.rejects(operations.createOrder(pickupSession, pickupAudit, { ...pickupInput, ...scenario.input }),
+      (error: unknown) => error instanceof ApiError && error.status === 400);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM air_pickup_orders').get()?.count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM air_pickup_events').get()?.count, 0);
+  });
+}
 
 test('formats a standard eleven digit air waybill', () => {
   assert.deepEqual(normalizeAirBillNo('18098109734'), {

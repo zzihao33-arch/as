@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Pool } from 'mysql2/promise';
 import type { LabelStorage } from '../src/labelStorage.js';
 import { createLabelRetentionWorker } from '../src/labelRetention.js';
+import { expiryIds, expirySqlFixture } from './labelExpirySqlFixture.js';
 
 // MySQL is an external boundary: these fixtures exercise worker decisions and
 // transaction ordering. Real row-lock behavior needs the deployment smoke test.
@@ -27,7 +28,7 @@ function fixture(options: { lock?: number; renewed?: boolean; alreadyRenewed?: b
       if (sql.includes('FROM label_assets')) {
         if (!sql.includes('FOR UPDATE')) return [[asset]];
         calls.push('asset-lock'); checks++;
-        assert.ok(sql.includes('expires_at <= CURRENT_TIMESTAMP(3)'));
+        assert.ok(sql.includes('expires_at <= UTC_TIMESTAMP(3)'));
         assert.ok(sql.includes('storage_key = ?'));
         assert.equal(params[1], asset.storage_key);
         return [options.alreadyRenewed || (options.renewed && checks === 2) ? [] : [{ ...asset, asset_status: expired ? 'FAILED' : 'READY' }]];
@@ -56,6 +57,40 @@ test('expires current PDF before removal and retains metadata with ordered locks
   assert.deepEqual(f.calls, ['begin', 'shipment-lock', 'asset-lock', 'expire', 'clear', 'event', 'commit',
     'begin', 'shipment-lock', 'asset-lock', 'remove', 'mark-deleted', 'commit', 'unlock', 'release']);
 });
+
+for (const candidateAlreadySelected of [false, true]) {
+  for (const [expiresAt, expectedDeleted] of [
+    ['2026-09-18 01:00:00.000', 0],
+    ['2026-09-18 00:00:00.001', 0],
+    ['2026-09-18 00:00:00.000', 1],
+    ['2026-09-17 23:59:59.999', 1],
+  ] as const) {
+    test(`UTC expiry ${expiresAt}: deletion=${expectedDeleted}, preselected=${candidateAlreadySelected}`, async () => {
+      const sqlDb = expirySqlFixture(expiresAt);
+      let removed = 0;
+      const connection = {
+        beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {}, destroy: () => {},
+        execute: async (sql: string, params: unknown[] = []) => {
+          if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+          if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+          if (candidateAlreadySelected && sql.includes('FROM label_assets') && !sql.includes('FOR UPDATE')) {
+            return [[{ id: expiryIds.asset, shipment_id: expiryIds.shipment, client_id: 'client', storage_key: 'labels/current.pdf' }]];
+          }
+          if (sql.trimStart().startsWith('SELECT')) return [sqlDb.select(sql, params)];
+          return [{ affectedRows: 1 }];
+        },
+      };
+      try {
+        const result = await createLabelRetentionWorker({
+          mysql: { getConnection: async () => connection } as unknown as Pool,
+          storage: { remove: async () => { removed++; } } as unknown as LabelStorage,
+        }).runOnce();
+        assert.equal(result.deleted, expectedDeleted);
+        assert.equal(removed, expectedDeleted, 'must not remove future UTC expirations in a +08:00 session');
+      } finally { sqlDb.close(); }
+    });
+  }
+}
 
 test('does not invalidate a replacement pointer', async () => {
   const f = fixture({ replaced: true });

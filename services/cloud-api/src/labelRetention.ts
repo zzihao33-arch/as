@@ -25,7 +25,7 @@ async function lockExpiredAsset(connection: PoolConnection, candidate: Asset) {
   );
   const [assets] = await connection.execute<Asset[]>(
     `SELECT id, client_id, shipment_id, storage_key FROM label_assets
-     WHERE id = ? AND storage_key = ? AND expires_at <= CURRENT_TIMESTAMP(3)
+     WHERE id = ? AND storage_key = ? AND expires_at <= UTC_TIMESTAMP(3)
        AND bytes_deleted_at IS NULL AND asset_status <> 'STORING' FOR UPDATE`,
     [candidate.id, candidate.storage_key],
   );
@@ -61,7 +61,7 @@ export function createLabelRetentionWorker(dependencies: {
         result.locked = true;
         const [candidates] = await connection.execute<Asset[]>(
           `SELECT id, client_id, shipment_id, storage_key FROM label_assets
-           WHERE expires_at <= CURRENT_TIMESTAMP(3) AND bytes_deleted_at IS NULL
+           WHERE expires_at <= UTC_TIMESTAMP(3) AND bytes_deleted_at IS NULL
              AND asset_status <> 'STORING' AND id > ? ORDER BY id LIMIT ${batchSize}`,
           [afterId],
         );

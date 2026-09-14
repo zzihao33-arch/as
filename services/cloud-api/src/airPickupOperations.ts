@@ -378,9 +378,9 @@ const ORDER_SELECT = `SELECT o.*, rb.batch_no AS receipt_batch_no, hb.batch_no A
     LEFT JOIN (
       SELECT shipment_id, outcome FROM (
         SELECT shipment_id, outcome,
-          ROW_NUMBER() OVER (PARTITION BY shipment_id ORDER BY occurred_at DESC, created_at DESC, id DESC) AS row_number
+          ROW_NUMBER() OVER (PARTITION BY shipment_id ORDER BY occurred_at DESC, created_at DESC, id DESC) AS print_rank
         FROM print_attempts
-      ) ranked_attempts WHERE row_number = 1
+      ) ranked_attempts WHERE print_rank = 1
     ) latest ON latest.shipment_id = s.id
     WHERE s.air_pickup_order_id IS NOT NULL
     GROUP BY s.air_pickup_order_id
@@ -533,7 +533,9 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
     },
 
     async createOrder(session: WarehouseSession, audit: RequestAudit, input: Record<string, unknown>) {
-      const customerId = uuid(input.customerId, 'customerId');
+      const requestedCustomerId = input.customerId === undefined ? null : uuid(input.customerId, 'customerId');
+      const legacyClientId = input.clientId === undefined ? null : uuid(input.clientId, 'clientId');
+      if (!requestedCustomerId && !legacyClientId) throw new ApiError(400, 'VALIDATION_ERROR', 'customerId 为必填项');
       const bill = normalizeAirBillNo(input.billNo);
       const cargoName = text(input.cargoName, 'cargoName', 100, false);
       const forecastCartons = positiveInteger(input.forecastCartons, 'forecastCartons');
@@ -545,11 +547,22 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const connection = await mysql.getConnection();
       try {
         await connection.beginTransaction();
-        const [customers] = await connection.execute<(RowDataPacket & { display_name: string; customer_type: 'BUSINESS' | 'UPSTREAM' })[]>(
-          `SELECT display_name, customer_type FROM customer_profiles
-           WHERE id = ? AND customer_status = 'ACTIVE' LIMIT 1`, [customerId],
+        // The previous frontend sends an integration client ID. Resolve its
+        // explicit profile association; profile and client IDs need not match.
+        // When both fields are supplied, neither may override the other.
+        const [customers] = await connection.execute<(RowDataPacket & { id: string; display_name: string; customer_type: 'BUSINESS' | 'UPSTREAM' })[]>(
+          legacyClientId
+            ? `SELECT p.id, p.display_name, p.customer_type FROM customer_profiles p
+               INNER JOIN clients c ON c.id = p.integration_client_id
+               WHERE p.integration_client_id = ? AND p.customer_status = 'ACTIVE'
+                 AND p.customer_type = 'UPSTREAM' AND c.client_status = 'ACTIVE'
+                 AND (? IS NULL OR p.id = ?) LIMIT 1 FOR UPDATE`
+            : `SELECT id, display_name, customer_type FROM customer_profiles
+               WHERE id = ? AND customer_status = 'ACTIVE' LIMIT 1 FOR UPDATE`,
+          legacyClientId ? [legacyClientId, requestedCustomerId, requestedCustomerId] : [requestedCustomerId],
         );
         if (!customers[0]) throw new ApiError(400, 'INVALID_CUSTOMER', '请选择有效的归属客户');
+        const customerId = customers[0].id;
         await connection.execute(
           `INSERT INTO air_pickup_orders
             (id, client_id, client_name_snapshot, customer_profile_id, customer_name_snapshot, customer_type_snapshot, source_type,
