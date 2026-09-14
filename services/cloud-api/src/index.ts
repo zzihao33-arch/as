@@ -455,14 +455,6 @@ warehouseRouter.get('/work-batches/:batchId/items', warehouseBoundary.session, r
   }
 });
 
-warehouseRouter.get('/work-batches/:batchId/missing-items', warehouseBoundary.session, requireWarehousePermission('batches.view'), async (req, res, next) => {
-  try {
-    const items = await sharedWarehouseWork.listMissingItems(req.params.batchId, { offset: req.query.offset, limit: req.query.limit });
-    res.json({ data: items, requestId: req.requestId });
-  } catch (error) {
-    next(error);
-  }
-});
 
 warehouseRouter.post('/work-batches/:batchId/items', warehouseBoundary.session, requireWarehousePermission('batches.create'), async (req, res, next) => {
   try {
@@ -510,14 +502,6 @@ warehouseRouter.post('/work-batches/:batchId/close', warehouseBoundary.session, 
   }
 });
 
-warehouseRouter.delete('/work-batches/:batchId', warehouseBoundary.session, requireWarehousePermission('batches.delete'), async (req, res, next) => {
-  try {
-    const result = await sharedWarehouseWork.deleteBatch(req.warehouseSession!, req.params.batchId);
-    res.json({ data: result, requestId: req.requestId });
-  } catch (error) {
-    next(error);
-  }
-});
 
 warehouseRouter.post('/work-batch-claims', warehouseBoundary.session, requireWarehousePermission('scan.use'), requireWarehouseWorkspace, async (req, res, next) => {
   try {

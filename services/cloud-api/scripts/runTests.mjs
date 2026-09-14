@@ -41,6 +41,7 @@ try {
       join(outputDirectory, 'test', 'metadataRetention.test.js'),
       join(outputDirectory, 'test', 'errors.test.js'),
       join(outputDirectory, 'test', 'warehouseSecurity.test.js'),
+      join(outputDirectory, 'test', 'tygReleaseScope.test.js'),
       join(outputDirectory, 'test', 'warehouseOperations.test.js'),
       join(outputDirectory, 'test', 'warehouseHttp.test.js'),
       join(outputDirectory, 'test', 'outboundWebhooks.test.js'),
