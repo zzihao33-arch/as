@@ -299,7 +299,7 @@ export function createInboundBatchIngestor(dependencies: { mysql: Pool; redis: R
                  bill_no_raw, bill_no_display, bill_no_normalized, bill_no_is_standard, cargo_name,
                  forecast_cartons, forecast_packages, forecast_weight, forecast_weight_unit, remarks,
                  created_by_user_id, created_by_reference, updated_by_user_id, updated_by_reference)
-               VALUES (?, ?, ?, ?, ?, ?, 'UPSTREAM', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`,
+               VALUES (?, ?, ?, ?, ?, ?, 'UPSTREAM', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`,
               [airPickupOrderId, request.client.id, clients[0].display_name, clients[0].customer_profile_id, clients[0].customer_name, clients[0].customer_type, input.externalBatchId,
                 JSON.stringify(input.body), input.bill.raw, input.bill.display, input.bill.normalized,
                 input.bill.isStandard, input.cargoName, input.forecastCartons, input.forecastPackages,
