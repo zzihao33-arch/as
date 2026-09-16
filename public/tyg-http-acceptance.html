@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://api-test.cmhubtool.com; base-uri 'none'; form-action 'none'">
+<title>TYG 测试站只读 HTTP 验收</title>
+<style>body{font:16px system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 24px;color:#18212b}button{font:inherit;padding:12px 20px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:20px}p{line-height:1.6}</style>
+<h1>测试站只读 HTTP 验收</h1>
+<p>复用当前登录，检查固定合成面单的下载权限。仅发送 GET 请求，不读取或导出 Cookie，不保存密码，不打印面单。</p>
+<button id="run" disabled>运行一次权限验收</button>
+<pre id="result" role="status">正在检查测试环境…</pre>
+<script>
+'use strict';
+const revision = 'TYGHTTP20260916AABD-v1';
+const api = 'https://api-test.cmhubtool.com';
+const assetPath = '/warehouse/v1/label-assets/24d5079a-5d7d-437b-a9c3-fa462245eca6/content';
+const expectedSha256 = '76551f9d4286b52d33b00abc25d8d57e81fe3ad6c390a53a541da57732b86fad';
+const output = document.getElementById('result');
+const button = document.getElementById('run');
+const permitted = location.origin === 'https://test.cmhubtool.com';
+output.textContent = permitted ? '就绪。固定样本 TYGIS20260915SO0，预期 80000 字节。' : '此页面仅允许在测试域名运行。';
+button.disabled = !permitted;
+const check = (value, message) => { if (!value) throw new Error(message); };
+const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
+button.addEventListener('click', async () => {
+  if (!permitted || button.disabled) return;
+  button.disabled = true;
+  const report = { revision, startedAt: new Date().toISOString(), origin: location.origin, target: api, status: 'RUNNING', fixture: 'TYGIS20260915SO0', assetPath, requests: [] };
+  const show = () => { output.textContent = JSON.stringify(report, null, 2); };
+  async function get(path, credentials) {
+    check(path === '/warehouse/v1/session' || path === assetPath, 'PATH_NOT_ALLOWED');
+    check(report.requests.length < 4, 'REQUEST_BUDGET');
+    const record = { path, method: 'GET', credentials, startedAt: new Date().toISOString(), status: 'PENDING' };
+    report.requests.push(record); show();
+    const response = await fetch(api + path, { method: 'GET', credentials, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(20000) });
+    record.http = response.status;
+    record.contentType = response.headers.get('content-type');
+    check(response.body, 'MISSING_RESPONSE_BODY');
+    const reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > 1048576) { await reader.cancel(); throw new Error('RESPONSE_TOO_LARGE'); }
+      chunks.push(part.value);
+    }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    record.bytes = size;
+    let json = null;
+    if (record.contentType?.includes('application/json')) json = JSON.parse(new TextDecoder().decode(bytes));
+    if (json?.error?.code) record.errorCode = json.error.code;
+    record.status = 'RECEIVED'; show();
+    return { record, bytes, json };
+  }
+  try {
+    const session = await get('/warehouse/v1/session', 'include');
+    check(session.record.http === 200, 'AUTHENTICATED_SESSION_REQUIRED');
+    const identity = session.json?.data;
+    check(identity && identity.passwordState === 'ACTIVE' && identity.warehouseId, 'ACTIVE_WORKSPACE_REQUIRED');
+    const low = identity.loginName === 'tyg-accept-aa63' && identity.platformRole === null;
+    const admin = identity.platformRole === 'SYSTEM_ADMIN' && identity.userName === 'Test Admin';
+    check(low || admin, 'ONLY_EXISTING_TEST_IDENTITIES');
+    check(Array.isArray(identity.permissions), 'PERMISSIONS_REQUIRED');
+    if (low) check(identity.permissions.length === 2 && identity.permissions.includes('attendance.self_view') && identity.permissions.includes('attendance.appeal'), 'LOW_PERMISSION_SCOPE_CHANGED');
+    if (admin) check(identity.permissions.includes('scan.use'), 'ADMIN_SCAN_PERMISSION_REQUIRED');
+    report.identity = { loginName: identity.loginName, userName: identity.userName, platformRole: identity.platformRole, warehouseCode: identity.warehouseCode, scanPermission: identity.permissions.includes('scan.use'), sessionFingerprint: await digest(new TextEncoder().encode(identity.sessionId)) };
+    const authenticated = await get(assetPath, 'include');
+    if (low) {
+      check(authenticated.record.http === 403 && authenticated.record.errorCode === 'PERMISSION_DENIED', 'EXPECTED_AUTHENTICATED_403_PERMISSION_DENIED');
+    } else {
+      check(authenticated.record.http === 200 && authenticated.record.contentType?.includes('application/pdf'), 'EXPECTED_ADMIN_PDF_200');
+      authenticated.record.sha256 = await digest(authenticated.bytes);
+      check(authenticated.record.bytes === 80000 && authenticated.record.sha256 === expectedSha256, 'FIXTURE_HASH_MISMATCH');
+    }
+    const anonymous = await get(assetPath, 'omit');
+    check(anonymous.record.http === 401 && anonymous.record.errorCode === 'SESSION_REQUIRED', 'EXPECTED_ANONYMOUS_401');
+    const after = await get('/warehouse/v1/session', 'include');
+    check(after.record.http === 200 && after.json?.data?.sessionId === identity.sessionId && after.json?.data?.userId === identity.userId, 'SESSION_CHANGED_DURING_PROBE');
+    report.sameAuthenticatedSessionAfter = true;
+    report.status = low ? 'LOW_PERMISSION_HTTP_PASS' : 'ADMIN_HTTP_CONTROL_PASS';
+  } catch (error) {
+    report.status = 'NOT_PASSED';
+    report.error = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+  } finally {
+    report.completedAt = new Date().toISOString();
+    show();
+  }
+});
+</script>
+</html>
