@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts tests/attendanceTime.test.ts tests/attendanceCamera.test.ts",
+    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts tests/attendanceTime.test.ts tests/attendanceCamera.test.ts tests/attendanceActions.test.mjs",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "preview": "vite preview"
   },
@@ -33,6 +33,7 @@
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.19",
+    "esbuild": "0.21.5",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.9.3",

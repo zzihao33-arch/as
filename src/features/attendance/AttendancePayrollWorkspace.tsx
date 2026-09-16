@@ -289,7 +289,7 @@ function AppealsPanel({ refreshKey, onChanged }: { refreshKey: number; onChanged
   };
 
   return (
-    <Card className="cmhub-attendance-panel-card" header="异常申诉" headerBordered hoverShadow actions={session.hasPermission('attendance.appeal') && <Button theme="primary" icon={<Plus size={15} />} onClick={() => setCreateOpen(true)}>发起申诉</Button>}>
+    <Card className="cmhub-attendance-panel-card" title="异常申诉" headerBordered hoverShadow actions={session.hasPermission('attendance.appeal') && <Button theme="primary" icon={<Plus size={15} />} onClick={() => setCreateOpen(true)}>发起申诉</Button>}>
       <Table<AttendanceAppeal>
         rowKey="id" hover loading={loading} data={rows} pagination={{ pageSize: 20, total: rows.length }} tableContentWidth="1080px"
         columns={[
@@ -414,7 +414,7 @@ function ConfigurationPanel() {
   return (
     <Row className="cmhub-attendance-config-grid" gutter={[20, 20]}>
       {session.hasPermission('attendance.locations.manage') && (
-        <Col xs={12} lg={6}><Card header="打卡地" headerBordered hoverShadow actions={<Button theme="primary" size="small" icon={<Plus size={14} />} onClick={() => editLocation()}>新增地点</Button>}>
+        <Col xs={12} lg={6}><Card title="打卡地" headerBordered hoverShadow actions={<Button theme="primary" size="small" icon={<Plus size={14} />} onClick={() => editLocation()}>新增地点</Button>}>
           <div className="cmhub-attendance-config-list">
             {locations.map(location => (
               <button type="button" key={location.id} onClick={() => editLocation(location)}>
@@ -427,7 +427,7 @@ function ConfigurationPanel() {
         </Card></Col>
       )}
       {session.hasPermission('attendance.rules.manage') && (
-        <Col xs={12} lg={6}><Card header="班次规则" headerBordered hoverShadow actions={<Button theme="primary" size="small" icon={<Plus size={14} />} onClick={() => editRule()}>新增规则</Button>}>
+        <Col xs={12} lg={6}><Card title="班次规则" headerBordered hoverShadow actions={<Button theme="primary" size="small" icon={<Plus size={14} />} onClick={() => editRule()}>新增规则</Button>}>
           <div className="cmhub-attendance-config-list">
             {rules.map(rule => (
               <button type="button" key={rule.id} onClick={() => editRule(rule)}>
@@ -554,7 +554,7 @@ function PayrollPanel() {
   };
 
   return (
-    <Card className="cmhub-attendance-panel-card" header="薪酬核算" headerBordered hoverShadow actions={session.hasPermission('payroll.export') ? <Button theme="primary" icon={<Download size={15} />} loading={loading} disabled={!result?.rows.length || result.rows.some(row => row.issues.length > 0)} onClick={() => void exportPayroll()}>固化并导出 Excel</Button> : undefined}>
+    <Card className="cmhub-attendance-panel-card" title="薪酬核算" headerBordered hoverShadow actions={session.hasPermission('payroll.export') ? <Button theme="primary" icon={<Download size={15} />} loading={loading} disabled={!result?.rows.length || result.rows.some(row => row.issues.length > 0)} onClick={() => void exportPayroll()}>固化并导出 Excel</Button> : undefined}>
       <Alert theme="info" message="考勤记录是唯一工时来源完整上下班卡按实际分钟累计，不扣除固定午休；每周超过 40 小时按 1.5 倍计算，加油补贴按 $19.50/天缺少时薪或考勤异常时禁止导出" />
       <div className="cmhub-attendance-toolbar">
         <div className="cmhub-attendance-range">
