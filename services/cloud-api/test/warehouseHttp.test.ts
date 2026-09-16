@@ -70,6 +70,34 @@ describe('warehouse permission middleware', () => {
 });
 
 describe('warehouse HTTP boundary', () => {
+  it('permits the image quality headers sent by the retained frontend', () => {
+    const origin = 'https://cmhubtool.com';
+    const requested = ['content-type', 'x-image-sha256', 'x-image-quality-warnings', 'x-image-quality-override'];
+    const boundary = createWarehouseHttpBoundary({ identity: {} as never, allowedOrigins: new Set([origin]), cookieName: 'cmhub_warehouse_session' });
+    const headers = new Map<string, string>();
+    let statusCode = 0;
+    let ended = false;
+    const request = { method: 'OPTIONS', header: (name: string) => ({ origin, 'access-control-request-method': 'PUT', 'access-control-request-headers': requested.join(',') })[name] } as unknown as Request;
+    const response = { setHeader: (name: string, value: string) => headers.set(name, value), status: (value: number) => { statusCode = value; return { end: () => { ended = true; } }; } } as unknown as Response;
+    boundary.origin(request, response, (() => assert.fail('Preflight must end before authentication or upload')) as NextFunction);
+    assert.equal(statusCode, 204);
+    assert.equal(ended, true);
+    assert.equal(headers.get('Access-Control-Allow-Origin'), origin);
+    assert.equal(headers.get('Access-Control-Allow-Credentials'), 'true');
+    const allowed = new Set((headers.get('Access-Control-Allow-Headers') ?? '').toLowerCase().split(/,\s*/));
+    for (const header of requested) assert.ok(allowed.has(header), `Browser blocks required upload header: ${header}`);
+  });
+
+  it('rejects image preflight from an untrusted origin without granting CORS access', () => {
+    const boundary = createWarehouseHttpBoundary({ identity: {} as never, allowedOrigins: new Set(['https://cmhubtool.com']), cookieName: 'cmhub_warehouse_session' });
+    let error: unknown;
+    boundary.origin({ method: 'OPTIONS', header: () => 'https://untrusted.invalid' } as unknown as Request,
+      { setHeader: () => assert.fail('Untrusted origin must not receive CORS headers') } as unknown as Response,
+      ((value: unknown) => { error = value; }) as NextFunction);
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, 'ORIGIN_NOT_ALLOWED');
+  });
+
   it('allows the SHA-256 header used by shared-PDF uploads in CORS preflight responses', () => {
     const boundary = createWarehouseHttpBoundary({
       identity: {} as never,
