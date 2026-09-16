@@ -10,8 +10,10 @@
 <h1>TYG 合成交仓 HTTP 验收</h1>
 <p><strong>仅测试站 Test Admin。</strong>固定单号 <code>TYGHO20260916AABD</code>：1 箱、1 件、1 KG，明确 SYNTHETIC / DO NOT SHIP。上传已知 80000 字节 PDF、1 张合成收货图、1 张 POD 和 3 张不同装车图，依次核实 NONE → PARTIAL → COMPLETE。</p>
 <p>复用登录，不读取 Cookie；不修改账号、权限或会话，不打印、不删除。每次写入先持久化 PENDING，再保存 DONE；未决写入或失败即停止，禁止自动重试或换号。已完成步骤只在 GET 核实后恢复。请保留本浏览器的 journal。</p>
-<p>单次最多 100 请求、每请求 20 秒、运行 5 分钟、资产传输 3 MiB、单响应 1 MiB；固定单号累计最多 240 请求、10 次写入。报告含每次请求、检查点和 journal，不含原始会话 ID。</p>
+<p>单次最多 100 请求、每请求 20 秒、运行 5 分钟、资产传输 3 MiB、单响应 1 MiB；固定单号累计最多 240 请求、10 个业务写入步骤。仅已对账的 CORS 阻断另允许 1 次人工恢复尝试。报告含每次请求、检查点和 journal，不含原始会话 ID。</p>
+<p>已知阻断：旧前端和原工具发送的两个可选图片质量头不在测试 API 的 CORS 允许列表。此工具对无警告合成图片省略这些头；这不代表旧前端图片上传已通过。仅对下方固定失败记录开放一次人工恢复：先点击只读对账，确认凭证和相关事件均不存在，再点击单次恢复。原始 PENDING 和失败 journal 会完整归档，不清除、不换号。</p>
 <button id="run" disabled>运行 / 恢复固定合成验收</button><button id="copy" disabled>复制完整 JSON 报告</button><button id="download" disabled>下载验收报告</button>
+<button id="reconcile" disabled>只读对账：固定收货凭证失败</button><button id="recover" disabled>对账后单次恢复并继续</button>
 <pre id="result" role="status">正在检查环境…</pre>
 <label for="report">完整 JSON 报告（可全选复制）</label><textarea id="report" readonly spellcheck="false"></textarea>
 <script>
@@ -20,6 +22,7 @@
 // warehouseApi.ts, index.ts, customerProfiles.ts, airPickupOperations.ts.
 const RUN = 'TYGHO20260916AABD';
 const REVISION = RUN + '-v1';
+const TOOL_REVISION = RUN + '-v2-cors-reconciliation';
 const API = 'https://api-test.cmhubtool.com';
 const BASE = '/warehouse/v1';
 const KEY = 'tyg-handover-acceptance:' + RUN;
@@ -36,8 +39,11 @@ const FIXTURES = [
   {key:'loading-3',file:'loading-3.png',contentType:'image/png',bytes:24146,sha256:'40bd0c4d63593e0428b55f648ccd600d40363a07c7b1994515eba2794abd19e7',width:1000,height:800}
 ];
 const WRITE_ORDER = ['order','document','receiptBatch','receipt','draft','confirm','pod','loading-1','loading-2','loading-3'];
+const RECOVERY = {orderId:'2a529567-8fe6-4d08-9aa4-a3c0d03f329f',receiptBatchId:'5f4bc2d0-4a19-4637-aa14-472c1286d6d1',documentId:'6ea0c033-a065-4960-af75-2eb884c8be63',originalSequence:21,originalPendingAt:'2026-09-16T15:34:38.099Z'};
+const CORS_FINDING = {classification:'OPTIONAL_IMAGE_QUALITY_HEADERS_BLOCKED_BY_CORS_PREFLIGHT',source:'750e532 warehouseHttp.ts and actual OPTIONS 204 inspected by operator',allowedHeaders:['Content-Type','X-Request-ID','X-Image-Sha256','X-Document-SHA256','X-Label-SHA256'],omittedOptionalHeaders:['X-Image-Quality-Warnings','X-Image-Quality-Override'],semantics:'Absent warnings become []; absent override becomes false in the existing API.',productLimitation:'Old frontend 3d98a79 also always sends these unsupported optional headers on receipt and handover image uploads. This harness workaround does not establish old-frontend image-upload acceptance.'};
 const button = document.getElementById('run'), output = document.getElementById('result'), textarea = document.getElementById('report'), copy = document.getElementById('copy');
 const downloadButton = document.getElementById('download');
+const reconcileButton = document.getElementById('reconcile'), recoverButton = document.getElementById('recover');
 const permitted = location.origin === 'https://test.cmhubtool.com';
 const check = (value, message) => { if (!value) throw new Error(message); };
 const sha = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2,'0')).join('');
@@ -47,14 +53,19 @@ copy.addEventListener('click',async () => { textarea.focus(); textarea.select();
 downloadButton.addEventListener('click',() => { const blob=new Blob([textarea.value],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a'); link.href=url; link.download=RUN+'-report.json'; document.body.appendChild(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000); });
 output.textContent=permitted?'就绪。只在点击后发送请求。':'已阻止：仅允许 https://test.cmhubtool.com。';
 button.disabled=!permitted;
-button.addEventListener('click',async () => {
-  if (!permitted || button.disabled) return;
-  button.disabled=true;
-  const report={revision:REVISION,runId:RUN,candidate:'750e532a4e27eb19b4b6f99f97f358177e8f0c04',origin:location.origin,target:API,startedAt:iso(),status:'RUNNING',limits:LIMITS,requests:[],checks:[],assetTransfers:[],fixtureManifest:FIXTURES};
+reconcileButton.disabled=true;
+if(permitted) { try { const saved=JSON.parse(localStorage.getItem(KEY)||'null'); if(saved?.halted && !saved.halted.resolvedBy) { button.disabled=true; if(saved.recovery?.phase==='ABSENT_VERIFIED' && saved.recovery.retryCount===0) recoverButton.disabled=false; else if(!saved.recovery && saved.requestCount===RECOVERY.originalSequence && saved.steps?.receipt?.status==='PENDING' && saved.steps.receipt.startedAt===RECOVERY.originalPendingAt) reconcileButton.disabled=false; } } catch { button.disabled=true; reconcileButton.disabled=true; output.textContent='Journal 无法读取；停止，需人工检查。'; } }
+async function runAcceptance(mode='run') {
+  const selected=mode==='reconcile'?reconcileButton:mode==='recover'?recoverButton:button;
+  if (!permitted || selected.disabled) return;
+  button.disabled=true; reconcileButton.disabled=true; recoverButton.disabled=true;
+  const report={revision:REVISION,toolRevision:TOOL_REVISION,mode,runId:RUN,candidate:'750e532a4e27eb19b4b6f99f97f358177e8f0c04',origin:location.origin,target:API,startedAt:iso(),status:'RUNNING',limits:LIMITS,knownProductLimitation:CORS_FINDING,requests:[],checks:[],assetTransfers:[],fixtureManifest:FIXTURES};
   let journal=null, identity=null, started=Date.now(), assetBytes=0, acquired=false;
   const fixtureBytes=new Map();
   const done = key => journal?.steps[key]?.status === 'DONE';
   const result = key => journal.steps[key].result;
+  const haltedActive = () => journal.halted && !journal.halted.resolvedBy;
+  const recoveryReady = () => mode==='recover' && journal.recovery?.phase==='ABSENT_VERIFIED' && journal.recovery.retryCount===0 && journal.steps.receipt?.status==='RECONCILED_ABSENT' && journal.halted?.reason==='Failed to fetch' && journal.halted.at===journal.recovery.originalJournal.halted.at;
   function persist() { const value=JSON.stringify(journal); localStorage.setItem(KEY,value); check(localStorage.getItem(KEY)===value,'JOURNAL_PERSISTENCE_FAILED'); }
   function proof(name,details) { report.checks.push({name,at:iso(),...details}); show(report); }
   function countAssets(bytes) { assetBytes+=bytes; report.assetTransferBytes=assetBytes; check(assetBytes<=LIMITS.assetBytes,'ASSET_BYTE_BUDGET'); }
@@ -151,21 +162,43 @@ button.addEventListener('click',async () => {
   }
   async function write(key,path,body,headers={'Content-Type':'application/json'}) {
     if(done(key)) { proof('RESTORED_WRITE_'+key,{id:result(key).id}); return result(key); }
-    check(!journal.halted && !Object.values(journal.steps).some(s=>s.status!=='DONE'),'UNRESOLVED_WRITE_OR_HALTED');
+    const receiptRecovery=key==='receipt' && recoveryReady();
+    check(receiptRecovery || (!haltedActive() && !Object.values(journal.steps).some(s=>s.status!=='DONE')),'UNRESOLVED_WRITE_OR_HALTED');
     check(WRITE_ORDER.find(k=>!done(k))===key && Object.keys(journal.steps).length<LIMITS.writes,'WRITE_ORDER_OR_BUDGET');
     await authenticate();
     if(done('order')) await verifyState('BEFORE_'+key);
-    journal.steps[key]={status:'PENDING',method:body instanceof Uint8Array?'PUT':'POST',path,startedAt:iso(),...(body instanceof Uint8Array?{bytes:body.byteLength,sha256:await sha(body)}:{input:body??null})}; persist(); show(report);
+    const previousAttempt=receiptRecovery?structuredClone(journal.steps.receipt):null;
+    if(receiptRecovery) { check(result('order').id===RECOVERY.orderId && result('receiptBatch').id===RECOVERY.receiptBatchId && result('document').id===RECOVERY.documentId,'RECOVERY_FIXED_IDS_CHANGED'); journal.recovery.phase='RETRY_ISSUED'; journal.recovery.retryCount=1; journal.recovery.explicitRecoveryClickAt=report.startedAt; }
+    journal.steps[key]={status:'PENDING',method:body instanceof Uint8Array?'PUT':'POST',path,startedAt:iso(),...(previousAttempt?{archivedAttempts:[previousAttempt],recovery:'ONE_EXPLICIT_RETRY_AFTER_GET_ABSENCE_PROOF'}:{}),...(body instanceof Uint8Array?{bytes:body.byteLength,sha256:await sha(body)}:{input:body??null})}; persist(); show(report);
     const entry=journal.steps[key];
     const response=await request(path,{method:entry.method,body:body instanceof Uint8Array?body:body===undefined?undefined:JSON.stringify(body),headers});
     check(response.json?.data && UUID.test(response.json.data.id),'WRITE_RETURN_ID_REQUIRED');
     entry.result=response.json.data; entry.completedAt=iso(); entry.http=response.entry.http; entry.status='DONE'; persist();
+    if(receiptRecovery) { journal.recovery.phase='RECEIPT_DONE'; journal.recovery.receiptAssetId=entry.result.id; journal.halted.resolvedBy='recovery.RECEIPT_DONE'; persist(); }
     proof('WRITE_'+key,{id:entry.result.id,http:entry.http}); return entry.result;
   }
   async function upload(key,path) {
     const fixture=FIXTURES.find(f=>f.key===key);
-    await write(key,path,fixtureBytes.get(key),{'Content-Type':fixture.contentType,[key==='document'?'X-Document-SHA256':'X-Image-SHA256']:fixture.sha256,...(key==='document'?{}:{'X-Image-Quality-Warnings':'','X-Image-Quality-Override':'false'})});
+    await write(key,path,fixtureBytes.get(key),{'Content-Type':fixture.contentType,[key==='document'?'X-Document-SHA256':'X-Image-SHA256']:fixture.sha256});
     await download(key);
+  }
+  async function reconcileReceipt() {
+    check(journal.steps.receipt?.status==='PENDING' && journal.steps.receipt.startedAt===RECOVERY.originalPendingAt && journal.steps.receipt.method==='PUT' && journal.requestCount===RECOVERY.originalSequence && !journal.recovery,'ONLY_ORIGINAL_FIXED_FAILURE_CAN_BE_RECONCILED');
+    check(Object.keys(journal.steps).join(',')==='order,document,receiptBatch,receipt' && ['order','document','receiptBatch'].every(done),'RECOVERY_STEP_SHAPE_MISMATCH');
+    check(result('order').id===RECOVERY.orderId && result('receiptBatch').id===RECOVERY.receiptBatchId && result('document').id===RECOVERY.documentId && journal.halted?.reason==='Failed to fetch','RECOVERY_FIXED_IDS_OR_FAILURE_MISMATCH');
+    const fixture=FIXTURES.find(f=>f.key==='receipt');
+    check(journal.steps.receipt.bytes===fixture.bytes && journal.steps.receipt.sha256===fixture.sha256 && journal.steps.receipt.path===BASE+'/air-pickup-receipt-batches/'+RECOVERY.receiptBatchId+'/evidence?filename='+RUN+'-receipt.png','RECOVERY_PENDING_REQUEST_MISMATCH');
+    journal.recovery={phase:'RECONCILING',retryCount:0,originalJournal:structuredClone(journal),corsFinding:CORS_FINDING,startedAt:iso()}; persist();
+    await authenticate();
+    const inventory=await request(BASE+'/air-pickups?search='+RUN);
+    check(inventory.json.data?.length===1 && inventory.json.data[0].id===RECOVERY.orderId && inventory.json.pagination?.total===1,'RECOVERY_INVENTORY_MISMATCH');
+    const snapshot=await verifyState('READ_ONLY_RECEIPT_ABSENCE_VERIFIED');
+    check(snapshot.order.status==='RECEIVED' && snapshot.order.evidenceStatus==='NONE' && snapshot.order.receiptBatchId===RECOVERY.receiptBatchId && snapshot.order.receiptEvidence.length===0 && snapshot.order.handoverEvidence.length===0 && snapshot.order.handoverBatchId===null && snapshot.events.length===3 && !snapshot.events.some(e=>e.type==='RECEIPT_EVIDENCE_ADDED'),'RECEIPT_ABSENCE_NOT_PROVEN');
+    await download('document'); await authenticate();
+    journal.recovery.proof={verifiedAt:iso(),snapshot,requests:structuredClone(report.requests),assetTransfers:structuredClone(report.assetTransfers)};
+    journal.recovery.phase='ABSENT_VERIFIED';
+    journal.steps.receipt={...journal.steps.receipt,status:'RECONCILED_ABSENT',originalStatus:'PENDING',reconciledAt:iso()}; persist();
+    report.status='READ_ONLY_RECONCILIATION_PASS_AWAITING_EXPLICIT_CLICK';
   }
   async function execute() {
     acquired=true;
@@ -173,7 +206,8 @@ button.addEventListener('click',async () => {
     journal=saved?JSON.parse(saved):{revision:REVISION,runId:RUN,createdAt:iso(),requestCount:0,steps:{},checkpoints:{}};
     check(journal.revision===REVISION && journal.runId===RUN && Number.isInteger(journal.requestCount) && journal.requestCount>=0 && journal.steps && journal.checkpoints,'JOURNAL_INVALID');
     report.resumed=Boolean(saved); persist();
-    check(!journal.halted && Object.values(journal.steps).every(s=>s.status==='DONE'),'HALTED_OR_PENDING_WRITE_MANUAL_REVIEW_REQUIRED');
+    if(mode==='reconcile') { await reconcileReceipt(); return; }
+    check(recoveryReady() || (!haltedActive() && Object.values(journal.steps).every(s=>s.status==='DONE')),'HALTED_OR_PENDING_WRITE_MANUAL_REVIEW_REQUIRED');
     const completed=Object.keys(journal.steps); check(completed.length<=10 && completed.every((key,i)=>key===WRITE_ORDER[i]),'JOURNAL_SEQUENCE_INVALID');
     await authenticate();
     const customers=await get('/customers'); check(Array.isArray(customers),'CUSTOMER_LIST_REQUIRED');
@@ -206,8 +240,11 @@ button.addEventListener('click',async () => {
     journal.completedAt=iso(); persist(); report.status='SYNTHETIC_HANDOVER_HTTP_PASS';
   }
   try { check(navigator.locks?.request,'BROWSER_LOCKS_REQUIRED'); await navigator.locks.request(KEY,{ifAvailable:true},async lock=> { check(lock,'ANOTHER_TAB_RUNNING'); await execute(); }); }
-  catch(error) { report.status='STOPPED_NOT_PASSED'; report.error=error instanceof Error?error.message:'UNKNOWN_ERROR'; if(acquired && journal) { journal.halted={at:iso(),reason:report.error}; try { persist(); } catch { report.journalSaveFailed=true; } } }
-  finally { report.completedAt=iso(); report.journal=journal; report.journalKey=KEY; report.note='No automatic retries. Pending/failed runs require manual investigation; never clear the journal or change the fixed bill number to bypass a stop.'; show(report); }
-});
+  catch(error) { report.status='STOPPED_NOT_PASSED'; report.error=error instanceof Error?error.message:'UNKNOWN_ERROR'; if(acquired && journal) { if(journal.recovery) { journal.recovery.failures??=[]; journal.recovery.failures.push({at:iso(),reason:report.error,previousHalted:journal.halted}); journal.recovery.phase='FAILED'; } journal.halted={at:iso(),reason:report.error}; try { persist(); } catch { report.journalSaveFailed=true; } } }
+  finally { report.completedAt=iso(); report.journal=journal; report.journalKey=KEY; report.note='No automatic retries. The one fixed CORS-blocked receipt may be retried only after read-only absence reconciliation and a separate explicit recovery click. Original journal is retained in recovery.originalJournal. Never clear or replace the journal or bill number.'; show(report); if(report.status==='READ_ONLY_RECONCILIATION_PASS_AWAITING_EXPLICIT_CLICK') recoverButton.disabled=false; }
+}
+button.addEventListener('click',()=>runAcceptance('run'));
+reconcileButton.addEventListener('click',()=>runAcceptance('reconcile'));
+recoverButton.addEventListener('click',()=>runAcceptance('recover'));
 </script>
 </html>
