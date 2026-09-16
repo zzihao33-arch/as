@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://api-test.cmhubtool.com; base-uri 'none'; form-action 'none'">
+<title>TYG 旧前端图片请求头 CORS 验收</title>
+<style>body{font:16px system-ui,sans-serif;max-width:1060px;margin:32px auto;padding:0 24px;color:#18212b}p{line-height:1.65}button{font:inherit;padding:12px 18px;margin:0 10px 12px 0}pre,textarea{box-sizing:border-box;width:100%;white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:18px;font:13px/1.5 monospace;border:1px solid #b8c2cc}textarea{height:220px}</style>
+<h1>旧前端图片请求头：真实浏览器 HTTP 验收</h1>
+<p>仅测试站 Test Admin；操作员须先独立确认已部署候选 <code>59601291f431ce662f0614fbd79acd414d2a693d</code>。此页面验证旧前端上传函数使用的完整四个请求头，不代表已经操作旧前端 UI。</p>
+<p>固定单号 TYGHO20260916AABD。在已完成交仓的固定收货批次中，仅增加 1 张 21019 字节合成收货凭证（DO NOT SHIP）。先核对原 1 张收货凭证、4 张交仓图片、1 份 PDF 和 10 个事件；完成后核对 2 张收货凭证、11 个事件及所有原资产元数据不变。</p>
+<p>最多 12 个 fetch 请求（浏览器自动 OPTIONS 不计入）、1 次 PUT、每请求 20 秒、总计 3 分钟、资产传输 128 KiB、单响应 1 MiB。写前保存 PENDING，返回后保存 DONE；任何失败停止。固定 journal 存在即禁止重复运行，不清除、不换号、不重试。不读取 Cookie，不改权限、账号或会话，不打印或删除。</p>
+<button id="run" disabled>仅执行一次完整旧请求头验收</button><button id="copy" disabled>复制完整报告</button><button id="download" disabled>下载验收报告</button>
+<pre id="result" role="status">正在检查环境…</pre><label for="report">完整 JSON 报告</label><textarea id="report" readonly spellcheck="false"></textarea>
+<script>
+'use strict';
+const RUN='TYGHO20260916AABD', REVISION=RUN+'-image-cors-v1', CANDIDATE='59601291f431ce662f0614fbd79acd414d2a693d';
+const API='https://api-test.cmhubtool.com', BASE='/warehouse/v1', KEY='tyg-image-cors-acceptance:'+RUN;
+const ORDER='2a529567-8fe6-4d08-9aa4-a3c0d03f329f', RECEIPT_BATCH='5f4bc2d0-4a19-4637-aa14-472c1286d6d1', HANDOVER='27cb1e79-39e1-4abf-97f8-fed6e7c9a0a3';
+const ADMIN='d3f1763d-71a3-47d4-ab70-b84ea46b4244', WAREHOUSE='f655448e-46f3-4279-8e4d-4c3520d3fee9', SESSION_SHA='2080b141707acb914d9de4f197ab5e683688233fb33db3aa09cad8a94e159fc8';
+const FILE=RUN+'-cors-receipt.png', FIXTURE='/tyg-handover-fixtures/loading-1.png', BYTES=21019, SHA='df7aa2225b7bcb40bdc5ca0eca21e7be43b793c114a74e27a0df984d0e934ea6';
+const OLD_RECEIPT='870393ea-5503-486f-9778-c7d3b10fbd5c', OLD_SHA='9a2d97335eff734ee5223832f0d6a12144bb1172453ce9d567c39ab645db7adb';
+const HEADERS={'Content-Type':'image/png','X-Image-SHA256':SHA,'X-Image-Quality-Warnings':'','X-Image-Quality-Override':'false'};
+const UPLOAD=BASE+'/air-pickup-receipt-batches/'+RECEIPT_BATCH+'/evidence?filename='+FILE;
+const LIST=BASE+'/air-pickups?search='+RUN+'&evidenceStatus=COMPLETE';
+const EXPECTED=[
+ {id:OLD_RECEIPT,type:'RECEIPT',filename:RUN+'-receipt.png',byteSize:18088},
+ {id:'edd62df5-df41-43ff-b732-95b104af0029',type:'POD',filename:RUN+'-pod.png',byteSize:18653},
+ {id:'bc81f42a-8756-4524-81e8-4b85afb9c800',type:'LOADING',filename:RUN+'-loading-1.png',byteSize:21019},
+ {id:'4d3ea062-79d4-4ba1-a73b-a167300032a7',type:'LOADING',filename:RUN+'-loading-2.png',byteSize:22482},
+ {id:'6a4d5389-c45b-410b-9b1d-d7f0028621a9',type:'LOADING',filename:RUN+'-loading-3.png',byteSize:24146},
+ {id:'6ea0c033-a065-4960-af75-2eb884c8be63',filename:RUN+'-synthetic-80000.pdf',byteSize:80000}
+];
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const run=document.getElementById('run'),copy=document.getElementById('copy'),download=document.getElementById('download'),output=document.getElementById('result'),textarea=document.getElementById('report');
+const permitted=location.origin==='https://test.cmhubtool.com';
+const assert=(condition,reason)=>{if(!condition)throw new Error(reason);},iso=()=>new Date().toISOString();
+const digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+function show(report){const text=JSON.stringify(report,null,2);output.textContent=text;textarea.value=text;copy.disabled=false;download.disabled=false;}
+copy.addEventListener('click',async()=>{textarea.focus();textarea.select();try{await navigator.clipboard.writeText(textarea.value);copy.textContent='已复制';}catch{copy.textContent='请全选文本框复制';}});
+download.addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([textarea.value],{type:'application/json'})),link=document.createElement('a');link.href=url;link.download=RUN+'-image-cors-report.json';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+output.textContent=permitted?'就绪：仅点击后执行一次。':'禁止：仅允许测试站域名。';run.disabled=!permitted;
+if(permitted){try{const old=localStorage.getItem(KEY);if(old){run.disabled=true;show({status:'EXISTING_JOURNAL_NO_REPLAY',journal:JSON.parse(old)});}}catch{run.disabled=true;output.textContent='Journal 读取失败；禁止执行。';}}
+run.addEventListener('click',async()=>{
+ if(!permitted||run.disabled)return;run.disabled=true;
+ const report={revision:REVISION,runId:RUN,expectedCandidate:CANDIDATE,deploymentAssociation:'Operator verifies deployment separately; HTTP responses do not attest a Git SHA.',scope:'REAL_BROWSER_HTTP_USING_FULL_OLD_FRONTEND_IMAGE_HEADERS_NOT_OLD_UI',startedAt:iso(),status:'RUNNING',origin:location.origin,target:API,limits:{fetchRequests:12,writes:1,timeoutMs:20000,totalMs:180000,assetBytes:131072,responseBytes:1048576},legacyHeaders:HEADERS,requests:[],downloads:[]};
+ let journal=null,identity=null,assetBytes=0;const started=Date.now();
+ const oldPath=BASE+'/air-receipt-evidence-assets/'+OLD_RECEIPT+'/content';
+ const persist=()=>{const text=JSON.stringify(journal);localStorage.setItem(KEY,text);assert(localStorage.getItem(KEY)===text,'JOURNAL_PERSISTENCE_FAILED');};
+ const charge=n=>{assetBytes+=n;report.assetTransferBytes=assetBytes;assert(assetBytes<=report.limits.assetBytes,'ASSET_BUDGET');};
+ async function http(path,{method='GET',body,binary=false,fixture=false}={}){
+  const newPath=journal.write?.status==='DONE'?journal.write.result.downloadPath:null;
+  assert(location.origin==='https://test.cmhubtool.com','HOST_CHANGED');
+  assert(method==='PUT'?path===UPLOAD&&journal.write?.status==='PENDING':method==='GET'&&[BASE+'/session',LIST,BASE+'/air-pickups/'+ORDER,BASE+'/air-handover-batches/'+HANDOVER,oldPath,newPath,FIXTURE].includes(path),'PATH_NOT_ALLOWED');
+  assert(fixture?path===FIXTURE:!path.startsWith('/tyg-handover-fixtures/'),'FIXTURE_SCOPE');
+  assert(report.requests.length<12&&Date.now()-started<180000,'REQUEST_OR_TIME_BUDGET');
+  if(body)charge(body.byteLength);
+  const record={sequence:report.requests.length+1,path,method,credentials:fixture?'omit':'include',startedAt:iso(),status:'PENDING',...(method==='PUT'?{headers:HEADERS,bytesSent:body.byteLength}: {})};report.requests.push(record);show(report);
+  const response=await fetch((fixture?'':API)+path,{method,credentials:record.credentials,cache:'no-store',redirect:'error',headers:method==='PUT'?HEADERS:{},body,signal:AbortSignal.timeout(Math.min(20000,180000-(Date.now()-started)))});
+  record.http=response.status;record.contentType=response.headers.get('content-type');assert(response.body,'BODY_REQUIRED');const reader=response.body.getReader(),chunks=[];let count=0;
+  while(true){const next=await reader.read();if(next.done)break;count+=next.value.byteLength;if(count>1048576){await reader.cancel();throw new Error('RESPONSE_TOO_LARGE');}if(binary)charge(next.value.byteLength);chunks.push(next.value);}
+  const bytes=new Uint8Array(count);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}record.bytes=count;record.completedAt=iso();record.status='RECEIVED';
+  const json=record.contentType?.includes('application/json')?JSON.parse(new TextDecoder().decode(bytes)):null;if(json?.error?.code)record.errorCode=json.error.code;
+  assert(response.status===(method==='PUT'?201:200),'HTTP_'+response.status+'_'+(record.errorCode||'UNEXPECTED'));if(!binary)assert(json&&Object.hasOwn(json,'data'),'JSON_DATA_REQUIRED');show(report);return{json,bytes,record};
+ }
+ async function session(){const value=(await http(BASE+'/session')).json.data;assert(value.userId===ADMIN&&value.userName==='Test Admin'&&value.platformRole==='SYSTEM_ADMIN'&&value.passwordState==='ACTIVE'&&value.warehouseId===WAREHOUSE&&value.permissions?.includes('air_pickups.receive')&&value.permissions.includes('air_pickups.view')&&typeof value.sessionId==='string','EXPECTED_TEST_ADMIN_REQUIRED');const fingerprint=await digest(new TextEncoder().encode(value.sessionId));assert(fingerprint===SESSION_SHA&&(!identity||fingerprint===identity.sessionFingerprint),'SESSION_CHANGED');identity={userId:value.userId,userName:value.userName,loginName:value.loginName,warehouseId:value.warehouseId,platformRole:value.platformRole,sessionFingerprint:fingerprint};report.identity=identity;}
+ const allAssets=order=>[...order.receiptEvidence,...order.handoverEvidence,...order.pickupDocuments];
+ const ordered=value=>JSON.stringify([...value].sort((a,b)=>a.id.localeCompare(b.id)));
+ const coreEvent=e=>({revision:e.revision,type:e.type,actorReference:e.actorReference,reason:e.reason,data:e.data,occurredAt:e.occurredAt});
+ function orderBase(order){assert(order.id===ORDER&&order.billNo===RUN&&order.billNoNormalized===RUN&&order.customerId==='cb51346c-a727-4787-9a94-6a0a22c2fd64'&&order.customerName==='TYG'&&order.status==='HANDED_OVER'&&order.evidenceStatus==='COMPLETE'&&order.receiptBatchId===RECEIPT_BATCH&&order.handoverBatchId===HANDOVER&&order.cargoName==='SYNTHETIC ACCEPTANCE - DO NOT SHIP - '+RUN&&order.remarks===order.cargoName,'FIXED_ORDER_MISMATCH');assert(order.forecastCartons===1&&order.forecastPackages===1&&order.forecastWeight===1&&order.forecastWeightUnit==='KG'&&order.actualCartons===1&&order.actualPackages===1&&order.actualWeight===1&&order.actualWeightUnit==='KG','QUANTITY_MISMATCH');assert(Array.isArray(order.receiptEvidence)&&Array.isArray(order.handoverEvidence)&&Array.isArray(order.pickupDocuments)&&Array.isArray(order.events),'ORDER_COLLECTIONS_REQUIRED');assert(order.handoverEvidence.length===4&&order.pickupDocuments.length===1,'EXISTING_ASSET_COUNT_MISMATCH');}
+ function batchBase(batch,order){assert(batch.id===HANDOVER&&batch.status==='CONFIRMED'&&batch.orders?.length===1&&batch.orders[0].id===ORDER&&batch.orders[0].status==='HANDED_OVER'&&batch.orders[0].evidenceStatus==='COMPLETE'&&batch.createdByUserId===ADMIN&&batch.handedOverAt===order.handedOverAt&&ordered(batch.evidence)===ordered(order.handoverEvidence),'BATCH_MISMATCH');}
+ function pinnedAssets(order){const assets=allAssets(order);for(const pin of EXPECTED){const a=assets.find(a=>a.id===pin.id);assert(a&&a.filename===pin.filename&&a.byteSize===pin.byteSize&&a.type===pin.type,'ORIGINAL_ASSET_MISMATCH_'+pin.id);if(pin.type)assert(a.width===1000&&a.height===800&&a.contentType==='image/png'&&a.qualityWarnings?.length===0&&a.qualityOverride===false,'ORIGINAL_IMAGE_METADATA_MISMATCH');else assert(a.contentType==='application/pdf','ORIGINAL_DOCUMENT_TYPE');}}
+ async function verifyDownload(path,bytes,hash,label){const response=await http(path,{binary:true}),actual=await digest(response.bytes);assert(response.record.contentType?.split(';')[0]==='image/png'&&response.bytes.byteLength===bytes&&actual===hash,'DOWNLOAD_MISMATCH_'+label);response.record.sha256=actual;report.downloads.push({label,path,bytes,sha256:actual,http:response.record.http});}
+ try{
+  assert(navigator.locks?.request,'BROWSER_LOCKS_REQUIRED');
+  await navigator.locks.request(KEY,{ifAvailable:true},async lock=>{
+   assert(lock,'ANOTHER_TAB_RUNNING');assert(localStorage.getItem(KEY)===null,'EXISTING_JOURNAL_NO_REPLAY');journal={revision:REVISION,runId:RUN,createdAt:iso(),status:'STARTED',write:null};persist();
+   await session();
+   const list=(await http(LIST)).json;assert(list.data?.length===1&&list.data[0].id===ORDER&&list.data[0].evidenceStatus==='COMPLETE'&&list.pagination?.total===1,'EXACT_COMPLETE_LIST_REQUIRED');
+   const before=(await http(BASE+'/air-pickups/'+ORDER)).json.data;orderBase(before);pinnedAssets(before);
+   assert(before.receiptEvidence.length===1&&before.receiptEvidence[0].id===OLD_RECEIPT&&before.events.length===10&&!allAssets(before).some(a=>a.filename===FILE),'BEFORE_COUNT_OR_FILENAME_COLLISION');
+   const eventTypes=['ORDER_RECORDED','PICKUP_DOCUMENT_ADDED','ORDER_RECEIVED','RECEIPT_EVIDENCE_ADDED','HANDOVER_DRAFT_CREATED','ORDER_HANDED_OVER','EVIDENCE_ADDED','EVIDENCE_ADDED','EVIDENCE_ADDED','EVIDENCE_ADDED'];const baselineEvents=[...before.events].sort((a,b)=>a.revision-b.revision);baselineEvents.forEach((event,i)=>assert(event.revision===i+2&&event.type===eventTypes[i]&&event.actorReference==='user:'+ADMIN,'BASELINE_EVENT_MISMATCH'));
+   const beforeBatch=(await http(BASE+'/air-handover-batches/'+HANDOVER)).json.data;batchBase(beforeBatch,before);report.before={order:before,batch:beforeBatch};journal.before=report.before;persist();
+   await verifyDownload(oldPath,18088,OLD_SHA,'EXISTING_RECEIPT');
+   const fixture=await http(FIXTURE,{binary:true,fixture:true});assert(fixture.bytes.byteLength===BYTES&&await digest(fixture.bytes)===SHA,'FIXTURE_HASH_MISMATCH');
+   await session();
+   journal.write={status:'PENDING',method:'PUT',path:UPLOAD,filename:FILE,headers:HEADERS,bytes:BYTES,sha256:SHA,startedAt:iso()};persist();
+   const upload=await http(UPLOAD,{method:'PUT',body:fixture.bytes});assert(UUID.test(upload.json.data?.id)&&upload.json.data.type==='RECEIPT'&&upload.json.data.byteSize===BYTES&&upload.json.data.contentType==='image/png'&&upload.json.data.width===1000&&upload.json.data.height===800,'UPLOAD_METADATA_MISMATCH');
+   const added=upload.json.data;assert(added.downloadPath===BASE+'/air-receipt-evidence-assets/'+added.id+'/content'&&!EXPECTED.some(a=>a.id===added.id),'UPLOAD_ASSET_SCOPE_MISMATCH');journal.write={...journal.write,status:'DONE',http:upload.record.http,result:added,completedAt:iso()};persist();
+   const after=(await http(BASE+'/air-pickups/'+ORDER)).json.data;orderBase(after);pinnedAssets(after);
+   assert(after.receiptEvidence.length===2&&after.events.length===11,'AFTER_COUNTS_MISMATCH');const newAsset=after.receiptEvidence.find(a=>a.id===added.id);assert(newAsset&&newAsset.filename===FILE&&newAsset.byteSize===BYTES&&newAsset.width===1000&&newAsset.height===800&&newAsset.contentType==='image/png'&&newAsset.qualityWarnings?.length===0&&newAsset.qualityOverride===false&&newAsset.downloadPath===added.downloadPath,'NEW_ASSET_NOT_PERSISTED');
+   assert(ordered(allAssets(after).filter(a=>a.id!==added.id))===ordered(allAssets(before)),'ORIGINAL_ASSET_METADATA_CHANGED');
+   const oldEvents=after.events.filter(e=>e.data?.assetId!==added.id);assert(JSON.stringify(oldEvents.map(coreEvent))===JSON.stringify(before.events.map(coreEvent)),'ORIGINAL_EVENTS_CHANGED');const newEvents=after.events.filter(e=>e.data?.assetId===added.id);assert(newEvents.length===1&&newEvents[0].type==='RECEIPT_EVIDENCE_ADDED'&&newEvents[0].actorReference==='user:'+ADMIN&&newEvents[0].revision>11,'NEW_EVENT_MISMATCH');
+   for(const time of [newAsset.createdAt,newEvents[0].occurredAt])assert(Number.isFinite(Date.parse(time))&&Date.parse(time)>=Date.parse(journal.write.startedAt)-120000&&Date.parse(time)<=Date.now()+120000,'NEW_TIME_OUTSIDE_REQUEST_WINDOW');
+   assert(after.receivedAt===before.receivedAt&&after.handedOverAt===before.handedOverAt&&after.createdAt===before.createdAt,'ORDER_TIMES_CHANGED');
+   const afterBatch=(await http(BASE+'/air-handover-batches/'+HANDOVER)).json.data;batchBase(afterBatch,after);assert(ordered(afterBatch.evidence)===ordered(beforeBatch.evidence)&&afterBatch.confirmedAt===beforeBatch.confirmedAt&&afterBatch.version===beforeBatch.version,'HANDOVER_CHANGED');report.after={order:after,batch:afterBatch};journal.after=report.after;persist();
+   await verifyDownload(added.downloadPath,BYTES,SHA,'NEW_CORS_RECEIPT');await session();
+   journal.status='PASS';journal.completedAt=iso();persist();report.status='LEGACY_IMAGE_HEADERS_REAL_BROWSER_HTTP_PASS';report.result={putHttp:upload.record.http,oldFrontendHeaderSetAccepted:true,newReceiptAssetId:added.id,receiptCount:2,eventCount:11,originalAssetsUnchanged:6,handoverEvidenceUnchanged:4,sameSession:true,uiClickFlowVerified:false};
+  });
+ }catch(error){report.status='STOPPED_NOT_PASSED';report.error=error instanceof Error?error.message:'UNKNOWN_ERROR';if(journal){journal.status='STOPPED';journal.failure={at:iso(),reason:report.error};try{persist();}catch{report.journalSaveFailed=true;}}}
+ finally{report.completedAt=iso();report.journalKey=KEY;report.journal=journal;show(report);}
+});
+</script>
+</html>
