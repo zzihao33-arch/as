@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://api-test.cmhubtool.com; base-uri 'none'; form-action 'none'">
+<title>TYG 合成交仓 HTTP 验收</title>
+<style>body{font:16px system-ui,sans-serif;max-width:1060px;margin:32px auto;padding:0 24px;color:#18212b}p{line-height:1.65}button{font:inherit;padding:12px 20px;margin:0 12px 12px 0}pre,textarea{box-sizing:border-box;width:100%;white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:18px;font:13px/1.5 monospace;border:1px solid #b8c2cc}textarea{height:220px}strong{color:#803213}</style>
+<h1>TYG 合成交仓 HTTP 验收</h1>
+<p><strong>仅测试站 Test Admin。</strong>固定单号 <code>TYGHO20260916AABD</code>：1 箱、1 件、1 KG，明确 SYNTHETIC / DO NOT SHIP。上传已知 80000 字节 PDF、1 张合成收货图、1 张 POD 和 3 张不同装车图，依次核实 NONE → PARTIAL → COMPLETE。</p>
+<p>复用登录，不读取 Cookie；不修改账号、权限或会话，不打印、不删除。每次写入先持久化 PENDING，再保存 DONE；未决写入或失败即停止，禁止自动重试或换号。已完成步骤只在 GET 核实后恢复。请保留本浏览器的 journal。</p>
+<p>单次最多 100 请求、每请求 20 秒、运行 5 分钟、资产传输 3 MiB、单响应 1 MiB；固定单号累计最多 240 请求、10 次写入。报告含每次请求、检查点和 journal，不含原始会话 ID。</p>
+<button id="run" disabled>运行 / 恢复固定合成验收</button><button id="copy" disabled>复制完整 JSON 报告</button><button id="download" disabled>下载验收报告</button>
+<pre id="result" role="status">正在检查环境…</pre>
+<label for="report">完整 JSON 报告（可全选复制）</label><textarea id="report" readonly spellcheck="false"></textarea>
+<script>
+'use strict';
+// Contracts read from candidate 750e532a4e27eb19b4b6f99f97f358177e8f0c04:
+// warehouseApi.ts, index.ts, customerProfiles.ts, airPickupOperations.ts.
+const RUN = 'TYGHO20260916AABD';
+const REVISION = RUN + '-v1';
+const API = 'https://api-test.cmhubtool.com';
+const BASE = '/warehouse/v1';
+const KEY = 'tyg-handover-acceptance:' + RUN;
+const PREFIX = '/tyg-handover-fixtures/';
+const SYNTHETIC = 'SYNTHETIC ACCEPTANCE - DO NOT SHIP - ' + RUN;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LIMITS = { requests:100, lifetimeRequests:240, writes:10, timeoutMs:20000, runMs:300000, assetBytes:3145728, responseBytes:1048576 };
+const FIXTURES = [
+  {key:'document',file:'synthetic-80000.pdf',contentType:'application/pdf',bytes:80000,sha256:'76551f9d4286b52d33b00abc25d8d57e81fe3ad6c390a53a541da57732b86fad'},
+  {key:'receipt',file:'receipt.png',contentType:'image/png',bytes:18088,sha256:'9a2d97335eff734ee5223832f0d6a12144bb1172453ce9d567c39ab645db7adb',width:1000,height:800},
+  {key:'pod',file:'pod.png',contentType:'image/png',bytes:18653,sha256:'842ba768221a46488e0af1ed452c849d0a9d6482aed84bbf64aa59489e77caf0',width:1000,height:800},
+  {key:'loading-1',file:'loading-1.png',contentType:'image/png',bytes:21019,sha256:'df7aa2225b7bcb40bdc5ca0eca21e7be43b793c114a74e27a0df984d0e934ea6',width:1000,height:800},
+  {key:'loading-2',file:'loading-2.png',contentType:'image/png',bytes:22482,sha256:'cfeede3455b9e9a773a66e0e0b63cb1e0186781e85c19586b6e9833171135d6a',width:1000,height:800},
+  {key:'loading-3',file:'loading-3.png',contentType:'image/png',bytes:24146,sha256:'40bd0c4d63593e0428b55f648ccd600d40363a07c7b1994515eba2794abd19e7',width:1000,height:800}
+];
+const WRITE_ORDER = ['order','document','receiptBatch','receipt','draft','confirm','pod','loading-1','loading-2','loading-3'];
+const button = document.getElementById('run'), output = document.getElementById('result'), textarea = document.getElementById('report'), copy = document.getElementById('copy');
+const downloadButton = document.getElementById('download');
+const permitted = location.origin === 'https://test.cmhubtool.com';
+const check = (value, message) => { if (!value) throw new Error(message); };
+const sha = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2,'0')).join('');
+const iso = () => new Date().toISOString();
+function show(report) { const value = JSON.stringify(report,null,2); output.textContent=value; textarea.value=value; copy.disabled=false; downloadButton.disabled=false; }
+copy.addEventListener('click',async () => { textarea.focus(); textarea.select(); try { await navigator.clipboard.writeText(textarea.value); copy.textContent='已复制完整报告'; } catch { copy.textContent='请在文本框全选复制'; } });
+downloadButton.addEventListener('click',() => { const blob=new Blob([textarea.value],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a'); link.href=url; link.download=RUN+'-report.json'; document.body.appendChild(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000); });
+output.textContent=permitted?'就绪。只在点击后发送请求。':'已阻止：仅允许 https://test.cmhubtool.com。';
+button.disabled=!permitted;
+button.addEventListener('click',async () => {
+  if (!permitted || button.disabled) return;
+  button.disabled=true;
+  const report={revision:REVISION,runId:RUN,candidate:'750e532a4e27eb19b4b6f99f97f358177e8f0c04',origin:location.origin,target:API,startedAt:iso(),status:'RUNNING',limits:LIMITS,requests:[],checks:[],assetTransfers:[],fixtureManifest:FIXTURES};
+  let journal=null, identity=null, started=Date.now(), assetBytes=0, acquired=false;
+  const fixtureBytes=new Map();
+  const done = key => journal?.steps[key]?.status === 'DONE';
+  const result = key => journal.steps[key].result;
+  function persist() { const value=JSON.stringify(journal); localStorage.setItem(KEY,value); check(localStorage.getItem(KEY)===value,'JOURNAL_PERSISTENCE_FAILED'); }
+  function proof(name,details) { report.checks.push({name,at:iso(),...details}); show(report); }
+  function countAssets(bytes) { assetBytes+=bytes; report.assetTransferBytes=assetBytes; check(assetBytes<=LIMITS.assetBytes,'ASSET_BYTE_BUDGET'); }
+  function allowed(path,method) {
+    if (method==='GET' && (path===BASE+'/session' || path===BASE+'/customers' || path===BASE+'/air-pickups?search='+RUN || /^\/warehouse\/v1\/air-pickups\?search=TYGHO20260916AABD&evidenceStatus=(NONE|PARTIAL|COMPLETE)$/.test(path))) return true;
+    const orderId=done('order')?result('order').id:'', receiptId=done('receiptBatch')?result('receiptBatch').id:'', batchId=done('draft')?result('draft').id:'';
+    if (method==='GET' && ((orderId && path===BASE+'/air-pickups/'+orderId) || (batchId && path===BASE+'/air-handover-batches/'+batchId))) return true;
+    if (method==='GET' && Object.values(journal.steps).some(step=>step.status==='DONE' && step.result?.downloadPath===path && /^\/warehouse\/v1\/air-(pickup-documents|receipt-evidence-assets|evidence-assets)\/[a-f0-9-]+\/content$/.test(path))) return true;
+    if (method==='POST') return path===BASE+'/air-pickups' || path===BASE+'/air-pickup-receipt-batches' || path===BASE+'/air-handover-batches' || (batchId && path===BASE+'/air-handover-batches/'+batchId+'/confirm');
+    if (method==='PUT') return (orderId && path===BASE+'/air-pickups/'+orderId+'/documents?filename='+RUN+'-synthetic-80000.pdf') || (receiptId && path===BASE+'/air-pickup-receipt-batches/'+receiptId+'/evidence?filename='+RUN+'-receipt.png') || (batchId && ['pod','loading-1','loading-2','loading-3'].some(key=>path===BASE+'/air-handover-batches/'+batchId+'/evidence?type='+(key==='pod'?'POD':'LOADING')+'&filename='+RUN+'-'+key+'.png'));
+    return false;
+  }
+  async function request(path,{method='GET',body,headers={},fixture=false,binary=false}={}) {
+    check(permitted && location.origin==='https://test.cmhubtool.com','HOST_CHANGED');
+    check(fixture ? method==='GET' && FIXTURES.some(f=>path===PREFIX+f.file) : allowed(path,method),'PATH_NOT_ALLOWED');
+    check(report.requests.length<LIMITS.requests && journal.requestCount<LIMITS.lifetimeRequests,'REQUEST_BUDGET');
+    check(Date.now()-started<LIMITS.runMs,'RUN_TIME_BUDGET');
+    journal.requestCount++; persist();
+    if (body instanceof Uint8Array) countAssets(body.byteLength);
+    const entry={sequence:journal.requestCount,path,method,credentials:fixture?'omit':'include',startedAt:iso(),status:'PENDING'};
+    report.requests.push(entry); show(report);
+    const response=await fetch((fixture?'':API)+path,{method,credentials:fixture?'omit':'include',cache:'no-store',redirect:'error',headers,body,signal:AbortSignal.timeout(Math.min(LIMITS.timeoutMs,LIMITS.runMs-(Date.now()-started)))});
+    entry.http=response.status; entry.contentType=response.headers.get('content-type');
+    check(response.body,'MISSING_RESPONSE_BODY');
+    const reader=response.body.getReader(),chunks=[]; let length=0;
+    while (true) { const next=await reader.read(); if(next.done) break; length+=next.value.byteLength; if(length>LIMITS.responseBytes) { await reader.cancel(); throw new Error('RESPONSE_BYTE_BUDGET'); } if(binary||fixture) countAssets(next.value.byteLength); chunks.push(next.value); }
+    const bytes=new Uint8Array(length); let offset=0; for(const chunk of chunks) { bytes.set(chunk,offset); offset+=chunk.byteLength; }
+    entry.bytes=length; entry.completedAt=iso(); entry.status='RECEIVED';
+    let json=null; if(entry.contentType?.includes('application/json')) json=JSON.parse(new TextDecoder().decode(bytes));
+    if(json?.error?.code) entry.errorCode=json.error.code;
+    show(report); check(response.ok,'HTTP_'+response.status+'_'+(entry.errorCode||'UNEXPECTED_RESPONSE'));
+    if(!binary&&!fixture) check(json && Object.hasOwn(json,'data'),'JSON_DATA_REQUIRED');
+    return {json,bytes,entry};
+  }
+  async function get(path) { return (await request(BASE+path)).json.data; }
+  async function authenticate() {
+    const current=await get('/session');
+    check(current?.userName==='Test Admin' && current.platformRole==='SYSTEM_ADMIN' && current.passwordState==='ACTIVE' && UUID.test(current.userId) && current.warehouseId && current.sessionId,'TEST_ADMIN_ACTIVE_SESSION_REQUIRED');
+    const permissions=['air_pickups.view','air_pickups.create','air_pickups.receive','air_pickups.handover','air_pickups.evidence.add'];
+    check(permissions.every(p=>current.permissions?.includes(p)),'REQUIRED_ADMIN_PERMISSIONS_MISSING');
+    const fingerprint=await sha(new TextEncoder().encode(current.sessionId));
+    const signature={userId:current.userId,userName:current.userName,loginName:current.loginName,platformRole:current.platformRole,warehouseId:current.warehouseId,warehouseCode:current.warehouseCode,sessionFingerprint:fingerprint};
+    if(identity) check(identity.userId===signature.userId && identity.warehouseId===signature.warehouseId && identity.sessionFingerprint===fingerprint,'IDENTITY_OR_SESSION_CHANGED');
+    if(journal.identity) check(journal.identity.userId===signature.userId && journal.identity.warehouseId===signature.warehouseId && journal.identity.sessionFingerprint===fingerprint,'JOURNALED_IDENTITY_OR_SESSION_CHANGED');
+    identity=signature; journal.identity=signature; report.identity=signature; persist();
+  }
+  function validTime(value,label) { check(typeof value==='string' && Number.isFinite(Date.parse(value)),label+'_INVALID_TIME'); check(Date.parse(value)>=Date.parse(journal.createdAt)-120000 && Date.parse(value)<=Date.now()+120000,label+'_TIME_OUTSIDE_RUN_WINDOW'); }
+  function validateOrder(order) {
+    check(order?.id===result('order').id && order.billNo===RUN && order.billNoNormalized===RUN && order.customerId===journal.customer.id && order.customerName===journal.customer.name,'ORDER_IDENTITY_MISMATCH');
+    check(order.sourceType==='MANUAL' && order.cargoName===SYNTHETIC && order.remarks===SYNTHETIC,'SYNTHETIC_SCOPE_MISMATCH');
+    check(order.forecastCartons===1 && order.forecastPackages===1 && order.forecastWeight===1 && order.forecastWeightUnit==='KG','FORECAST_MISMATCH');
+    validTime(order.createdAt,'ORDER_CREATED'); validTime(order.updatedAt,'ORDER_UPDATED');
+    check(order.createdAt===result('order').createdAt && Date.parse(order.updatedAt)>=Date.parse(order.createdAt),'ORDER_TIME_NOT_PERSISTED');
+  }
+  function validateEvents(order) {
+    check(Array.isArray(order.events),'EVENTS_REQUIRED');
+    const expected=[['order','ORDER_RECORDED'],['document','PICKUP_DOCUMENT_ADDED'],['receiptBatch','ORDER_RECEIVED'],['receipt','RECEIPT_EVIDENCE_ADDED'],['draft','HANDOVER_DRAFT_CREATED'],['confirm','ORDER_HANDED_OVER'],['pod','EVIDENCE_ADDED'],['loading-1','EVIDENCE_ADDED'],['loading-2','EVIDENCE_ADDED'],['loading-3','EVIDENCE_ADDED']].filter(([key])=>done(key));
+    check(order.events.length===expected.length,'UNEXPECTED_EVENT_COUNT');
+    const events=[...order.events].sort((a,b)=>a.revision-b.revision);
+    expected.forEach(([key,type],i)=> { const event=events[i]; check(event.type===type && event.actorReference==='user:'+identity.userId,'EVENT_TYPE_OR_ACTOR_MISMATCH_'+key); validTime(event.occurredAt,'EVENT_'+key); if(i) check(event.revision>events[i-1].revision && Date.parse(event.occurredAt)>=Date.parse(events[i-1].occurredAt),'EVENT_ORDER_MISMATCH'); if(['document','receipt','pod','loading-1','loading-2','loading-3'].includes(key)) check(event.data?.assetId===result(key).id,'EVENT_ASSET_MISMATCH_'+key); if(key==='confirm') check(event.data?.evidenceStatus==='NONE','CONFIRM_WAS_NOT_NONE'); if(['pod','loading-1','loading-2','loading-3'].includes(key)) check(event.data?.evidenceStatus===(key==='loading-3'?'COMPLETE':'PARTIAL'),'EVIDENCE_EVENT_STATE_MISMATCH'); });
+    return events;
+  }
+  function expectedEvidence() { return done('loading-3')?'COMPLETE':done('pod')?'PARTIAL':'NONE'; }
+  function compareAssets(actual,keys,label) {
+    check(Array.isArray(actual) && actual.length===keys.length,label+'_COUNT_MISMATCH');
+    for(const key of keys) { const asset=actual.find(a=>a.id===result(key).id),fixture=FIXTURES.find(f=>f.key===key); check(asset && asset.byteSize===fixture.bytes && asset.contentType===fixture.contentType && asset.downloadPath===result(key).downloadPath && asset.filename===RUN+'-'+fixture.file,label+'_METADATA_MISMATCH_'+key); if(key!=='document') check(asset.width===fixture.width && asset.height===fixture.height && asset.type===(key==='receipt'?'RECEIPT':key==='pod'?'POD':'LOADING'),'IMAGE_METADATA_MISMATCH'); validTime(asset.createdAt,'ASSET_'+key); }
+  }
+  async function verifyState(label) {
+    const order=await get('/air-pickups/'+result('order').id); validateOrder(order);
+    check(order.status===(done('confirm')?'HANDED_OVER':done('receiptBatch')?'RECEIVED':'RECORDED') && order.evidenceStatus===expectedEvidence(),'ORDER_STATE_MISMATCH');
+    check(order.receiptBatchId===(done('receiptBatch')?result('receiptBatch').id:null) && order.handoverBatchId===(done('draft')?result('draft').id:null),'BATCH_LINK_MISMATCH');
+    if(done('receiptBatch')) { check(order.actualCartons===1 && order.actualPackages===1 && order.actualWeight===1 && order.actualWeightUnit==='KG','ACTUAL_QUANTITY_MISMATCH'); check(order.receivedAt===result('receiptBatch').receivedAt,'RECEIVED_TIME_NOT_PERSISTED'); validTime(order.receivedAt,'RECEIVED'); }
+    compareAssets(order.pickupDocuments,done('document')?['document']:[],'DOCUMENT');
+    compareAssets(order.receiptEvidence,done('receipt')?['receipt']:[],'RECEIPT');
+    const evidenceKeys=['pod','loading-1','loading-2','loading-3'].filter(done);
+    compareAssets(order.handoverEvidence,evidenceKeys,'HANDOVER');
+    const events=validateEvents(order);
+    let batch=null;
+    if(done('draft')) { batch=await get('/air-handover-batches/'+result('draft').id); check(batch.id===result('draft').id && batch.orders?.length===1 && batch.orders[0].id===order.id && batch.status===(done('confirm')?'CONFIRMED':'DRAFT') && batch.createdByUserId===identity.userId && batch.vehicleNo==='SYNTHETIC-DO-NOT-SHIP' && batch.driverName==='SYNTHETIC TEST ONLY','HANDOVER_BATCH_MISMATCH'); compareAssets(batch.evidence,evidenceKeys,'BATCH_EVIDENCE'); validTime(batch.createdAt,'BATCH_CREATED'); validTime(batch.updatedAt,'BATCH_UPDATED'); check(batch.handedOverAt===result('draft').handedOverAt,'DRAFT_TIME_CHANGED'); if(done('confirm')) { check(order.handedOverAt===batch.handedOverAt && batch.confirmedAt===result('confirm').confirmedAt,'HANDOVER_TIME_NOT_PERSISTED'); validTime(batch.confirmedAt,'CONFIRMED'); validTime(order.handedOverAt,'HANDED_OVER'); } else check(batch.confirmedAt===null && order.handedOverAt===null,'UNEXPECTED_CONFIRMATION'); }
+    const snapshot={label,at:iso(),order,batch,events}; report.latest=snapshot; proof(label,{orderId:order.id,status:order.status,evidenceStatus:order.evidenceStatus,eventCount:events.length}); return snapshot;
+  }
+  async function download(key) {
+    const fixture=FIXTURES.find(f=>f.key===key),asset=result(key); check(UUID.test(asset.id),'INVALID_ASSET_ID');
+    const downloaded=await request(asset.downloadPath,{binary:true}); const hash=await sha(downloaded.bytes);
+    check(downloaded.entry.contentType?.split(';')[0]===fixture.contentType && downloaded.bytes.byteLength===fixture.bytes && hash===fixture.sha256,'DOWNLOAD_BYTES_OR_SHA_MISMATCH_'+key);
+    downloaded.entry.sha256=hash; report.assetTransfers.push({key,direction:'download',assetId:asset.id,path:asset.downloadPath,bytes:downloaded.bytes.byteLength,sha256:hash,verifiedAt:iso()});
+  }
+  async function checkpoint(name,expected) {
+    if(journal.checkpoints[name]) { proof('RESTORED_CHECKPOINT_'+name,{previouslyVerifiedAt:journal.checkpoints[name].verifiedAt,historical:true}); return; }
+    const snapshot=await verifyState(name); check(snapshot.order.evidenceStatus===expected,'CHECKPOINT_STATE_MISMATCH');
+    const filters=[];
+    for(const state of ['NONE','PARTIAL','COMPLETE']) { const response=await request(BASE+'/air-pickups?search='+RUN+'&evidenceStatus='+state),payload=response.json; check(Array.isArray(payload.data) && payload.data.every(o=>o.id===snapshot.order.id),'FILTER_UNEXPECTED_ORDER'); const includes=payload.data.some(o=>o.id===snapshot.order.id); check(includes===(state===expected) && payload.data.length===(state===expected?1:0) && payload.pagination?.total===(state===expected?1:0),'FILTER_INCLUSION_EXCLUSION_FAILED_'+state); filters.push({state,includes,total:payload.pagination.total,requestSequence:response.entry.sequence}); }
+    journal.checkpoints[name]={verifiedAt:iso(),orderId:snapshot.order.id,status:snapshot.order.status,evidenceStatus:expected,filters,order:snapshot.order,batch:snapshot.batch}; persist(); proof('FILTERS_'+name,{filters});
+  }
+  async function write(key,path,body,headers={'Content-Type':'application/json'}) {
+    if(done(key)) { proof('RESTORED_WRITE_'+key,{id:result(key).id}); return result(key); }
+    check(!journal.halted && !Object.values(journal.steps).some(s=>s.status!=='DONE'),'UNRESOLVED_WRITE_OR_HALTED');
+    check(WRITE_ORDER.find(k=>!done(k))===key && Object.keys(journal.steps).length<LIMITS.writes,'WRITE_ORDER_OR_BUDGET');
+    await authenticate();
+    if(done('order')) await verifyState('BEFORE_'+key);
+    journal.steps[key]={status:'PENDING',method:body instanceof Uint8Array?'PUT':'POST',path,startedAt:iso(),...(body instanceof Uint8Array?{bytes:body.byteLength,sha256:await sha(body)}:{input:body??null})}; persist(); show(report);
+    const entry=journal.steps[key];
+    const response=await request(path,{method:entry.method,body:body instanceof Uint8Array?body:body===undefined?undefined:JSON.stringify(body),headers});
+    check(response.json?.data && UUID.test(response.json.data.id),'WRITE_RETURN_ID_REQUIRED');
+    entry.result=response.json.data; entry.completedAt=iso(); entry.http=response.entry.http; entry.status='DONE'; persist();
+    proof('WRITE_'+key,{id:entry.result.id,http:entry.http}); return entry.result;
+  }
+  async function upload(key,path) {
+    const fixture=FIXTURES.find(f=>f.key===key);
+    await write(key,path,fixtureBytes.get(key),{'Content-Type':fixture.contentType,[key==='document'?'X-Document-SHA256':'X-Image-SHA256']:fixture.sha256,...(key==='document'?{}:{'X-Image-Quality-Warnings':'','X-Image-Quality-Override':'false'})});
+    await download(key);
+  }
+  async function execute() {
+    acquired=true;
+    const saved=localStorage.getItem(KEY);
+    journal=saved?JSON.parse(saved):{revision:REVISION,runId:RUN,createdAt:iso(),requestCount:0,steps:{},checkpoints:{}};
+    check(journal.revision===REVISION && journal.runId===RUN && Number.isInteger(journal.requestCount) && journal.requestCount>=0 && journal.steps && journal.checkpoints,'JOURNAL_INVALID');
+    report.resumed=Boolean(saved); persist();
+    check(!journal.halted && Object.values(journal.steps).every(s=>s.status==='DONE'),'HALTED_OR_PENDING_WRITE_MANUAL_REVIEW_REQUIRED');
+    const completed=Object.keys(journal.steps); check(completed.length<=10 && completed.every((key,i)=>key===WRITE_ORDER[i]),'JOURNAL_SEQUENCE_INVALID');
+    await authenticate();
+    const customers=await get('/customers'); check(Array.isArray(customers),'CUSTOMER_LIST_REQUIRED');
+    const matches=customers.filter(c=>c.code==='TYG' && c.name==='TYG' && c.status==='ACTIVE');
+    check(matches.length===1 && UUID.test(matches[0].id),'EXACT_ACTIVE_TYG_CUSTOMER_REQUIRED');
+    const customer={id:matches[0].id,code:matches[0].code,name:matches[0].name,status:matches[0].status,type:matches[0].type};
+    if(journal.customer) check(JSON.stringify(journal.customer)===JSON.stringify(customer),'JOURNALED_CUSTOMER_CHANGED');
+    journal.customer=customer; report.customer=customer; persist();
+    const inventory=await request(BASE+'/air-pickups?search='+RUN); check(Array.isArray(inventory.json.data),'PREFLIGHT_LIST_REQUIRED');
+    if(done('order')) { check(inventory.json.data.length===1 && inventory.json.pagination?.total===1 && inventory.json.data[0].id===result('order').id && inventory.json.data[0].billNo===RUN,'JOURNALED_ORDER_INVENTORY_MISMATCH'); await verifyState('RESUME_GET_VERIFIED'); }
+    else check(inventory.json.data.length===0 && inventory.json.pagination?.total===0,'EXISTING_UNJOURNALED_ORDER_STOP');
+    proof('FIXED_BILL_PREFLIGHT',{matches:inventory.json.data.length,journalOwnsOrder:done('order')});
+    for(const fixture of FIXTURES) { const loaded=await request(PREFIX+fixture.file,{fixture:true,binary:true}); const hash=await sha(loaded.bytes); check(loaded.bytes.byteLength===fixture.bytes && hash===fixture.sha256,'LOCAL_FIXTURE_HASH_MISMATCH_'+fixture.key); fixtureBytes.set(fixture.key,loaded.bytes); report.assetTransfers.push({key:fixture.key,direction:'fixture',bytes:loaded.bytes.byteLength,sha256:hash}); }
+    await write('order',BASE+'/air-pickups',{customerId:customer.id,billNo:RUN,cargoName:SYNTHETIC,forecastCartons:1,forecastPackages:1,forecastWeight:1,forecastWeightUnit:'KG',remarks:SYNTHETIC});
+    await upload('document',BASE+'/air-pickups/'+result('order').id+'/documents?filename='+RUN+'-synthetic-80000.pdf');
+    await write('receiptBatch',BASE+'/air-pickup-receipt-batches',{receivedAt:iso(),orders:[{orderId:result('order').id,actualCartons:1,actualPackages:1,actualWeight:1,actualWeightUnit:'KG'}]});
+    await upload('receipt',BASE+'/air-pickup-receipt-batches/'+result('receiptBatch').id+'/evidence?filename='+RUN+'-receipt.png');
+    await write('draft',BASE+'/air-handover-batches',{orderIds:[result('order').id],handedOverAt:iso(),vehicleNo:'SYNTHETIC-DO-NOT-SHIP',driverName:'SYNTHETIC TEST ONLY'});
+    if(!done('confirm')) { const draft=await verifyState('DRAFT_GET_VERIFIED'); check(draft.batch.status==='DRAFT' && draft.batch.evidence.length===0,'DRAFT_NOT_EMPTY'); }
+    await write('confirm',BASE+'/air-handover-batches/'+result('draft').id+'/confirm');
+    await checkpoint('CONFIRMED_NONE','NONE');
+    await upload('pod',BASE+'/air-handover-batches/'+result('draft').id+'/evidence?type=POD&filename='+RUN+'-pod.png');
+    await checkpoint('POD_PARTIAL','PARTIAL');
+    for(const key of ['loading-1','loading-2','loading-3']) { await upload(key,BASE+'/air-handover-batches/'+result('draft').id+'/evidence?type=LOADING&filename='+RUN+'-'+key+'.png'); await checkpoint(key.toUpperCase(),key==='loading-3'?'COMPLETE':'PARTIAL'); }
+    await verifyState('FINAL_PERSISTENCE_GET_VERIFIED');
+    // Re-download every asset after all state transitions, proving the final links and bytes persist.
+    for(const fixture of FIXTURES) await download(fixture.key);
+    await authenticate();
+    check(['CONFIRMED_NONE','POD_PARTIAL','LOADING-1','LOADING-2','LOADING-3'].every(k=>journal.checkpoints[k]),'CHECKPOINTS_INCOMPLETE');
+    journal.completedAt=iso(); persist(); report.status='SYNTHETIC_HANDOVER_HTTP_PASS';
+  }
+  try { check(navigator.locks?.request,'BROWSER_LOCKS_REQUIRED'); await navigator.locks.request(KEY,{ifAvailable:true},async lock=> { check(lock,'ANOTHER_TAB_RUNNING'); await execute(); }); }
+  catch(error) { report.status='STOPPED_NOT_PASSED'; report.error=error instanceof Error?error.message:'UNKNOWN_ERROR'; if(acquired && journal) { journal.halted={at:iso(),reason:report.error}; try { persist(); } catch { report.journalSaveFailed=true; } } }
+  finally { report.completedAt=iso(); report.journal=journal; report.journalKey=KEY; report.note='No automatic retries. Pending/failed runs require manual investigation; never clear the journal or change the fixed bill number to bypass a stop.'; show(report); }
+});
+</script>
+</html>

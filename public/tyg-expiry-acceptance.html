@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://api-test.cmhubtool.com; base-uri 'none'; form-action 'none'">
+<title>TYG 新合成面单过期验收</title>
+<style>body{font:16px system-ui,sans-serif;max-width:1000px;margin:32px auto;padding:0 20px;color:#18212b}p{line-height:1.6}input,button,textarea{font:inherit;padding:10px}input{width:400px;max-width:90%}button{margin:4px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:16px}textarea{box-sizing:border-box;width:100%;height:280px}label{display:block;margin:12px 0}</style>
+<h1>新合成面单过期验收</h1>
+<p>固定批次 TYGEX20260916AABD。先定位新样本，再启动云端过期脚本，立即运行验收。全部请求均为 GET，使用当前 Test Admin 登录；不读取 Cookie、不续期、不打印。</p>
+<label>EXPIRED assetId <input id="expired" autocomplete="off"></label>
+<label>LIVE assetId <input id="live" autocomplete="off"></label>
+<label>云端 syncCursor（可选） <input id="cursor" autocomplete="off"></label>
+<button id="locate" disabled>定位固定样本</button><button id="run" disabled>验收过期</button><button id="download" disabled>下载验收报告</button>
+<pre id="output" role="status">正在检查测试域名…</pre><label>完整 JSON（可全选复制）<textarea id="json" readonly></textarea></label>
+<script>
+'use strict';
+const api='https://api-test.cmhubtool.com',runId='TYGEX20260916AABD';
+const hash='76551f9d4286b52d33b00abc25d8d57e81fe3ad6c390a53a541da57732b86fad';
+const ids={expired:document.getElementById('expired'),live:document.getElementById('live')};
+const cursorInput=document.getElementById('cursor'),output=document.getElementById('output'),json=document.getElementById('json');
+const locate=document.getElementById('locate'),run=document.getElementById('run'),download=document.getElementById('download');
+const allowed=location.origin==='https://test.cmhubtool.com';
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const report={revision:runId+'-v1',runId,origin:location.origin,target:api,status:'READY',requests:[],fixtureSha256:hash,fixtureBytes:80000};
+let identity=null,busy=false,ran=false,found=null;
+const check=(ok,message)=>{if(!ok)throw Error(message);};
+const digest=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+const show=()=>{output.textContent=json.value=JSON.stringify(report,null,2);download.disabled=!allowed;};
+if(allowed){locate.disabled=false;run.disabled=false;show();}else output.textContent='仅允许在 https://test.cmhubtool.com 运行。';
+async function get(path){
+ check(allowed,'TEST_ORIGIN_REQUIRED');
+ check(path==='/warehouse/v1/session'||/^\/warehouse\/v1\/shipments\?limit=500(?:&cursor=[A-Za-z0-9_-]+)?$/.test(path)||Object.values(ids).some(i=>uuid.test(i.value)&&path==='/warehouse/v1/label-assets/'+i.value+'/content'),'PATH_NOT_ALLOWED');
+ check(report.requests.length<30,'REQUEST_BUDGET_30');
+ const record={path,method:'GET',credentials:'include',status:'PENDING',at:new Date().toISOString()};report.requests.push(record);show();
+ const response=await fetch(api+path,{method:'GET',credentials:'include',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(10000)});
+ record.http=response.status;record.contentType=response.headers.get('content-type');
+ const reader=response.body.getReader(),chunks=[];let size=0;
+ while(true){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.length;if(size>2097152){await reader.cancel();throw Error('RESPONSE_BUDGET_2MB');}chunks.push(chunk.value);}
+ const bytes=new Uint8Array(size);let pos=0;for(const chunk of chunks){bytes.set(chunk,pos);pos+=chunk.length;}
+ const payload=record.contentType?.includes('application/json')?JSON.parse(new TextDecoder().decode(bytes)):null;
+ Object.assign(record,{status:'DONE',bytes:size,errorCode:payload?.error?.code??null});show();return {record,bytes,payload};
+}
+async function session(){
+ const {record,payload}=await get('/warehouse/v1/session');check(record.http===200,'SESSION_200_REQUIRED');const s=payload?.data;
+ check(s?.platformRole==='SYSTEM_ADMIN'&&s.userName==='Test Admin'&&s.passwordState==='ACTIVE'&&s.warehouseId,'EXISTING_TEST_ADMIN_REQUIRED');
+ check(s.permissions?.includes('scan.use')&&s.permissions.includes('shipments.view'),'ADMIN_PERMISSIONS_REQUIRED');
+ check(typeof s.sessionId==='string'&&typeof s.expiresAt==='string','SESSION_CONTRACT');
+ if(identity)check(s.sessionId===identity.sessionId&&s.userId===identity.userId&&s.expiresAt===identity.expiresAt&&s.warehouseId===identity.warehouseId,'SESSION_CHANGED_OR_RENEWED');else identity=s;
+ report.session={userName:s.userName,platformRole:s.platformRole,warehouseCode:s.warehouseCode,sessionFingerprint:await digest(new TextEncoder().encode(s.sessionId)),expiresAt:s.expiresAt};
+}
+async function sync(expectExpired){
+ let cursor=cursorInput.value.trim();check(!cursor||/^[A-Za-z0-9_-]{1,512}$/.test(cursor),'INVALID_CURSOR');const matches={};
+ for(let page=0;page<3;page++){
+  const {record,payload}=await get('/warehouse/v1/shipments?limit=500'+(cursor?'&cursor='+cursor:''));check(record.http===200&&Array.isArray(payload?.data),'SYNC_200_REQUIRED');
+  for(const s of payload.data){for(const suffix of ['EXPIRED','LIVE'])if(s.firstLegTrackingNo===runId+'O'+suffix){check(s.courierTrackingNo===runId+'T'+suffix,'FIXED_TRACKING_RELATION_REQUIRED');matches[suffix]=s;}}
+  if(matches.EXPIRED&&matches.LIVE)break;if(!payload.hasMore)break;check(payload.cursor&&payload.cursor!==cursor,'PAGINATION_STALLED');cursor=payload.cursor;
+ }
+ check(matches.EXPIRED&&matches.LIVE,'TWO_EXACT_FIXTURES_REQUIRED_WITHIN_3_PAGES');
+ for(const suffix of ['EXPIRED','LIVE']){const s=matches[suffix];if(expectExpired&&suffix==='EXPIRED'){check(s.labelAsset===null,'EXPIRED_LABEL_MUST_BE_EXCLUDED');if(found)check(s.id===found.EXPIRED.id,'EXPIRED_SHIPMENT_CHANGED');}
+ else{check(uuid.test(s.labelAsset?.id)&&s.labelAsset.sha256===hash&&s.labelAsset.byteSize===80000,'FIXTURE_LABEL_CONTRACT');const input=ids[suffix.toLowerCase()];if(input.value)check(input.value===s.labelAsset.id,'ASSET_ID_MISMATCH');input.value=s.labelAsset.id;}}
+ report[expectExpired?'syncAfterExpiry':'syncBeforeExpiry']=matches;show();return matches;
+}
+async function pdf(which){const r=await get('/warehouse/v1/label-assets/'+ids[which].value+'/content');check(r.record.http===200&&r.record.contentType?.includes('application/pdf'),'LIVE_PDF_200_REQUIRED');r.record.sha256=await digest(r.bytes);check(r.bytes.length===80000&&r.record.sha256===hash,'LIVE_PDF_HASH_REQUIRED');return r;}
+locate.onclick=async()=>{
+ if(busy||ran||!allowed)return;busy=true;locate.disabled=run.disabled=true;
+ try{report.status='LOCATING';await session();found=await sync(false);check(ids.expired.value!==ids.live.value,'DISTINCT_ASSETS_REQUIRED');await pdf('expired');await pdf('live');await session();report.status='FIXTURES_READY_START_CLOUD_ARM_THEN_RUN';}
+ catch(e){report.status='LOCATE_NOT_PASSED';report.error=e.message;}
+ finally{busy=false;run.disabled=false;show();}
+};
+run.onclick=async()=>{
+ if(busy||ran||!allowed)return;busy=ran=true;run.disabled=locate.disabled=true;for(const i of Object.values(ids))i.disabled=true;cursorInput.disabled=true;
+ report.startedAt=new Date().toISOString();report.status='RUNNING';delete report.error;
+ try{
+  check(uuid.test(ids.expired.value)&&uuid.test(ids.live.value)&&ids.expired.value!==ids.live.value,'TWO_DISTINCT_FIXED_ASSET_IDS_REQUIRED');
+  await session();
+  let expired;
+  // A bounded read-only handshake handles cloud command startup; no expiry mutation or renewal here.
+  for(let attempt=0;attempt<12;attempt++){
+   expired=await get('/warehouse/v1/label-assets/'+ids.expired.value+'/content');
+   if(expired.record.http===410)break;
+   check(expired.record.http===200,'EXPECTED_410_NOT_404_OR_OTHER_ERROR');
+   expired.record.sha256=await digest(expired.bytes);check(expired.bytes.length===80000&&expired.record.sha256===hash,'WAITING_FIXTURE_HASH_MISMATCH');
+   check(Date.now()-Date.parse(report.startedAt)<60000,'ARM_WAIT_BUDGET');await new Promise(resolve=>setTimeout(resolve,2500));
+  }
+  check(expired.record.http===410&&expired.record.errorCode==='LABEL_EXPIRED','EXPIRED_410_LABEL_EXPIRED_REQUIRED');
+  report.expired={assetId:ids.expired.value,http:410,errorCode:expired.record.errorCode};
+  await pdf('live');await sync(true);await session();
+  report.sameSessionWithoutRenewal=true;report.status='EXPIRY_AUTHENTICATED_HTTP_PASS';
+ }catch(e){report.status='NOT_PASSED';report.error=e.message;}
+ finally{report.completedAt=new Date().toISOString();busy=false;show();}
+};
+download.onclick=()=>{if(!allowed)return;const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='TYGEX20260916AABD-http-report.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+</script>
+</html>

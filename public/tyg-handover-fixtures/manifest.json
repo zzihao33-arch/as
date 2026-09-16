@@ -1,0 +1,54 @@
+[
+  {
+    "key": "receipt",
+    "file": "receipt.png",
+    "contentType": "image/png",
+    "bytes": 18088,
+    "sha256": "9a2d97335eff734ee5223832f0d6a12144bb1172453ce9d567c39ab645db7adb",
+    "width": 1000,
+    "height": 800
+  },
+  {
+    "key": "pod",
+    "file": "pod.png",
+    "contentType": "image/png",
+    "bytes": 18653,
+    "sha256": "842ba768221a46488e0af1ed452c849d0a9d6482aed84bbf64aa59489e77caf0",
+    "width": 1000,
+    "height": 800
+  },
+  {
+    "key": "loading-1",
+    "file": "loading-1.png",
+    "contentType": "image/png",
+    "bytes": 21019,
+    "sha256": "df7aa2225b7bcb40bdc5ca0eca21e7be43b793c114a74e27a0df984d0e934ea6",
+    "width": 1000,
+    "height": 800
+  },
+  {
+    "key": "loading-2",
+    "file": "loading-2.png",
+    "contentType": "image/png",
+    "bytes": 22482,
+    "sha256": "cfeede3455b9e9a773a66e0e0b63cb1e0186781e85c19586b6e9833171135d6a",
+    "width": 1000,
+    "height": 800
+  },
+  {
+    "key": "loading-3",
+    "file": "loading-3.png",
+    "contentType": "image/png",
+    "bytes": 24146,
+    "sha256": "40bd0c4d63593e0428b55f648ccd600d40363a07c7b1994515eba2794abd19e7",
+    "width": 1000,
+    "height": 800
+  },
+  {
+    "key": "document",
+    "file": "synthetic-80000.pdf",
+    "contentType": "application/pdf",
+    "bytes": 80000,
+    "sha256": "76551f9d4286b52d33b00abc25d8d57e81fe3ad6c390a53a541da57732b86fad"
+  }
+]
