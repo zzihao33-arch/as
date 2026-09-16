@@ -9,29 +9,34 @@
 <style>body{font:16px system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 24px;color:#18212b}button{font:inherit;padding:12px 20px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;padding:20px}p{line-height:1.6}</style>
 <h1>测试站只读 HTTP 验收</h1>
 <p>复用当前登录，检查固定合成面单的下载权限。仅发送 GET 请求，不读取或导出 Cookie，不保存密码，不打印面单。</p>
+<p><label for="asset">已核实的合成面单 ID（员工必填；管理员留空则从同步接口定位）</label><br><input id="asset" size="42" autocomplete="off"></p>
 <button id="run" disabled>运行一次权限验收</button>
 <pre id="result" role="status">正在检查测试环境…</pre>
 <script>
 'use strict';
-const revision = 'TYGHTTP20260916AABD-v1';
+const revision = 'TYGHTTP20260916AABD-v2';
 const api = 'https://api-test.cmhubtool.com';
-const assetPath = '/warehouse/v1/label-assets/24d5079a-5d7d-437b-a9c3-fa462245eca6/content';
+const assetInput = document.getElementById('asset');
+const assetPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const expectedSha256 = '76551f9d4286b52d33b00abc25d8d57e81fe3ad6c390a53a541da57732b86fad';
 const output = document.getElementById('result');
 const button = document.getElementById('run');
 const permitted = location.origin === 'https://test.cmhubtool.com';
-output.textContent = permitted ? '就绪。固定样本 TYGIS20260915SO0，预期 80000 字节。' : '此页面仅允许在测试域名运行。';
+output.textContent = permitted ? '就绪。仅验收 TYG 合成面单，预期 80000 字节及已知 SHA256。' : '此页面仅允许在测试域名运行。';
 button.disabled = !permitted;
 const check = (value, message) => { if (!value) throw new Error(message); };
 const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
 button.addEventListener('click', async () => {
   if (!permitted || button.disabled) return;
   button.disabled = true;
-  const report = { revision, startedAt: new Date().toISOString(), origin: location.origin, target: api, status: 'RUNNING', fixture: 'TYGIS20260915SO0', assetPath, requests: [] };
+  const enteredAssetId = assetInput.value.trim();
+  assetInput.disabled = true;
+  let assetPath = '';
+  const report = { revision, startedAt: new Date().toISOString(), origin: location.origin, target: api, status: 'RUNNING', requests: [] };
   const show = () => { output.textContent = JSON.stringify(report, null, 2); };
   async function get(path, credentials) {
-    check(path === '/warehouse/v1/session' || path === assetPath, 'PATH_NOT_ALLOWED');
-    check(report.requests.length < 4, 'REQUEST_BUDGET');
+    check(path === '/warehouse/v1/session' || path === '/warehouse/v1/shipments?limit=500' || (assetPath && path === assetPath), 'PATH_NOT_ALLOWED');
+    check(report.requests.length < 5, 'REQUEST_BUDGET');
     const record = { path, method: 'GET', credentials, startedAt: new Date().toISOString(), status: 'PENDING' };
     report.requests.push(record); show();
     const response = await fetch(api + path, { method: 'GET', credentials, cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(20000) });
@@ -68,6 +73,19 @@ button.addEventListener('click', async () => {
     if (low) check(identity.permissions.length === 2 && identity.permissions.includes('attendance.self_view') && identity.permissions.includes('attendance.appeal'), 'LOW_PERMISSION_SCOPE_CHANGED');
     if (admin) check(identity.permissions.includes('scan.use'), 'ADMIN_SCAN_PERMISSION_REQUIRED');
     report.identity = { loginName: identity.loginName, userName: identity.userName, platformRole: identity.platformRole, warehouseCode: identity.warehouseCode, scanPermission: identity.permissions.includes('scan.use'), sessionFingerprint: await digest(new TextEncoder().encode(identity.sessionId)) };
+    if (admin && !enteredAssetId) {
+      const inventory = await get('/warehouse/v1/shipments?limit=500', 'include');
+      check(inventory.record.http === 200 && Array.isArray(inventory.json?.data), 'SHIPMENT_INVENTORY_REQUIRED');
+      const fixture = inventory.json.data.find(row => /^TYG/.test(row.firstLegTrackingNo) && row.labelAsset?.sha256 === expectedSha256 && row.labelAsset?.byteSize === 80000 && assetPattern.test(row.labelAsset?.id));
+      check(fixture, 'CURRENT_SYNTHETIC_FIXTURE_NOT_FOUND');
+      assetPath = '/warehouse/v1/label-assets/' + fixture.labelAsset.id + '/content';
+      report.fixture = { tracking: fixture.firstLegTrackingNo, assetId: fixture.labelAsset.id, sha256: fixture.labelAsset.sha256, bytes: fixture.labelAsset.byteSize };
+      assetInput.value = fixture.labelAsset.id;
+    } else {
+      check(assetPattern.test(enteredAssetId), 'CONFIRMED_FIXTURE_ASSET_ID_REQUIRED');
+      assetPath = '/warehouse/v1/label-assets/' + enteredAssetId + '/content';
+    }
+    report.assetPath = assetPath;
     const authenticated = await get(assetPath, 'include');
     if (low) {
       check(authenticated.record.http === 403 && authenticated.record.errorCode === 'PERMISSION_DENIED', 'EXPECTED_AUTHENTICATED_403_PERMISSION_DENIED');
