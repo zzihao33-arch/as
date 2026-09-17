@@ -12,6 +12,7 @@ const AccountsPage = lazy(() => import('../pages/AccountsPage'));
 const RolesPage = lazy(() => import('../pages/RolesPage'));
 const AirPickupPage = lazy(() => import('../pages/AirPickupPage'));
 const SystemStatusPage = lazy(() => import('../pages/SystemStatusPage'));
+const IntegrationLogsPage = lazy(() => import('../pages/IntegrationLogsPage'));
 
 function RequireSession() {
   const session = useWarehouseSession();
@@ -66,6 +67,7 @@ function FirstAllowedRoute() {
     ['payroll.view', '/payroll'],
     ['accounts.view', '/admin/accounts'],
     ['roles.view', '/admin/roles'],
+    ['integration_logs.view', '/admin/integration-logs'],
     ['settings.printer', '/settings/printer'],
     ['settings.audio', '/settings/audio'],
     ['system_status.view', '/settings/system'],
@@ -124,6 +126,7 @@ export function AppRouter() {
           </Route>
           <Route element={<RequirePermission permission="accounts.view" />}><Route path="/admin/accounts" element={<AccountsPage />} /></Route>
           <Route element={<RequirePermission permission="roles.view" />}><Route path="/admin/roles" element={<RolesPage />} /></Route>
+          <Route element={<RequirePermission permission="integration_logs.view" />}><Route path="/admin/integration-logs" element={<IntegrationLogsPage />} /></Route>
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
