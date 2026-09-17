@@ -1,6 +1,7 @@
 import { Avatar, Button, Dropdown, Form, Input, Layout, Menu, Message, Modal, Select, Spin } from '@arco-design/web-react';
 import {
   BarChart3,
+  Bell,
   LayoutDashboard,
   LogOut,
   KeyRound,
@@ -19,6 +20,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { type ThemeMode, useTheme } from './theme/ThemeProvider';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 import { WAREHOUSE_MOCK_API_ENABLED } from '../features/session/warehouseApi';
+import { IntegrationLogsProvider, PushLogUnreadBadge } from '../features/integrationLogs/IntegrationLogsProvider';
 
 interface NavigationItem {
   key: string;
@@ -38,6 +40,7 @@ const navigationItems: NavigationItem[] = [
   ] },
   { key: '/admin/accounts', label: '账户管理', group: '管理中心', icon: Users, permissions: ['accounts.view'] },
   { key: '/admin/roles', label: '角色配置', group: '管理中心', icon: ShieldCheck, permissions: ['roles.view'] },
+  { key: '/admin/integration-logs', label: '客户推送日志', group: '管理中心', icon: Bell, permissions: ['integration_logs.view'] },
   { key: '/settings/printer', label: '打印机', group: '系统设置', icon: Printer, permissions: ['settings.printer'] },
   { key: '/settings/audio', label: '音效设置', group: '系统设置', icon: Volume2, permissions: ['settings.audio'] },
   { key: '/settings/system', label: '系统状态', group: '系统设置', icon: Settings2, permissions: ['system_status.view'] },
@@ -50,6 +53,10 @@ function getActiveItem(pathname: string, items: NavigationItem[]) {
 }
 
 export function AppShell() {
+  return <IntegrationLogsProvider><AppShellContent /></IntegrationLogsProvider>;
+}
+
+function AppShellContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -159,6 +166,7 @@ export function AppShell() {
                     <Menu.Item key={item.key}>
                       <Icon aria-hidden="true" size={17} strokeWidth={2} />
                       <span>{item.label}</span>
+                      {item.key === '/admin/integration-logs' && <PushLogUnreadBadge />}
                     </Menu.Item>
                   );
                 })}
@@ -254,6 +262,7 @@ export function AppShell() {
                     <button className={selected ? 'is-active' : ''} key={item.key} onClick={() => openRoute(item.key)}>
                       <Icon size={17} aria-hidden="true" />
                       {item.label}
+                      {item.key === '/admin/integration-logs' && <PushLogUnreadBadge />}
                     </button>
                   );
                 })}
