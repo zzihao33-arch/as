@@ -203,7 +203,6 @@ export function usePrintLogs() {
     setLogs(nextLogs);
     queueLogChanges({ entries: [newLog], deletedIds: evictedIds });
     setLastLogId(newLog.id);
-    return newLog;
   }, [queueLogChanges]);
 
   const clearLogsByType = useCallback((type: PrintLogType) => {

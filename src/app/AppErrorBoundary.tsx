@@ -1,4 +1,4 @@
-import { Button, Card } from 'tdesign-react';
+import { Button, Result } from '@arco-design/web-react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
 
@@ -49,16 +49,17 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     if (this.state.error) {
       return (
         <main className="cmhub-app-recovery" role="alert" aria-live="assertive">
-          <Card className="cmhub-app-recovery-card">
-            <div className="cmhub-app-recovery-result">
-              <AlertTriangle size={42} aria-hidden="true" />
-              <h1>工作台遇到异常，已保护当前页面地址</h1>
-              <p>请重新打开当前工作区；本机已保存的数据不会因本次异常被清除</p>
-              <Button theme="primary" icon={<RefreshCw size={16} />} onClick={this.retryCurrentPage}>
+          <Result
+            status="error"
+            icon={<AlertTriangle size={42} aria-hidden="true" />}
+            title="工作台遇到异常，已保护当前页面地址"
+            subTitle="请重新打开当前工作区；本机已保存的数据不会因本次异常被清除。"
+            extra={(
+              <Button type="primary" icon={<RefreshCw size={16} />} onClick={this.retryCurrentPage}>
                 重新打开当前工作区
               </Button>
-            </div>
-          </Card>
+            )}
+          />
         </main>
       );
     }
