@@ -3,46 +3,61 @@ import { Button, Drawer, Empty, Message, Pagination, Spin } from '@arco-design/w
 import { Bell, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import { getPushLog, listPushLogs, operationNames, type LogFilters, type PushLogDetail, type PushLogList } from '../features/integrationLogs/api';
 import { useIntegrationLogs } from '../features/integrationLogs/IntegrationLogsProvider';
+import { createLogListLoader, createLogReadAcknowledgement } from '../features/integrationLogs/requestLifecycle';
 
 const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { timeZone: 'America/New_York', hour12: false });
 const number = (value?: number) => value === undefined ? '—' : value.toLocaleString('en-US');
 export default function IntegrationLogsPage() {
   const notifications = useIntegrationLogs();
-  const { acknowledge } = notifications;
   const [filters, setFilters] = useState<LogFilters>({ page: 1, pageSize: 20 });
   const [search, setSearch] = useState('');
   const [period, setPeriod] = useState('24h');
   const [result, setResult] = useState<PushLogList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [readError, setReadError] = useState(false);
+  const [failedReadCursor, setFailedReadCursor] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<PushLogDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [tab, setTab] = useState<'request' | 'response'>('response');
-  const [refreshKey, setRefreshKey] = useState(0);
-  const readOnce = useRef(false);
-  const acknowledgeRef = useRef(acknowledge); acknowledgeRef.current = acknowledge;
+  const listLoader = useRef<ReturnType<typeof createLogListLoader> | null>(null);
+  const readAcknowledgement = useRef<ReturnType<typeof createLogReadAcknowledgement> | null>(null);
+  const acknowledgeRef = useRef(notifications.acknowledge); acknowledgeRef.current = notifications.acknowledge;
+  const lastNotificationCursor = useRef(notifications.state.cursor);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setFilters(old => old.search === search.trim() ? old : { ...old, search: search.trim(), page: 1 }), 300);
+    const timer = window.setTimeout(() => setFilters(old => (old.search ?? '') === search.trim() ? old : { ...old, search: search.trim(), page: 1 }), 300);
     return () => window.clearTimeout(timer);
   }, [search]);
   useEffect(() => {
-    const controller = new AbortController(); let active = true;
-    setLoading(true); setError(null);
-    const from = period === 'all' ? undefined : new Date(Date.now() - (period === '7d' ? 7 : 1) * 86_400_000).toISOString();
-    void listPushLogs({ ...filters, from }, controller.signal).then(data => {
-      if (!active) return;
-      setResult(data);
-      if (!readOnce.current) {
-        readOnce.current = true;
-        void acknowledgeRef.current(data.cursor).catch(() => { if (active) setReadError(true); });
-      }
-    }).catch(err => { if (active && err?.name !== 'AbortError') setError(err instanceof Error ? err.message : '日志加载失败。'); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; controller.abort(); };
-  }, [filters, period, refreshKey, notifications.state.cursor]);
+    const read = createLogReadAcknowledgement({ save: cursor => acknowledgeRef.current(cursor), onError: setFailedReadCursor });
+    readAcknowledgement.current = read;
+    return () => { read.dispose(); readAcknowledgement.current = null; };
+  }, []);
+  useEffect(() => {
+    let hasResult = false;
+    const loader = createLogListLoader({
+      load(signal) {
+        const from = period === 'all' ? undefined : new Date(Date.now() - (period === '7d' ? 7 : 1) * 86_400_000).toISOString();
+        return listPushLogs({ ...filters, from }, signal);
+      },
+      onStart() { setLoading(!hasResult); setError(null); },
+      onSuccess(data) {
+        hasResult = true; setResult(data); setLoading(false);
+        readAcknowledgement.current?.entry(data.cursor);
+      },
+      onError(err) { setError(err instanceof Error ? err.message : '日志加载失败。'); },
+      onIdle() { setLoading(false); },
+    });
+    listLoader.current = loader;
+    loader.refresh();
+    return () => { loader.dispose(); listLoader.current = null; };
+  }, [filters, period]);
+  useEffect(() => {
+    if (lastNotificationCursor.current === notifications.state.cursor) return;
+    lastNotificationCursor.current = notifications.state.cursor;
+    listLoader.current?.refresh();
+  }, [notifications.state.cursor]);
   useEffect(() => {
     if (!detailId) return;
     const controller = new AbortController(); let active = true;
@@ -52,11 +67,8 @@ export default function IntegrationLogsPage() {
     return () => { active = false; controller.abort(); };
   }, [detailId]);
   const filter = (key: 'clientId' | 'operation' | 'status', value: string) => setFilters(old => ({ ...old, [key]: value || undefined, page: 1 }));
-  const refresh = useCallback(() => { setRefreshKey(value => value + 1); void notifications.refresh(); }, [notifications.refresh]);
-  const markCurrentRead = async () => {
-    if (!result) return;
-    try { await acknowledge(result.cursor); setReadError(false); } catch { setReadError(true); }
-  };
+  const refresh = useCallback(() => { listLoader.current?.refresh(); void notifications.refresh(); }, [notifications.refresh]);
+  const markCurrentRead = () => { if (result) void readAcknowledgement.current?.acknowledge(result.cursor); };
   const copy = async (value: string) => {
     try { await navigator.clipboard.writeText(value); Message.success('已复制'); } catch { Message.error('复制失败，请手动选择文本复制。'); }
   };
@@ -77,7 +89,7 @@ export default function IntegrationLogsPage() {
       <span>{notifications.error ?? '新推送合并提醒；进入页面时已有记录标为已读，后续新增记录继续累计。'}</span></div>
       {notifications.state.unreadCount > 0 && <Button size="small" onClick={() => void markCurrentRead()}>标记当前记录已读</Button>}
     </div>
-    {readError && <div className="push-logs-error" role="alert">已读状态未能保存。<button onClick={() => void markCurrentRead()}>重试</button></div>}
+    {failedReadCursor !== null && <div className="push-logs-error" role="alert">已读状态未能保存。<button onClick={() => void readAcknowledgement.current?.acknowledge(failedReadCursor)}>重试</button></div>}
     <div className="push-logs-metrics">
       <div><span>筛选范围内推送</span><strong>{number(result?.metrics.total)}</strong></div>
       <div className="is-success"><span>成功</span><strong>{number(result?.metrics.success)}</strong></div>
@@ -101,7 +113,7 @@ export default function IntegrationLogsPage() {
           <th>推送时间 · 纽约</th><th>客户</th><th>接口</th><th>单号</th><th>结果</th><th>状态码</th><th>耗时</th><th>Request ID</th><th>操作</th>
         </tr></thead><tbody>{result?.records.map(row => <tr key={row.id} className={row.outcome === 'failure' ? 'is-failure' : ''}>
           <td className="push-log-mono">{formatTime(row.occurredAt)}</td><td>{row.clientName ?? '未识别客户'}</td><td>{operationNames[row.operation] ?? row.operation}</td>
-          <td className="push-log-mono"><span className="push-log-ellipsis" title={row.reference ?? ''}>{row.reference ?? '—'}</span></td>
+          <td className="push-log-mono"><span className="push-log-ellipsis" title={row.reference ?? ''}>{row.reference ?? '—'}</span>{row.relatedReference && <span className="push-log-ellipsis push-log-related-reference" title={`转单号：${row.relatedReference}`}>转单：{row.relatedReference}</span>}</td>
           <td><span className={`push-log-result ${row.outcome}`}>{row.outcome === 'success' ? '成功' : '失败'}</span></td>
           <td className="push-log-mono">{row.httpStatus}</td><td className="push-log-mono">{row.durationMs < 1000 ? `${row.durationMs}ms` : `${(row.durationMs / 1000).toFixed(2)}s`}</td>
           <td className="push-log-mono"><span className="push-log-ellipsis" title={row.requestId}>{row.requestId}</span></td><td><button aria-label={`查看 ${row.reference ?? row.requestId} 的推送详情`} onClick={() => setDetailId(row.id)}>查看</button></td>
@@ -117,7 +129,7 @@ export default function IntegrationLogsPage() {
       {detailError ? <div role="alert" className="push-logs-error">{detailError}</div> : !detail ? <Spin /> : <div className="push-log-detail">
         <div><strong>{detail.clientName ?? '未识别客户'} · {operationNames[detail.operation] ?? detail.operation}</strong><p className="push-log-mono">{detail.reference ?? '无关联单号'}<br />{formatTime(detail.occurredAt)}（纽约）</p></div>
         <div className={`push-log-callout ${detail.outcome}`}><strong>HTTP {detail.httpStatus} · {detail.outcome === 'success' ? '处理成功' : detail.errorCode ?? '请求失败'}</strong><p>{detail.outcome === 'success' ? '本次接口请求已成功处理。' : '请结合错误码与 Request ID 核对请求及服务日志。'}</p></div>
-        <dl><dt>客户</dt><dd>{detail.clientName ?? '未识别客户'}</dd><dt>接口</dt><dd className="push-log-mono">{detail.method} {detail.endpoint}</dd><dt>Request ID</dt><dd className="push-log-mono">{detail.requestId}</dd><dt>处理耗时</dt><dd>{detail.durationMs} ms</dd><dt>完成时间</dt><dd>{formatTime(detail.completedAt)}</dd></dl>
+        <dl><dt>客户</dt><dd>{detail.clientName ?? '未识别客户'}</dd>{detail.relatedReference && <><dt>转单号</dt><dd className="push-log-mono">{detail.relatedReference}</dd></>}<dt>接口</dt><dd className="push-log-mono">{detail.method} {detail.endpoint}</dd><dt>Request ID</dt><dd className="push-log-mono">{detail.requestId}</dd><dt>处理耗时</dt><dd>{detail.durationMs} ms</dd><dt>完成时间</dt><dd>{formatTime(detail.completedAt)}</dd></dl>
         <div className="push-log-tabs" role="tablist" aria-label="脱敏摘要"><button role="tab" aria-selected={tab === 'request'} onClick={() => setTab('request')}>请求摘要</button><button role="tab" aria-selected={tab === 'response'} onClick={() => setTab('response')}>响应摘要</button></div>
         <pre tabIndex={0} aria-label={tab === 'request' ? '请求脱敏摘要' : '响应脱敏摘要'}>{JSON.stringify(tab === 'request' ? detail.requestSummary : detail.responseSummary, null, 2)}</pre>
         {detail.outcome === 'failure' && <div className="push-log-retry"><strong>关于失败重推</strong><p>请客户保留原幂等键和完全相同的请求内容重试；修改转单号或面单时应使用新幂等键。本页面不代客户重放请求。</p></div>}

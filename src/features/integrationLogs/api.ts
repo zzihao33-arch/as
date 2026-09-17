@@ -1,10 +1,11 @@
 import { WAREHOUSE_API_BASE, WarehouseApiError } from '../session/warehouseApi';
 import type { NotificationSnapshot } from './notificationState';
+import { withLogRequestTimeout } from './requestLifecycle';
 
 export interface PushLog {
   id: string; occurredAt: string; completedAt: string; requestId: string;
   clientId: string | null; clientName: string | null; operation: string; method: string;
-  endpoint: string; reference: string | null; httpStatus: number;
+  endpoint: string; reference: string | null; relatedReference?: string | null; httpStatus: number;
   outcome: 'success' | 'failure'; durationMs: number; errorCode: string | null;
 }
 export interface PushLogDetail extends PushLog { requestSummary: object; responseSummary: object }
@@ -15,12 +16,14 @@ export interface PushLogList {
 }
 export interface LogFilters { page: number; pageSize: number; clientId?: string; operation?: string; status?: string; search?: string; from?: string; to?: string }
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/integration-logs${path}`, {
-    ...init, credentials: 'include', headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '推送日志暂时不可用，请稍后重试。');
-  return payload.data as T;
+  return withLogRequestTimeout(async signal => {
+    const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/integration-logs${path}`, {
+      ...init, signal, credentials: 'include', headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '推送日志暂时不可用，请稍后重试。');
+    return payload.data as T;
+  }, init.signal);
 }
 export function listPushLogs(filters: LogFilters, signal?: AbortSignal) {
   const params = new URLSearchParams();
