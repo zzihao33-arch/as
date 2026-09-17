@@ -70,7 +70,16 @@ function atomicFixture(existing = false, expired = false, failure = '') {
       if (sql.includes('FROM label_assets') && sql.includes('WHERE id =')) return [[{ id: 'asset', content_sha256: parseTygLabelPush(labelBody).pdf.sha256, asset_status: 'READY', expires_at: new Date(Date.now() + (expired ? -1000 : 86400000)), bytes_deleted_at: null }]];
       if (sql.includes('FROM label_assets')) return [existing ? [{ id: 'asset' }] : []];
       if (sql.includes('FROM print_attempts')) return [[{ printed: 1 }]];
-      if (sql.includes('MAX(version_no)')) return [[{ version_no: existing ? 3 : null }]];
+      if (sql.includes('MAX(version_no)')) {
+        // Production grants SELECT/INSERT only on the append-only version table.
+        if (failure === 'version-permissions' && /FOR UPDATE|LOCK IN SHARE MODE/i.test(sql)) {
+          throw Object.assign(new Error('SELECT with locking clause command denied'), { code: 'ER_TABLEACCESS_DENIED_ERROR', errno: 1142 });
+        }
+        // An ordinary SELECT may see an older REPEATABLE READ snapshot. Version
+        // allocation must read the latest committed version after the parent lock.
+        if (failure === 'version-permissions' && existing && !/FOR SHARE/i.test(sql)) return [[{ version_no: 2 }]];
+        return [[{ version_no: existing ? 3 : null }]];
+      }
       if (sql.startsWith('INSERT INTO inbound_messages') && failure === 'message') throw new Error('message failed');
       return [{ affectedRows: 1 }];
     },
@@ -79,6 +88,23 @@ function atomicFixture(existing = false, expired = false, failure = '') {
   return { calls, steps, keys, push: () => api.pushLabel({ client, requestId: 'request', idempotencyKey: 'tyg-label-test', body: labelBody }) };
 }
 describe('TYG v1.1 atomic publication', () => {
+  for (const scenario of [
+    { name: 'new label', existing: false, expired: false, operation: 'CREATED', version: 1 },
+    { name: 'duplicate label', existing: true, expired: false, operation: 'DUPLICATE', version: 3 },
+    { name: 'restored label after another committed version', existing: true, expired: true, operation: 'FILE_RESTORED', version: 4 },
+  ]) {
+    it(`publishes ${scenario.name} with SELECT/INSERT-only version permissions`, async () => {
+      const f = atomicFixture(scenario.existing, scenario.expired, 'version-permissions');
+      const result = await f.push();
+      assert.equal(result.status, 200);
+      assert.equal((result.body.data as Record<string, unknown>).operation, scenario.operation);
+      assert.equal((result.body.data as Record<string, unknown>).labelVersion, scenario.version);
+      assert.deepEqual(f.steps, ['storage', 'connection', 'begin', 'commit']);
+      const parentLock = f.calls.findIndex(c => c.sql.includes('FROM air_pickup_orders') && c.sql.includes('FOR UPDATE'));
+      const versionRead = f.calls.findIndex(c => c.sql.includes('MAX(version_no)'));
+      assert.ok(parentLock >= 0 && parentLock < versionRead, 'serialize writers on the parent before reading versions');
+    });
+  }
   it('stages before the only transaction, retaining hashes without Base64', async () => {
     const parsed = parseTygLabelPush(labelBody);
     assert.equal(parsed.body.labelBase64, undefined);

@@ -217,7 +217,10 @@ export function createTygV11Integration(dependencies: { mysql: Pool; redis: Redi
 }
 
 async function nextVersion(connection: PoolConnection, shipmentId: string, increment: boolean): Promise<number> {
-  const [rows] = await connection.execute<(RowDataPacket & { version_no: number | null })[]>('SELECT MAX(version_no) AS version_no FROM tyg_label_versions WHERE shipment_id = ? FOR UPDATE', [shipmentId]);
+  // The caller serializes writers with the air-order and shipment row locks.
+  // FOR SHARE keeps a current read under REPEATABLE READ while requiring only
+  // SELECT on this append-only table (the runtime account has SELECT/INSERT).
+  const [rows] = await connection.execute<(RowDataPacket & { version_no: number | null })[]>('SELECT MAX(version_no) AS version_no FROM tyg_label_versions WHERE shipment_id = ? FOR SHARE', [shipmentId]);
   const current = Number(rows[0]?.version_no ?? 0);
   return increment ? current + 1 : current || 1;
 }
