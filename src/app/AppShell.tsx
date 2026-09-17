@@ -40,7 +40,7 @@ const navigationItems: NavigationItem[] = [
   ] },
   { key: '/admin/accounts', label: '账户管理', group: '管理中心', icon: Users, permissions: ['accounts.view'] },
   { key: '/admin/roles', label: '角色配置', group: '管理中心', icon: ShieldCheck, permissions: ['roles.view'] },
-  { key: '/admin/integration-logs', label: '客户推送日志', group: '管理中心', icon: Bell, permissions: ['integration_logs.view'] },
+  { key: '/admin/integration-logs', label: '推送日志', group: '管理中心', icon: Bell, permissions: ['integration_logs.view'] },
   { key: '/settings/printer', label: '打印机', group: '系统设置', icon: Printer, permissions: ['settings.printer'] },
   { key: '/settings/audio', label: '音效设置', group: '系统设置', icon: Volume2, permissions: ['settings.audio'] },
   { key: '/settings/system', label: '系统状态', group: '系统设置', icon: Settings2, permissions: ['system_status.view'] },

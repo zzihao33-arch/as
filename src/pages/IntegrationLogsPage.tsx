@@ -75,7 +75,7 @@ export default function IntegrationLogsPage() {
 
   return <section className="push-logs-page" aria-labelledby="push-logs-title">
     <header className="push-logs-header">
-      <div><h1 id="push-logs-title">客户推送日志</h1><p>集中查看所有客户的入站推送、处理结果与失败原因</p></div>
+      <div><h1 id="push-logs-title">推送日志</h1><p>集中查看所有客户的入站推送、处理结果与失败原因</p></div>
       <div className="push-logs-actions">
         <span className={`push-logs-live ${notifications.error ? 'is-offline' : ''}`}><i />{notifications.error ? '连接异常' : notifications.lastUpdated ? '实时监测中' : '正在连接'}</span>
         <Button onClick={notifications.toggleAudio} icon={notifications.muted ? <VolumeX size={15} /> : <Volume2 size={15} />}>
