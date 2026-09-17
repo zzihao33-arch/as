@@ -50,7 +50,7 @@ Existing SELECT on clients is used for client names/options. No new grants on bu
 ## Risks and limitations
 
 - Audit is best effort: process termination, database outage, or the 256-pending-write capacity limit can lose attempts. Responses are never rewritten to pretend ingestion failed. Events `integration_audit_write_failed`, `integration_audit_queue_full`, `integration_audit_capture_failed` contain no secrets. Graceful shutdown drains writes. There is no fabricated historical backfill.
-- Serialized short audit transactions use the existing pool; query timeouts are 5 seconds. Under sustained load, monitor audit failures and database pool contention. A dedicated audit pool may be appropriate if observed volume warrants it.
+- Superseded by the review correction below: audit writes now have a dedicated single-connection pool and a whole-operation deadline; they cannot occupy business-pool connections.
 - No automatic log retention policy is introduced. Historical growth needs monitoring; notification counts and filtered metrics require reads over relevant log history. Ordinary users cannot delete/update audit rows.
 - Identifier fields must remain operational IDs; known credential patterns are scrubbed, but arbitrary secrets disguised as tracking references cannot be semantically recognized. All unstructured payload data is omitted.
 - Real MySQL execution/grants/concurrency remains pending until main agent runs the supplied verifier. Local runtime tests alone do not prove MySQL DDL compatibility.
@@ -58,3 +58,13 @@ Existing SELECT on clients is used for client names/options. No new grants on bu
 ## Commit
 
 This report belongs to the scoped backend implementation commit; exact SHA is returned to main agent after commit. No frontend/root package or unrelated workspace changes are included.
+
+## Pre-release review corrections
+
+Initial scoped commit: `6e94ee9`. Main-agent execution against real MySQL 8.0.45 exposed error 1064 because `cursor` was used as an unquoted alias. The alias is now backtick-quoted. The existing real SQL verifier is the definitive reproduction; the runtime query-boundary regression also confirms the emitted SQL quotes it. Full isolated MySQL rerun is pending the main agent.
+
+Review reproduced 20 concurrent appends requesting 20 business-pool leases. Corrections: dedicated `integrationAuditMysql` pool, connectionLimit 1, waitForConnections false, connectTimeout 5000; shutdown closes it. The bounded middleware queue now has exactly one active writer and expires stale queued attempts. A five-second deadline includes queue delay, acquisition, BEGIN, both statements and COMMIT. Active connections are destroyed at timeout, late acquisitions are destroyed immediately, and guards after awaits prohibit late statements/commit. A COMMIT timeout is an uncertain result and is not retried. Tests stall each phase independently and assert timely rejection and connection destruction; runtime DB wiring tests verify isolation, capacity and shutdown.
+
+TYG label push reference now uses originalTrackingNo; relatedReference preserves transferTrackingNo. The additive 018 migration includes a nullable indexed related_reference column (018 has not been applied to the business schema). Bounded sanitized airWaybillNo is retained in the allowlisted summary. Search covers both tracking numbers and air bill. The real SQL verifier now tests all three and additionally holds the allocator lock to confirm the independent audit deadline leaves the business pool available and allows a later append.
+
+Red evidence: runtime tests failed on unquoted alias, air bill chosen instead of original tracking, 12 concurrent writers instead of 1, and acquisition never completing at deadline. Additional DB wiring regression failed five child-process checks for a missing isolated audit pool. Green: **207 backend tests, 18 migration checks, typecheck, build and verifier syntax pass**. No frontend files changed in this correction.

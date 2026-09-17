@@ -9,7 +9,12 @@ function check(serviceEnvironment: string | undefined, keyEnvironment: 'test' | 
   const script = `
     import assert from 'node:assert/strict';
     const { requireApiKey } = await import(${JSON.stringify(new URL('../src/auth.js', import.meta.url).href)});
-    const { mysql, redis, closeConnections } = await import(${JSON.stringify(new URL('../src/db.js', import.meta.url).href)});
+    const { mysql, integrationAuditMysql, redis, closeConnections } = await import(${JSON.stringify(new URL('../src/db.js', import.meta.url).href)});
+    assert.ok(integrationAuditMysql && integrationAuditMysql !== mysql, 'Audit writes need a separate pool');
+    assert.equal(integrationAuditMysql.pool.config.connectionLimit, 1);
+    assert.equal(integrationAuditMysql.pool.config.waitForConnections, false);
+    let auditPoolClosed = false;
+    integrationAuditMysql.end = async () => { auditPoolClosed = true; };
     const { issueApiKey } = await import(${JSON.stringify(new URL('../src/apiKeys.js', import.meta.url).href)});
     const issued = issueApiKey(${JSON.stringify(keyEnvironment)});
     let selectSql = ''; let selectArgs;
@@ -34,6 +39,7 @@ function check(serviceEnvironment: string | undefined, keyEnvironment: 'test' | 
       assert.deepEqual(selectArgs, [issued.keyId, ${JSON.stringify(keyEnvironment.toUpperCase())}]);
     }
     await closeConnections();
+    assert.equal(auditPoolClosed, true);
   `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8', timeout: 15000 });
   if (expected === 0) {

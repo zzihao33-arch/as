@@ -25,6 +25,7 @@ CREATE TABLE integration_push_logs (
   method VARCHAR(8) NOT NULL,
   endpoint VARCHAR(160) NOT NULL,
   reference VARCHAR(128) NULL,
+  related_reference VARCHAR(128) NULL,
   http_status SMALLINT UNSIGNED NOT NULL,
   duration_ms INT UNSIGNED NOT NULL,
   error_code VARCHAR(64) NULL,
@@ -35,6 +36,7 @@ CREATE TABLE integration_push_logs (
   KEY idx_integration_push_time (occurred_at, id),
   KEY idx_integration_push_request (request_id),
   KEY idx_integration_push_reference (reference),
+  KEY idx_integration_push_related_reference (related_reference),
   CHECK (http_status BETWEEN 100 AND 599),
   CHECK (JSON_STORAGE_SIZE(request_summary) <= 2048),
   CHECK (JSON_STORAGE_SIZE(response_summary) <= 2048)

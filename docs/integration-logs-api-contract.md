@@ -12,11 +12,13 @@ Query: `page` (1–10000, default 1), `pageSize` (1–100, default 20), `clientI
 
 Metrics and total cover the full filtered result at the returned cursor, not just the page. Clients are the available integration clients, sorted by name (up to 1000). Records sort newest audit ID first. No historical attempts are synthesized.
 
-`LogRecord = { id: string, occurredAt: string, completedAt: string, requestId: string, clientId: string|null, clientName: string|null, operation: string, method: string, endpoint: string, reference: string|null, httpStatus: number, outcome: 'success'|'failure', durationMs: number, errorCode: string|null }`.
+`LogRecord = { id: string, occurredAt: string, completedAt: string, requestId: string, clientId: string|null, clientName: string|null, operation: string, method: string, endpoint: string, reference: string|null, relatedReference: string|null, httpStatus: number, outcome: 'success'|'failure', durationMs: number, errorCode: string|null }`.
+
+For TYG label pushes, `reference` contains `originalTrackingNo` and `relatedReference` contains `transferTrackingNo`. Both are bounded sanitized operational identifiers. `requestSummary.airWaybillNo` preserves a similarly bounded air bill number when supplied. `search` matches request ID, either tracking reference, or that air bill number.
 
 ## GET `/:id`
 
-`data = LogRecord & { requestSummary: object, responseSummary: object }`. Missing ID returns 404. Summaries contain only allowlisted structural metadata: body format, item counts, PDF omission flag, content length, HTTP status and machine error code. No credentials, headers, response message text, PDFs/base64, recipient addresses, contact data or full raw bodies are retained. References/request IDs are bounded operational identifiers and must never be used to carry secrets. Endpoint is a route template, not the raw URL or query string.
+`data = LogRecord & { requestSummary: object, responseSummary: object }`. Missing ID returns 404. Summaries contain only allowlisted metadata: body format, item counts, PDF omission flag, content length, bounded air bill number, HTTP status and machine error code. No credentials, headers, response message text, PDFs/base64, recipient addresses, contact data or full raw bodies are retained. References/request IDs are bounded operational identifiers and must never be used to carry secrets. Endpoint is a route template, not the raw URL or query string.
 
 ## GET `/notifications`
 
@@ -29,3 +31,5 @@ JSON `{ cursor: string }`. `data = { readCursor: string }`. Acknowledges at most
 ## Durability and ordering
 
 Each completed supported inbound mutation creates a separate attempt, even for an idempotency replay or duplicate request ID. Middleware runs before parsers/auth and records normal responses, parser errors, authentication/scope/rate-limit failures and unexpected errors. Audit persistence runs independently after response completion, outside ingestion transactions. A short singleton allocator transaction serializes ID allocation through commit, so later visible IDs cannot hide a lower uncommitted ID. The observed watermark never uses an auto-increment high-water mark. Storage failure is fail-open with a bounded diagnostic; this is a best-effort audit (process termination/storage failure may lose attempts), not a transactional receipt. No audit failure changes the ingestion response. Graceful shutdown drains pending writes.
+
+Audit writes use a separate single-connection pool with no pool wait queue, a serialized worker and at most 256 pending records. The five-second deadline includes worker queue delay, connection acquisition, BEGIN, statements and COMMIT. Expired queued records are dropped with a diagnostic. A transaction timeout destroys its connection; an acquisition arriving after its timeout is also destroyed. Shutdown closes the dedicated pool. This prevents an audit sequence lock from consuming business-pool connections.

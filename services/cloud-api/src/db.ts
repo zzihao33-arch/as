@@ -15,6 +15,22 @@ export const mysql = createPool({
   enableKeepAlive: true,
 });
 
+// Audit storage cannot consume the business pool while waiting for its sequence
+// lock. The middleware has one bounded worker; reject accidental extra leases.
+export const integrationAuditMysql = createPool({
+  host: config.mysql.host,
+  port: config.mysql.port,
+  database: config.mysql.database,
+  user: config.mysql.user,
+  password: config.mysql.password,
+  connectionLimit: 1,
+  waitForConnections: false,
+  connectTimeout: 5000,
+  charset: 'utf8mb4',
+  timezone: 'Z',
+  enableKeepAlive: true,
+});
+
 export const redis = new Redis(config.redisUrl, {
   enableOfflineQueue: false,
   maxRetriesPerRequest: 1,
@@ -22,5 +38,5 @@ export const redis = new Redis(config.redisUrl, {
 });
 
 export async function closeConnections(): Promise<void> {
-  await Promise.allSettled([mysql.end(), redis.quit()]);
+  await Promise.allSettled([mysql.end(), integrationAuditMysql.end(), redis.quit()]);
 }

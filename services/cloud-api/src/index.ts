@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { config } from './config.js';
 import { requireApiKey, requireScope } from './auth.js';
-import { closeConnections, mysql, redis } from './db.js';
+import { closeConnections, integrationAuditMysql, mysql, redis } from './db.js';
 import { ApiError, normalizeApiError } from './errors.js';
 import { createLabelAssetModule } from './labelAssets.js';
 import { createLabelRetentionWorker } from './labelRetention.js';
@@ -35,7 +35,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const integrationLogs = createIntegrationLogs({ mysql });
+const integrationLogs = createIntegrationLogs({ mysql, auditMysql: integrationAuditMysql });
 const integrationAudit = createIntegrationAudit({ append: integrationLogs.append });
 app.use(integrationAudit.middleware);
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type RequestHandler } from 'express';
-import type { Pool } from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { ApiError } from './errors.js';
 import { requireWarehousePermission } from './warehouseAccess.js';
@@ -8,7 +8,7 @@ import { requireWarehousePermission } from './warehouseAccess.js';
 type Summary = Record<string, string | number | boolean>;
 export type IntegrationAttempt = {
   occurredAt: Date; completedAt: Date; requestId: string; clientId: string | null;
-  operation: string; method: string; endpoint: string; reference: string | null;
+  operation: string; method: string; endpoint: string; reference: string | null; relatedReference?: string | null;
   httpStatus: number; durationMs: number; errorCode: string | null;
   requestSummary: Summary; responseSummary: Summary;
 };
@@ -17,7 +17,9 @@ export function safeSummary(body: unknown): Summary {
   if (Buffer.isBuffer(body)) return { format: 'binary', bytes: body.length, pdfOmitted: true };
   if (!body || typeof body !== 'object') return { format: 'unavailable' };
   const value = body as Record<string, unknown>;
-  return { format: 'json', itemCount: Array.isArray(value.shipments) ? value.shipments.length : Array.isArray(value.items) ? value.items.length : 0, pdfOmitted: true };
+  const airWaybillNo = identifier(value.airWaybillNo);
+  return { format: 'json', itemCount: Array.isArray(value.shipments) ? value.shipments.length : Array.isArray(value.items) ? value.items.length : 0, pdfOmitted: true,
+    ...(airWaybillNo ? { airWaybillNo } : {}) };
 }
 function identifier(value: unknown, max = 128): string | null {
   return typeof value === 'string' && value.length <= max && /^[\p{L}\p{N}_.:/ -]+$/u.test(value)
@@ -25,11 +27,13 @@ function identifier(value: unknown, max = 128): string | null {
 }
 // Register before parsers/auth. Pending writes hold only small allowlisted records.
 export function createIntegrationAudit(options: {
-  append: (attempt: IntegrationAttempt) => Promise<void>;
+  append: (attempt: IntegrationAttempt, deadlineMs?: number) => Promise<void>;
   onFailure?: (value: { event: string }) => void;
   maxPending?: number;
+  maxLatencyMs?: number;
 }) {
   const pending = new Set<Promise<void>>();
+  let tail = Promise.resolve();
   const report = (event: string) => {
     try { (options.onFailure ?? (value => console.error(value)))({ event }); } catch { /* telemetry also fails open */ }
   };
@@ -66,12 +70,21 @@ export function createIntegrationAudit(options: {
         const attempt: IntegrationAttempt = {
           occurredAt, completedAt: new Date(), requestId: identifier(req.requestId, 64) ?? randomUUID(),
           clientId: req.client?.id ?? null, operation, method: req.method, endpoint,
-          reference: pdfReference ?? identifier(req.body?.firstLegTrackingNo ?? req.body?.batchId ?? req.body?.airWaybillNo),
+          reference: pdfReference ?? identifier(req.body?.originalTrackingNo ?? req.body?.firstLegTrackingNo ?? req.body?.batchId ?? req.body?.airWaybillNo),
+          relatedReference: identifier(req.body?.transferTrackingNo),
           httpStatus, durationMs: Math.min(2147483647, Math.round(performance.now() - started)),
           errorCode: httpStatus >= 400 ? (errorCode ?? (httpStatus === 499 ? 'CLIENT_DISCONNECTED' : 'HTTP_ERROR')) : null,
           requestSummary, responseSummary: { httpStatus, ...(httpStatus >= 400 && errorCode ? { errorCode } : {}) },
         };
-        const task = Promise.resolve().then(() => options.append(attempt)).catch(() => report('integration_audit_write_failed'));
+        const deadline = performance.now() + (options.maxLatencyMs ?? 5000);
+        // Exactly one active writer. Queued entries expire instead of building
+        // an unbounded shutdown delay during a database outage.
+        const task = tail.then(async () => {
+          const remaining = deadline - performance.now();
+          if (remaining <= 0) { report('integration_audit_queue_expired'); return; }
+          await options.append(attempt, remaining);
+        }).catch(() => report('integration_audit_write_failed'));
+        tail = task;
         pending.add(task); void task.finally(() => pending.delete(task));
       } catch { report('integration_audit_capture_failed'); }
     };
@@ -98,22 +111,22 @@ function dateFilter(value: unknown): Date | null {
 }
 type LogRow = RowDataPacket & {
   id: string; occurred_at: Date; completed_at: Date; request_id: string; client_id: string | null; client_name: string | null;
-  operation: string; method: string; endpoint: string; reference: string | null; http_status: number; duration_ms: number; error_code: string | null;
+  operation: string; method: string; endpoint: string; reference: string | null; related_reference?: string | null; http_status: number; duration_ms: number; error_code: string | null;
   request_summary?: Summary | string; response_summary?: Summary | string;
 };
 function record(row: LogRow) {
   return { id: row.id, occurredAt: row.occurred_at.toISOString(), completedAt: row.completed_at.toISOString(), requestId: row.request_id,
     clientId: row.client_id, clientName: row.client_name, operation: row.operation, method: row.method, endpoint: row.endpoint,
-    reference: row.reference, httpStatus: row.http_status, outcome: row.http_status < 400 ? 'success' as const : 'failure' as const,
+    reference: row.reference, relatedReference: row.related_reference ?? null, httpStatus: row.http_status, outcome: row.http_status < 400 ? 'success' as const : 'failure' as const,
     durationMs: row.duration_ms, errorCode: row.error_code };
 }
 const columns = `CAST(l.id AS CHAR) AS id, l.occurred_at, l.completed_at, l.request_id, l.client_id,
-  c.display_name AS client_name, l.operation, l.method, l.endpoint, l.reference, l.http_status, l.duration_ms, l.error_code`;
-export function createIntegrationLogs({ mysql }: { mysql: Pool }) {
+  c.display_name AS client_name, l.operation, l.method, l.endpoint, l.reference, l.related_reference, l.http_status, l.duration_ms, l.error_code`;
+export function createIntegrationLogs({ mysql, auditMysql = mysql, auditDeadlineMs = 5000 }: { mysql: Pool; auditMysql?: Pool; auditDeadlineMs?: number }) {
   async function notifications(userId: string) {
     // Single statement snapshot: MAX cannot overtake a lower uncommitted ID.
     const [rows] = await mysql.execute<(RowDataPacket & { cursor: string; readCursor: string; unreadCount: number })[]>(
-      `SELECT CAST(COALESCE(MAX(l.id), 0) AS CHAR) AS cursor,
+      `SELECT CAST(COALESCE(MAX(l.id), 0) AS CHAR) AS \`cursor\`,
          CAST(COALESCE((SELECT read_cursor FROM integration_push_log_reads WHERE user_id = ?), 0) AS CHAR) AS readCursor,
          COALESCE(SUM(l.id > COALESCE((SELECT read_cursor FROM integration_push_log_reads WHERE user_id = ?), 0)), 0) AS unreadCount
        FROM integration_push_logs l`, [userId, userId]);
@@ -123,26 +136,46 @@ export function createIntegrationLogs({ mysql }: { mysql: Pool }) {
     return result;
   }
   return {
-    async append(attempt: IntegrationAttempt): Promise<void> {
+    async append(attempt: IntegrationAttempt, remainingMs = auditDeadlineMs): Promise<void> {
       // Fresh connection after business response. The allocator lock stays held
       // through commit, including the INSERT; rollback cannot publish a gap.
-      const connection = await mysql.getConnection();
-      try {
-        await connection.beginTransaction();
-        const [allocation] = await connection.execute<ResultSetHeader>({ sql: `UPDATE integration_push_log_sequence SET last_id = last_id + 1 WHERE singleton = 1`, timeout: 5000 });
-        if (allocation.affectedRows !== 1) throw new Error('Integration audit allocator unavailable');
-        const [insertion] = await connection.execute<ResultSetHeader>({ sql: `INSERT INTO integration_push_logs
-          (id, occurred_at, completed_at, request_id, client_id, operation, method, endpoint, reference, http_status, duration_ms, error_code, request_summary, response_summary)
-          SELECT last_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM integration_push_log_sequence WHERE singleton = 1`, timeout: 5000 },
-          [attempt.occurredAt, attempt.completedAt, attempt.requestId, attempt.clientId, attempt.operation, attempt.method, attempt.endpoint,
-            attempt.reference, attempt.httpStatus, attempt.durationMs, attempt.errorCode, JSON.stringify(attempt.requestSummary), JSON.stringify(attempt.responseSummary)]);
-        if (insertion.affectedRows !== 1) throw new Error('Integration audit insert unavailable');
-        await connection.commit();
-      } catch (error) {
-        // Destroy releases locks and rolls back even on timeout. Never return an
-        // uncertain transaction to the pool.
-        connection.destroy(); throw error;
-      } finally { connection.release(); }
+      let connection: PoolConnection | undefined;
+      let expired = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlineError = new Error('Integration audit deadline exceeded');
+      const checkDeadline = () => { if (expired) throw deadlineError; };
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => { expired = true; connection?.destroy(); reject(deadlineError); }, Math.max(1, Math.min(auditDeadlineMs, remainingMs)));
+      });
+      const write = (async () => {
+        const acquired = await auditMysql.getConnection();
+        // A timed-out acquisition can arrive after Promise.race has returned.
+        // Destroy it immediately: it must not start a late transaction.
+        if (expired) { acquired.destroy(); throw deadlineError; }
+        connection = acquired;
+        try {
+          await connection.beginTransaction();
+          checkDeadline();
+          const [allocation] = await connection.execute<ResultSetHeader>({ sql: `UPDATE integration_push_log_sequence SET last_id = last_id + 1 WHERE singleton = 1`, timeout: 5000 });
+          if (allocation.affectedRows !== 1) throw new Error('Integration audit allocator unavailable');
+          checkDeadline();
+          const [insertion] = await connection.execute<ResultSetHeader>({ sql: `INSERT INTO integration_push_logs
+            (id, occurred_at, completed_at, request_id, client_id, operation, method, endpoint, reference, related_reference, http_status, duration_ms, error_code, request_summary, response_summary)
+            SELECT last_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM integration_push_log_sequence WHERE singleton = 1`, timeout: 5000 },
+            [attempt.occurredAt, attempt.completedAt, attempt.requestId, attempt.clientId, attempt.operation, attempt.method, attempt.endpoint,
+              attempt.reference, attempt.relatedReference ?? null, attempt.httpStatus, attempt.durationMs, attempt.errorCode, JSON.stringify(attempt.requestSummary), JSON.stringify(attempt.responseSummary)]);
+          if (insertion.affectedRows !== 1) throw new Error('Integration audit insert unavailable');
+          checkDeadline();
+          await connection.commit();
+          checkDeadline();
+        } catch (error) {
+          // Never return an uncertain transaction to the pool. A COMMIT timeout
+          // may have committed on the server, so do not automatically retry.
+          connection.destroy(); throw error;
+        } finally { connection.release(); }
+      })();
+      try { await Promise.race([write, timeout]); }
+      finally { if (timer) clearTimeout(timer); }
     },
     notifications,
     async markRead(userId: string, input: unknown) {
@@ -174,8 +207,8 @@ export function createIntegrationLogs({ mysql }: { mysql: Pool }) {
       if (to) { where.push('l.occurred_at <= ?'); values.push(to); }
       if (query.search !== undefined) {
         if (typeof query.search !== 'string' || query.search.length > 128) throw new ApiError(400, 'VALIDATION_ERROR', 'search 过长');
-        where.push("(l.request_id LIKE ? ESCAPE '!' OR l.reference LIKE ? ESCAPE '!')");
-        const search = `%${query.search.replace(/[!%_]/g, '!$&')}%`; values.push(search, search);
+        where.push("(l.request_id LIKE ? ESCAPE '!' OR l.reference LIKE ? ESCAPE '!' OR l.related_reference LIKE ? ESCAPE '!' OR JSON_UNQUOTE(JSON_EXTRACT(l.request_summary, '$.airWaybillNo')) LIKE ? ESCAPE '!')");
+        const search = `%${query.search.replace(/[!%_]/g, '!$&')}%`; values.push(search, search, search, search);
       }
       const snapshot = await notifications(userId); values.unshift(snapshot.cursor);
       const clause = where.join(' AND ');

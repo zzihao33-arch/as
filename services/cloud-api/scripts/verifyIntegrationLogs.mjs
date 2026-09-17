@@ -82,16 +82,21 @@ try {
   assert.deepEqual(await logs.notifications('account-b'), { cursor: '3', readCursor: '0', unreadCount: 3 });
   console.log('PASS failed audit rollback, bounded observed acknowledgement, concurrent monotonic reads, account isolation');
 
-  await logs.append({ ...attempt('failed'), httpStatus: 400, errorCode: 'VALIDATION_ERROR', responseSummary: { httpStatus: 400, errorCode: 'VALIDATION_ERROR' } });
+  await logs.append({ ...attempt('failed'), reference: 'ORIGINAL-123', relatedReference: 'TRANSFER-456', requestSummary: { format: 'json', airWaybillNo: '123-12345678', pdfOmitted: true }, httpStatus: 400, errorCode: 'VALIDATION_ERROR', responseSummary: { httpStatus: 400, errorCode: 'VALIDATION_ERROR' } });
   const listed = await logs.list('account-a', { pageSize: '1', status: 'success', search: 'TRACK_1', from: '2026-09-17T00:00:00.000Z', to: '2026-09-17T02:00:00.000Z' });
   assert.deepEqual(listed.metrics, { total: 3, success: 3, failure: 0 });
   assert.equal(listed.records.length, 1); assert.equal(listed.records[0].id, '3');
   assert.equal(listed.records[0].occurredAt, '2026-09-17T01:00:00.000Z');
   assert.equal((await logs.list('account-a', { search: "%' OR 1=1 --" })).total, 0);
   assert.equal((await logs.list('account-a', { status: 'failure', clientId: 'unknown' })).total, 1);
+  for (const search of ['ORIGINAL-123', 'TRANSFER-456', '123-12345678']) {
+    const matches = await logs.list('account-a', { search });
+    assert.equal(matches.total, 1, search); assert.equal(matches.records[0].id, '4');
+    assert.equal(matches.records[0].relatedReference, 'TRANSFER-456');
+  }
   assert.deepEqual((await logs.detail('4')).responseSummary, { httpStatus: 400, errorCode: 'VALIDATION_ERROR' });
   await assert.rejects(logs.detail('999'), error => error.status === 404);
-  console.log('PASS real prepared list/detail filters, metrics, timestamps, LIKE escaping and absent detail');
+  console.log('PASS real prepared list/detail filters, original/transfer/air bill searches, metrics, timestamps, LIKE escaping and absent detail');
 
   // Exercise restricted application grants, using a temporary account limited to
   // this temporary schema. Disabled by default when CREATE USER is unavailable.
@@ -114,6 +119,21 @@ try {
       console.log('PASS exact table-scoped application grants');
     } finally { await admin.query(`DROP USER IF EXISTS '${account}'@'127.0.0.1'`); }
   }
+
+  const isolatedAuditPool = mysql.createPool({ ...config, database, connectionLimit: 1, waitForConnections: false });
+  const locker = await pool.getConnection();
+  try {
+    await locker.beginTransaction();
+    await locker.execute('UPDATE integration_push_log_sequence SET last_id = last_id WHERE singleton = 1');
+    const isolated = createIntegrationLogs({ mysql: pool, auditMysql: isolatedAuditPool, auditDeadlineMs: 100 });
+    const failedWrite = assert.rejects(isolated.append(attempt('deadline')), /deadline exceeded/);
+    const [[healthy]] = await pool.query('SELECT 1 AS healthy');
+    assert.equal(healthy.healthy, 1);
+    await failedWrite;
+    await locker.rollback();
+    await isolated.append(attempt('after-deadline'));
+    console.log('PASS real allocator lock timeout leaves business pool available and next independent append succeeds');
+  } finally { await locker.rollback(); locker.release(); await isolatedAuditPool.end(); }
 } finally {
   if (pool) await pool.end();
   await admin.query(`DROP DATABASE IF EXISTS \`${database}\``);

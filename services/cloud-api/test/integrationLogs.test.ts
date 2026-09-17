@@ -83,6 +83,7 @@ test('list validates and binds filters, computes full filtered metrics and keeps
   assert.equal(result.total, 12); assert.deepEqual(result.metrics, { total: 12, success: 9, failure: 3 });
   assert.equal(result.records[0].id, '9007199254740993'); assert.equal(result.records[0].occurredAt, '2026-09-17T00:00:00.000Z');
   const query = calls.find(call => call.sql.includes('ORDER BY l.id DESC'))!;
+  assert.match(calls[0].sql, /AS `cursor`/);
   assert.ok(query.sql.includes('l.id <= ?')); assert.ok(!query.sql.includes("OR 1=1"));
   assert.ok(query.values.includes("%x!%' OR 1=1 --%")); assert.ok(query.values.includes('9007199254740993'));
   for (const filters of [{ page: '0' }, { pageSize: '101' }, { status: 'bad' }, { operation: 'bad' }, { clientId: 'bad' }, { from: 'yesterday' }, { from: '2026-02-30T00:00:00Z' }, { from: '0000-01-01T00:00:00Z' }, { search: 'a'.repeat(129) }]) {
@@ -154,4 +155,50 @@ test('bounded pending audit writes drop excess attempts without delaying busines
     for (let i = 0; i < 3; i++) assert.equal((await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/api/v1/shipments`, { method: 'POST' })).status, 201);
     assert.equal(writes, 1); assert.deepEqual(events, [{ event: 'integration_audit_queue_full' }, { event: 'integration_audit_queue_full' }]);
   } finally { release(); await audit.drain(); server.close(); await once(server, 'close'); }
+});
+
+test('TYG labels retain original, transfer and air bill references without retaining label bytes', async () => {
+  const attempts: any[] = [];
+  const audit = createIntegrationAudit({ append: async row => { attempts.push(row); } });
+  const app = express(); app.use(audit.middleware); app.use(express.json());
+  app.post('/api/v1/label-pushes', (_req, res) => res.json({ code: 'SUCCESS' }));
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  try {
+    await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/api/v1/label-pushes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ originalTrackingNo: 'ORIGINAL-1', transferTrackingNo: 'TRANSFER-2', airWaybillNo: '123-12345678', labelBase64: 'PRIVATE' }) });
+    await audit.drain();
+    assert.equal(attempts[0].reference, 'ORIGINAL-1'); assert.equal(attempts[0].relatedReference, 'TRANSFER-2');
+    assert.equal(attempts[0].requestSummary.airWaybillNo, '123-12345678');
+    assert.ok(!JSON.stringify(attempts).includes('PRIVATE'));
+  } finally { server.close(); await once(server, 'close'); }
+});
+
+test('audit queue starts only one writer until its previous append finishes', async () => {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let started = 0;
+  const audit = createIntegrationAudit({ append: async () => { started++; await gate; } });
+  const app = express(); app.use(audit.middleware); app.post('/api/v1/shipments', (_req, res) => res.status(201).end());
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  let startsBeforeRelease: number;
+  try {
+    await Promise.all(Array.from({ length: 12 }, () => fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/api/v1/shipments`, { method: 'POST' })));
+    startsBeforeRelease = started;
+  } finally { release(); await audit.drain(); server.close(); await once(server, 'close'); }
+  assert.equal(startsBeforeRelease, 1); assert.equal(started, 12);
+});
+
+test('audit deadline covers connection acquisition, BEGIN, statements and COMMIT and destroys late connections', async () => {
+  for (const stalled of ['acquire', 'begin', 'allocate', 'insert', 'commit']) {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let destroyed = false; let completed = false; let rejected = false;
+    const block = async (stage: string) => { if (stage === stalled) await gate; };
+    let executions = 0;
+    const connection = { beginTransaction: () => block('begin'), execute: async () => { await block(executions++ === 0 ? 'allocate' : 'insert'); return [{ affectedRows: 1 }, []]; }, commit: () => block('commit'), destroy: () => { destroyed = true; }, release: () => {} };
+    const pool = { getConnection: async () => { await block('acquire'); return connection; } } as unknown as Pool;
+    const logs = createIntegrationLogs({ mysql: pool, auditDeadlineMs: 15 } as any);
+    const task = logs.append({ occurredAt: new Date(), completedAt: new Date(), requestId: 'deadline', clientId: null, operation: 'shipment', method: 'POST', endpoint: '/api/v1/shipments', reference: null, httpStatus: 201, durationMs: 0, errorCode: null, requestSummary: {}, responseSummary: {} }).then(() => { completed = true; }, () => { completed = true; rejected = true; });
+    await new Promise(resolve => setTimeout(resolve, 40));
+    const completedAtDeadline = completed;
+    release(); await task; await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(completedAtDeadline, true, stalled); assert.equal(rejected, true, stalled); assert.equal(destroyed, true, stalled);
+  }
 });
