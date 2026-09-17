@@ -103,14 +103,14 @@ export default function IntegrationLogsPage() {
         <label>接口<select value={filters.operation ?? ''} onChange={e => filter('operation', e.target.value)}><option value="">全部接口</option>{Object.entries(operationNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
         <label>结果<select value={filters.status ?? ''} onChange={e => filter('status', e.target.value)}><option value="">全部结果</option><option value="success">成功</option><option value="failure">失败</option></select></label>
         <label>单号 / Request ID<input maxLength={128} value={search} placeholder="输入关键词搜索" onChange={e => setSearch(e.target.value)} /></label>
-        <label>推送时间<select value={period} onChange={e => { setPeriod(e.target.value); setFilters(old => ({ ...old, page: 1 })); }}><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="all">全部时间</option></select></label>
+        <label>接收时间<select value={period} onChange={e => { setPeriod(e.target.value); setFilters(old => ({ ...old, page: 1 })); }}><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="all">全部时间</option></select></label>
       </div>
     </div>
     <div className="push-logs-table-panel">
       <div className="push-logs-panel-title"><strong>推送记录 · {number(result?.total)} 条</strong><Button size="small" status={filters.status === 'failure' ? 'danger' : undefined} onClick={() => filter('status', filters.status === 'failure' ? '' : 'failure')}>{filters.status === 'failure' ? '显示全部结果' : '只看失败'}</Button></div>
       {error ? <div className="push-logs-error" role="alert">{error}<Button onClick={refresh}>重新加载</Button></div> : <Spin loading={loading} style={{ display: 'block' }}>
         <div className="push-logs-table-scroll"><table className="push-logs-table"><caption className="push-logs-sr-only">客户入站推送记录，时间为纽约时间</caption><thead><tr>
-          <th>推送时间 · 纽约</th><th>客户</th><th>接口</th><th>单号</th><th>结果</th><th>状态码</th><th>耗时</th><th>Request ID</th><th>操作</th>
+          <th>接收时间 · 纽约</th><th>客户</th><th>接口</th><th>单号</th><th>结果</th><th>状态码</th><th>耗时</th><th>Request ID</th><th>操作</th>
         </tr></thead><tbody>{result?.records.map(row => <tr key={row.id} className={row.outcome === 'failure' ? 'is-failure' : ''}>
           <td className="push-log-mono">{formatTime(row.occurredAt)}</td><td>{row.clientName ?? '未识别客户'}</td><td>{operationNames[row.operation] ?? row.operation}</td>
           <td className="push-log-mono"><span className="push-log-ellipsis" title={row.reference ?? ''}>{row.reference ?? '—'}</span>{row.relatedReference && <span className="push-log-ellipsis push-log-related-reference" title={`转单号：${row.relatedReference}`}>转单：{row.relatedReference}</span>}</td>
