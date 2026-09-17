@@ -1,0 +1,32 @@
+{
+  "commit": "ca05db3b5a6473c158121047a04d8dea50abc594",
+  "baseline": "33ce775b5ce601be035ec614c295c65f0e50be24",
+  "files": [
+    {
+      "file": "src/auth.ts",
+      "before": "2c56b340c4f254d8c4a764e165021989526448edd647685542bdd706abe115cd",
+      "after": "75dc9ab05e795dde0935b90c1ace2e29e31c329b398788aa7a530f1e1b5bf3f0"
+    },
+    {
+      "file": "src/db.ts",
+      "before": "bfd57231691aae7b592bcb6d5fb78641f02578d8891468e71e78c0f0cf95272c",
+      "after": "b63feb031e8f045d10cef1e6a99e0fec7d29b3e53b1a1fa3c10023355b1a0e1a"
+    },
+    {
+      "file": "src/index.ts",
+      "before": "dfb2b864bb74d330641a5f1777dfb57726418717609680b026c1558a37a2d259",
+      "after": "57c87ac0c80d3ed66857cca3161c02a36cfee17d8c3feb050e372ca862ce8488"
+    },
+    {
+      "file": "src/integrationLogs.ts",
+      "before": null,
+      "after": "449c179f460ec751764214c28c1ea0675c27df18db043ab37dca5b156f4e6aee"
+    },
+    {
+      "file": "src/warehouseAccess.ts",
+      "before": "4f971a47d4ac4f41e23ab246f8e887f0780c5df4f5c2f5b6ee1a2b23580dbe33",
+      "after": "3db56be553fc1df2542e07030adfbdc8bd5882b77fe1d19e027c2bc60d7d8489"
+    }
+  ],
+  "migrationSha256": "045062620c5f335a6fd99e25a769d2c0b2b73746cb2d0d555569503805a89987"
+}
