@@ -52,6 +52,7 @@ export const WAREHOUSE_PERMISSION_CODES = [
   'roles.view',
   'roles.manage',
   'security_audit.view',
+  'integration_logs.view',
 ] as const;
 
 export type WarehousePermission = typeof WAREHOUSE_PERMISSION_CODES[number];

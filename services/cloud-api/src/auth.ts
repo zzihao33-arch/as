@@ -81,6 +81,8 @@ export async function requireApiKey(req: Request, _res: Response, next: NextFunc
       scopes: parseStoredScopes(row.scopes),
       rateLimitPerMinute: row.rate_limit_per_minute,
     };
+    // Credentials are verified; preserve attribution even if rate limiting fails.
+    req.client = client;
     await enforceRateLimit(client);
     await mysql.execute(
       `UPDATE integration_api_keys
@@ -88,7 +90,6 @@ export async function requireApiKey(req: Request, _res: Response, next: NextFunc
        WHERE id = ? AND (last_used_at IS NULL OR last_used_at < CURRENT_TIMESTAMP(3) - INTERVAL 5 MINUTE)`,
       [client.apiKeyId],
     );
-    req.client = client;
     next();
   } catch (error) {
     next(error);

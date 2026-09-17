@@ -27,6 +27,7 @@ try {
     writeFileSync(join(outputDirectory, 'package.json'), '{"type":"module"}\n', 'utf8');
     const tests = spawnSync(process.execPath, [
       '--test',
+      join(outputDirectory, 'test', 'integrationLogs.test.js'),
       join(outputDirectory, 'test', 'apiKeys.test.js'),
       join(outputDirectory, 'test', 'authEnvironment.test.js'),
       join(outputDirectory, 'test', 'labelAssets.test.js'),

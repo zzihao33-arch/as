@@ -22,6 +22,7 @@ import { requireWarehouseAnyPermission, requireWarehousePermission, requireWareh
 import { createWarehouseIdentity } from './warehouseIdentity.js';
 import { createWarehouseHttpBoundary } from './warehouseHttp.js';
 import { createWarehouseOperations } from './warehouseOperations.js';
+import { createIntegrationAudit, createIntegrationLogs, createIntegrationLogsRouter } from './integrationLogs.js';
 
 const app = express();
 
@@ -33,6 +34,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Request-ID', req.requestId);
   next();
 });
+
+const integrationLogs = createIntegrationLogs({ mysql });
+const integrationAudit = createIntegrationAudit({ append: integrationLogs.append });
+app.use(integrationAudit.middleware);
 
 const jsonBodyParser = express.json({ limit: config.jsonLimit });
 const inboundBatchBodyParser = express.json({ limit: config.inboundBatchJsonLimit });
@@ -200,6 +205,7 @@ app.use('/api/v1', upstreamRouter);
 
 const warehouseRouter = express.Router();
 warehouseRouter.use(warehouseBoundary.origin);
+warehouseRouter.use('/integration-logs', warehouseBoundary.session, createIntegrationLogsRouter(integrationLogs));
 
 function warehouseAudit(req: Request) {
   return {
@@ -1047,6 +1053,7 @@ async function shutdown(signal: string): Promise<void> {
   }
   server.close(async () => {
     if (labelRetentionTask) await labelRetentionTask;
+    await integrationAudit.drain();
     await closeConnections();
     process.exit(0);
   });

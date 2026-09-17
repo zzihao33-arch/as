@@ -20,13 +20,14 @@ function check(serviceEnvironment: string | undefined, keyEnvironment: 'test' | 
       }
       return [{affectedRows:1}, []];
     };
-    redis.incr = async () => 1;
+    redis.incr = async () => ${expected === 429 ? 601 : 1};
     redis.expire = async () => 1;
     redis.quit = async () => 'OK';
     let result;
     const req = {header: () => issued.plaintext};
     await requireApiKey(req, {}, (error) => { result = error; });
     assert.equal(result?.status ?? 200, ${expected});
+    if (${expected} === 429) assert.equal(req.client?.id, 'client-test', 'Verified rate-limited client remains attributable to audit');
     if (${expected} === 200) {
       assert.equal(req.client.id, 'client-test');
       assert.match(selectSql, /k\\.environment = \\?/);
@@ -48,6 +49,7 @@ it('rejects live keys on an explicitly configured test service', () => check('te
 it('rejects test keys on the default production service', () => check(undefined, 'test', 401));
 it('accepts live keys on the default production service with matching stored environment', () => check(undefined, 'live', 200));
 it('rejects an invalid service key environment at startup', () => check('tesst', 'test', 0));
+it('retains verified client identity for rate-limited audit attempts', () => check('test', 'test', 429));
 
 it('loads an explicit fixed offset for database-generated air-pickup times and rejects invalid offsets', () => {
   const script = `const { config } = await import(${JSON.stringify(new URL('../src/config.js', import.meta.url).href)});
