@@ -21,9 +21,11 @@ export function IntegrationLogsProvider({ children }: { children: ReactNode }) {
   const session = useWarehouseSession();
   const userId = session.session?.userId ?? '';
   const allowed = !!userId && session.hasPermission('integration_logs.view');
-  return <NotificationScope key={`${userId}:${allowed}`} userId={userId} allowed={allowed}>{children}</NotificationScope>;
+  return <NotificationScope key={`${userId}:${allowed}`} userId={userId} allowed={allowed} onAccessDenied={session.revalidatePermissions}>{children}</NotificationScope>;
 }
-function NotificationScope({ userId, allowed, children }: { userId: string; allowed: boolean; children: ReactNode }) {
+function NotificationScope({ userId, allowed, children, onAccessDenied }: {
+  userId: string; allowed: boolean; children: ReactNode; onAccessDenied: () => Promise<void>;
+}) {
   const [state, setState] = useState(initialNotification);
   const stateRef = useRef(state);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +87,13 @@ function NotificationScope({ userId, allowed, children }: { userId: string; allo
       if (result.notify) play();
     } catch (err) {
       if (!alive.current || sequence !== serial.current) return;
-      if (err instanceof WarehouseApiError && [401, 403].includes(err.status)) blocked.current = true;
+      if (err instanceof WarehouseApiError && [401, 403].includes(err.status)) {
+        blocked.current = true;
+        void onAccessDenied();
+      }
       setError(err instanceof Error && err.name !== 'AbortError' ? err.message : '日志连接超时，正在重试。');
     } finally { window.clearTimeout(timeout); controllers.current.delete(controller); }
-  }, [allowed, play]);
+  }, [allowed, onAccessDenied, play]);
 
   const acknowledge = useCallback(async (cursor: string) => {
     if (!allowed || !alive.current) return;

@@ -25,6 +25,7 @@ type WarehouseSessionContextValue = {
   selectWorkspace(warehouseId: string): Promise<void>;
   changePassword(input: { currentPassword: string; newPassword: string }): Promise<void>;
   hasPermission(permission: string): boolean;
+  revalidatePermissions(): Promise<void>;
   retry(): void;
 };
 
@@ -54,6 +55,42 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const promptedExpiryRef = useRef('');
+  const sessionRevision = useRef(0);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  // Re-check access without remounting unchanged scopes or creating a 403/reload loop.
+  const revalidatePermissions = useCallback(async () => {
+    const revision = sessionRevision.current;
+    const previous = sessionRef.current;
+    if (!previous) return;
+    try {
+      const restored = await getWarehouseSession();
+      if (revision !== sessionRevision.current || sessionRef.current !== previous) return;
+      if (!restored) {
+        sessionRevision.current += 1;
+        setSession(null);
+        setWorkstation(null);
+        setStatus('anonymous');
+      } else if (restored.sessionId !== previous.sessionId || restored.userId !== previous.userId
+        || restored.warehouseId !== previous.warehouseId) {
+        sessionRevision.current += 1;
+        setSession(null);
+        setWorkstation(null);
+        setStatus('loading');
+        setReloadKey(key => key + 1);
+      } else {
+        setSession(restored);
+      }
+    } catch (cause) {
+      if (revision !== sessionRevision.current || sessionRef.current !== previous) return;
+      sessionRevision.current += 1;
+      setSession(null);
+      setWorkstation(null);
+      setError(cause instanceof Error ? cause.message : '无法确认当前账号权限，请重新连接。');
+      setStatus('error');
+    }
+  }, []);
 
   const activate = useCallback(async (activeSession: WarehouseSessionView) => {
     const activeWorkstation = activeSession.warehouseId
@@ -69,6 +106,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
 
   useEffect(() => {
     let current = true;
+    sessionRevision.current += 1;
     setStatus('loading');
     void getWarehouseSession().then(async restored => {
       if (!current) return;
@@ -84,7 +122,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       setError(cause instanceof Error ? cause.message : '无法连接仓库云端服务。');
       setStatus('error');
     });
-    return () => { current = false; };
+    return () => { current = false; sessionRevision.current += 1; };
   }, [activate, reloadKey]);
 
   useEffect(() => {
@@ -99,7 +137,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
         content: '是否继续当前仓库作业？确认后会在 16 小时单次上限内续期。',
         okText: '继续使用',
         cancelText: '稍后处理',
-        onOk: async () => { await activate(await renewWarehouseSession()); },
+        onOk: async () => { sessionRevision.current += 1; await activate(await renewWarehouseSession()); },
       });
     }, delay);
     return () => window.clearTimeout(timer);
@@ -111,6 +149,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
     workstation,
     error,
     async login(input) {
+      sessionRevision.current += 1;
       setStatus('loading');
       try {
         await activate(await createWarehouseSession(input));
@@ -121,12 +160,14 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       }
     },
     async logout() {
+      sessionRevision.current += 1;
       await deleteWarehouseSession().catch(() => undefined);
       setSession(null);
       setWorkstation(null);
       setStatus('anonymous');
     },
     async selectWorkspace(warehouseId) {
+      sessionRevision.current += 1;
       setStatus('loading');
       try {
         await activate(await selectWarehouseWorkspace(warehouseId));
@@ -137,6 +178,7 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
       }
     },
     async changePassword(input) {
+      sessionRevision.current += 1;
       await changeWarehousePassword(input);
       const restored = await getWarehouseSession();
       if (!restored) throw new Error('登录会话已失效，请重新登录。');
@@ -145,8 +187,9 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
     hasPermission(permission) {
       return Boolean(session?.permissions.includes(permission));
     },
-    retry() { setReloadKey(key => key + 1); },
-  }), [activate, error, session, status, workstation]);
+    revalidatePermissions,
+    retry() { sessionRevision.current += 1; setReloadKey(key => key + 1); },
+  }), [activate, error, revalidatePermissions, session, status, workstation]);
 
   return <WarehouseSessionContext.Provider value={value}>{children}</WarehouseSessionContext.Provider>;
 }
