@@ -17,3 +17,7 @@
 已在 `codex/cmhub-t1-session-recovery` 业务工作树对现有候选实现做本地回归：云端服务 133 项通过、前端 73 项通过，前后端严格类型检查均通过；2 项真实 MySQL 测试按环境条件跳过。该工作树仍包含未提交的列表、文件凭证、预览 worker 和迁移混合修改，未合并到发布树。
 
 当前机器未安装 Docker、LibreOffice 或 WSL，无法执行真实隔离检查器、Office 转换、资源预算和 worker 强杀恢复验收。T4 的检查器缺失保护仍有效，`PICKUP_DOCUMENTS_ENABLED` 不得在生产打开；T5 的合成/协议测试不能替代真实环境验收。下一步需要具备 Linux/Docker/LibreOffice 的专用测试环境后，按 `docs/operations/cmhub-preview-acceptance-2026-09-15/` 执行真实验收。
+
+## 测试站只读核对
+
+`https://test.cmhubtool.com/` 与 `https://api-test.cmhubtool.com/healthz` 当前返回 200。带 `Origin: https://test.cmhubtool.com` 请求 `/warehouse/v1/integration-logs/notifications` 返回 `404 ROUTE_NOT_FOUND`；省略 Origin 返回 `403 ORIGIN_NOT_ALLOWED`。测试 API 尚未部署推送日志路由，因此不能用该站完成普通账号权限撤销/恢复联调；本次未升级测试后端或改变其配置。
