@@ -46,8 +46,8 @@ export interface WarehouseShipment {
   labelAsset: null | { id: string; sha256: string; byteSize: number; downloadPath: string };
 }
 export class WarehouseApiError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
-    super(message);
+  constructor(readonly status: number, readonly code: string, message: string, options?: { cause?: unknown }) {
+    super(message, options);
   }
 }
 
@@ -56,11 +56,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const { mockWarehouseRequest } = await import('./warehouseMockApi');
     return mockWarehouseRequest<T>(path, init);
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${WAREHOUSE_API_BASE}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    });
+  } catch (cause) {
+    // Browsers expose CORS, DNS, TLS and offline failures as the same opaque
+    // TypeError (usually "Failed to fetch"). Keep that implementation detail
+    // out of the product UI while retaining the original error for diagnostics.
+    throw new WarehouseApiError(0, 'NETWORK_UNAVAILABLE', '无法连接云端 API，请检查网络后重试。', { cause });
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
     throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '云端请求失败。');
