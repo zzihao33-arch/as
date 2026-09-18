@@ -1,5 +1,17 @@
 # CM-HUB 任务1接续：空提列表连续性候选
 
+## 当前断点：2026-09-18 跨页验收与筛选竞态补丁
+
+`31e9cae` 已提交并推送 master / 发布分支。合成浏览器完成跨页入库、跨页交仓、客户＋关键词交集、详情503/状态变化保护、末页自动回退。发现并修复：筛选变化清空选择后，旧批量目标响应仍打开旧窗口；现在筛选变化使该读取失效。修复前浏览器断言失败、修复后通过，新选择仍可正常打开窗口。35项前端测试、严格类型检查、构建通过。
+
+验收详情及复现入口：`docs/operations/air-pickup-continuity-acceptance-2026-09-18.md`。87个业务请求全部GET，未提交入库/交仓。正式站点已打开但仍为登录页，等待用户自行登录；不能将合成结果记为正式管理员验收。
+
+22:39:54Z GitHub部署记录确认 `31e9cae` 的 **Preview** 成功：`https://as-1w4x07gzv-zzihao33-8750s-projects.vercel.app`；本次检查正式域名仍为旧入口 `index-B09MuhEk.js`，尚未确认正式生效。后续部署证据优先于此快照。
+
+环境纠正：本机没有Docker不代表没有远端环境。根目录 `docs/operations/cmhub-preview-acceptance-2026-09-15/SYNTHETIC-ACCEPTANCE-RESULT.md` 已记录 `ins-nm8jebfh` 上真实合成11/11、镜像PDF回归11/11通过；续做T4/T5时先复核现有测试机身份/负载/健康，不重复从零搭建。业务保真、容量、worker恢复与页面链路仍有缺口，生产文件开关保持关闭。
+
+下方为历史发布与检查记录。
+
 当前发布提交 `ec035ab`，基于已发布 `8b89e0e`。本批完成客户组合筛选、跨页选择快照和批量目标完整读取，代码与测试已提交并推送到 `master` 与 `codex/integration-logs-release`。
 
 验证结果见 `docs/operations/air-pickup-continuity-release-2026-09-18.md`。Vercel 生产部署 `dpl_71fHQteiqZQzW1RSU9oZNsaX8Y38` 已对 `ec035ab` 返回 READY，部署根路径已通过 HTTP 200 冒烟；上一版本的回退目标为 `dpl_EfCaNEn3MXK2Ws5pnDPBic1eJVL7`。
