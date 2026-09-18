@@ -1153,7 +1153,11 @@ export default function App() {
   }, [audioEnabled, ensureAudioContext, getAudioContext]);
 
   const stopActiveAudio = () => {
-    if (!activeAudioRef.current) return false;
+    if (!activeAudioRef.current) {
+      activeAudioLeaseRef.current?.release();
+      activeAudioLeaseRef.current = null;
+      return false;
+    }
 
     const activeAudio = activeAudioRef.current;
     window.clearTimeout(activeAudio.timerId);
