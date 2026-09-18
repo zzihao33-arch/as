@@ -1,6 +1,6 @@
 # 空提列表连续性发布记录（2026-09-18）
 
-本批候选提交：`6b22e89`（`fix: preserve air pickup selection across filtered pages`）。
+本批发布提交：`ec035ab`（包含 `6b22e89` 的空提列表连续性实现与发布记录）。
 
 ## 范围
 
@@ -19,9 +19,9 @@
 
 ## 发布状态
 
-- `codex/integration-logs-release` 和 `master` 已推送至 `6b22e89`。
-- 上一正式版本 `8b89e0e` 的回退部署仍为 `dpl_EfCaNEn3MXK2Ws5pnDPBic1eJVL7`。
-- Vercel 尚未返回 `6b22e89` 的新部署记录；生产切换需在部署 READY 后再做管理员冒烟。
+- `codex/integration-logs-release` 和 `master` 已推送至 `ec035ab`。
+- Vercel 生产部署 `dpl_71fHQteiqZQzW1RSU9oZNsaX8Y38` 已为 `ec035ab` 返回 READY；部署根路径返回 HTTP 200。
+- 旧正式版本 `8b89e0e` 的回退部署 `dpl_EfCaNEn3MXK2Ws5pnDPBic1eJVL7` 仍保留。
 - 本批未修改数据库、worker、司机入口、Office 预览或测试环境。
 
 真实普通账号撤权、扫码、打印和人工听音仍未覆盖。
