@@ -384,6 +384,7 @@ export default function App() {
   const printerDropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeAudioRef = useRef<ActiveAudio | null>(null);
+  const activeAudioLeaseRef = useRef<import('../audio/audioArbitration').AudioLease | null>(null);
   const qzConnectPromiseRef = useRef<Promise<void> | null>(null);
   const qzSecurityPromiseRef = useRef<Promise<QzSecurityStatus> | null>(null);
   const audioFailureLoggedRef = useRef(false);
@@ -1157,6 +1158,8 @@ export default function App() {
     const activeAudio = activeAudioRef.current;
     window.clearTimeout(activeAudio.timerId);
     activeAudio.stop();
+    activeAudioLeaseRef.current?.release();
+    activeAudioLeaseRef.current = null;
     setLastAudioDuration(Math.round(performance.now() - activeAudio.startedAt));
     activeAudioRef.current = null;
     return true;
@@ -1174,7 +1177,9 @@ export default function App() {
 
     const requestTime = performance.now();
     const duration = scanResult === 'success' ? 0.38 : 0.76;
-    if (!appAudioArbitrator.reserve('scan', Date.now(), duration * 1000 + 90)) return;
+    const lease = appAudioArbitrator.claim('scan', Date.now(), duration * 1000 + 90, () => stopActiveAudio());
+    if (!lease) return;
+    activeAudioLeaseRef.current = lease;
 
     try {
       const didInterrupt = stopActiveAudio();
@@ -1183,6 +1188,7 @@ export default function App() {
       }
 
       const context = await getAudioContext();
+      if (!lease.isCurrent()) return;
       const startTime = context.currentTime;
       const volume = Math.max(0, Math.min(1, audioVolume / 100));
       const boost = audioBoostEnabled ? Math.pow(10, 3 / 20) : 1;
@@ -1263,17 +1269,22 @@ export default function App() {
       setAudioFocusState('playing');
       setLastAudioResult(scanResult);
     } catch (error) {
+      lease.release();
+      if (activeAudioLeaseRef.current === lease) activeAudioLeaseRef.current = null;
       recordAudioPlaybackFailure(error instanceof Error ? error.message : String(error));
     }
   };
 
   const playInterceptAlert = async () => {
-    if (!appAudioArbitrator.reserve('intercept', Date.now(), 6_090)) return;
+    const lease = appAudioArbitrator.claim('intercept', Date.now(), 6_090, () => stopActiveAudio());
+    if (!lease) return;
+    activeAudioLeaseRef.current = lease;
     try {
       const didInterrupt = stopActiveAudio();
       if (didInterrupt) setAudioInterruptCount(count => count + 1);
 
       const context = await getAudioContext();
+      if (!lease.isCurrent()) return;
       const startTime = context.currentTime;
       const startedAt = performance.now();
       const masterGain = context.createGain();
@@ -1336,6 +1347,8 @@ export default function App() {
       setAudioFocusState('playing');
       setLastAudioResult('failure');
     } catch (error) {
+      lease.release();
+      if (activeAudioLeaseRef.current === lease) activeAudioLeaseRef.current = null;
       recordAudioPlaybackFailure(error instanceof Error ? error.message : String(error));
     }
   };
@@ -2016,6 +2029,8 @@ export default function App() {
 
   const closeInterceptAlert = () => {
     stopActiveAudio();
+    activeAudioLeaseRef.current?.release();
+    activeAudioLeaseRef.current = null;
     interceptScanLockRef.current = null;
     setInterceptedScan(null);
   };

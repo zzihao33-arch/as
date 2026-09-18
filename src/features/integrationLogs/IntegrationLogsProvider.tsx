@@ -50,7 +50,9 @@ function NotificationScope({ userId, allowed, children }: { userId: string; allo
     if (muted || ctx?.state !== 'running') return;
     // Coalesce across tabs of this account as well as within each poll loop.
     const now = Date.now();
-    if (!appAudioArbitrator.reserve('notification', now, 350)) return;
+    let stopTone = () => {};
+    const lease = appAudioArbitrator.claim('notification', now, 350, () => stopTone());
+    if (!lease) return;
     try {
       const key = `cmhub:push-log-sound:${userId}`;
       const last = Number(localStorage.getItem(key) ?? '0');
@@ -59,6 +61,7 @@ function NotificationScope({ userId, allowed, children }: { userId: string; allo
     } catch { /* Sound also has an in-memory merge window. */ }
     try {
       const gain = ctx.createGain(); const tone = ctx.createOscillator();
+      stopTone = () => { try { tone.stop(); } catch { /* already stopped */ } };
       gain.gain.setValueAtTime(0.0001, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.10, ctx.currentTime + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.28);
@@ -66,7 +69,7 @@ function NotificationScope({ userId, allowed, children }: { userId: string; allo
       tone.frequency.setValueAtTime(1046, ctx.currentTime + 0.12);
       tone.connect(gain); gain.connect(ctx.destination); tone.start(); tone.stop(ctx.currentTime + 0.30);
       tone.onended = () => { tone.disconnect(); gain.disconnect(); };
-    } catch { setAudioReady(false); }
+    } catch { lease.release(); setAudioReady(false); }
   }, [muted, userId]);
 
   const refresh = useCallback(async () => {
