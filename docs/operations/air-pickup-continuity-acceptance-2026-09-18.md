@@ -45,4 +45,6 @@
 
 ## 发布进度
 
+**最终更新：2026-09-18 22:42:44Z 正式域名已生效。** 正式HTML200，入口 `/assets/index-ye71hHip.js`，空提模块 `AirPickupPage-BZkE7EOg.js`。已直接读取正式模块，确认筛选变化分支包含批量序号递增及加载状态清除；与已核实的预览资源一致。API `/healthz` 200、ok=true、outboundWebhooks.enabled=false。证据：`air-pickup-continuity-acceptance-2026-09-18/production-verification.json`。业务修复提交为31e9cae，fa2596a仅补记录；未取得Vercel正式部署ID，不据此推断精确部署SHA。真实管理员业务验收仍待登录。
+
 修复提交 `31e9caec464ff5e84687191f5c6bef066b683940` 已推送 master / 发布分支。GitHub部署 `6534092117` 在22:39:54Z为Preview成功，预览URL `https://as-1w4x07gzv-zzihao33-8750s-projects.vercel.app`。正式域名在本次取证时仍为旧入口 `index-B09MuhEk.js`，不能把Preview成功称作正式发布完成；API健康200、回传关闭。

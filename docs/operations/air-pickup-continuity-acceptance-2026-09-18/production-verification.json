@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-09-18T22:42:44.0949890Z",
+  "site": "https://cmhubtool.com",
+  "status": 200,
+  "entry": "/assets/index-ye71hHip.js",
+  "airChunk": "AirPickupPage-BZkE7EOg.js",
+  "filterInvalidationMarker": "Da.current!==g&&(Da.current=g,ie.current++,p(!1),fe.current=[]",
+  "fixPresent": true,
+  "apiStatus": 200,
+  "apiBody": {
+    "ok": true,
+    "outboundWebhooks": {
+      "enabled": false
+    }
+  },
+  "sourceCommit": "31e9caec464ff5e84687191f5c6bef066b683940",
+  "authenticatedBusinessAcceptance": "pending-user-login"
+}
