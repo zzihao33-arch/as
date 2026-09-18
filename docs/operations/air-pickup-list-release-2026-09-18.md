@@ -29,7 +29,14 @@
 
 ## 发布
 
-本地验证和独立审查完成；先验证独立预览再按既有授权快进master。部署ID和精确SHA在发布后补录。
+已发布：master和远端发布分支均从b4a99a0快进至 `8b89e0e42ad31c1399365d0ad36f975d80a9b989`。本地后续仅记录文档提交，不据本地HEAD误判生产SHA。
+
+- 独立预览 `dpl_665n1DkYDibijUMk28MK9JPbjPSs`，2026-09-18T17:09:06.717Z READY；https://as-jr2iwuras-zzihao33-8750s-projects.vercel.app/ 。
+- 正式 `dpl_EfCaNEn3MXK2Ws5pnDPBic1eJVL7`，2026-09-18T17:10:40.470Z READY；cmhubtool.com和www.cmhubtool.com均绑定。预览/正式SHA精确对应8b89e0e。
+- 远端入口 `index-CFH57Fgm.js`，空提chunk `AirPickupPage-rdvqjoGT.js`；预览产物确认有保留旧数据提示/暂停同步/99.9，指向正式API，不含测试API或本地fixture。远端构建哈希与本机构建不同，以实际远端部署产物为准。
+- 正式HTML200，healthz ok=true、outboundWebhooks.enabled=false。带正式Origin的匿名列表请求401 SESSION_REQUIRED；无Origin请求403 ORIGIN_NOT_ALLOWED，均未放宽保护。
+- 正式既有Max Zhang管理员会话重载后列表1单、凭证待补1、实际进度0/1,102正常；显示新的最近成功同步时间，浏览器入口确认新hash，最终error日志为空。只读取列表，没有修改提单或账号权限。
+- staging仍为644d0de，未变更test别名或部署后端。合成浏览器标签页关闭，本轮4819/4820进程停止，响应式viewport已恢复。
 
 当前正式回退目标：b4a99a0 / dpl_dkmRn4dwZMgZMkGqAYoW65Bzm5Rn。
 
