@@ -1181,12 +1181,14 @@ export default function App() {
 
     const requestTime = performance.now();
     const duration = scanResult === 'success' ? 0.38 : 0.76;
-    const lease = appAudioArbitrator.claim('scan', Date.now(), duration * 1000 + 90, () => stopActiveAudio());
+    let didInterrupt = false;
+    const lease = appAudioArbitrator.claim('scan', Date.now(), duration * 1000 + 90, () => {
+      didInterrupt = stopActiveAudio();
+    });
     if (!lease) return;
     activeAudioLeaseRef.current = lease;
 
     try {
-      const didInterrupt = stopActiveAudio();
       if (didInterrupt) {
         setAudioInterruptCount(count => count + 1);
       }
@@ -1280,11 +1282,13 @@ export default function App() {
   };
 
   const playInterceptAlert = async () => {
-    const lease = appAudioArbitrator.claim('intercept', Date.now(), 6_090, () => stopActiveAudio());
+    let didInterrupt = false;
+    const lease = appAudioArbitrator.claim('intercept', Date.now(), 6_090, () => {
+      didInterrupt = stopActiveAudio();
+    });
     if (!lease) return;
     activeAudioLeaseRef.current = lease;
     try {
-      const didInterrupt = stopActiveAudio();
       if (didInterrupt) setAudioInterruptCount(count => count + 1);
 
       const context = await getAudioContext();
