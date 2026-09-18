@@ -1,0 +1,468 @@
+{
+  "mode": "empty",
+  "events": [
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:00:39.337Z",
+      "respondedAt": "2026-09-18T17:00:39.337Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:00:39.366Z",
+      "respondedAt": "2026-09-18T17:00:39.366Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:00:44.381Z",
+      "respondedAt": "2026-09-18T17:00:44.381Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:00:49.378Z",
+      "respondedAt": "2026-09-18T17:00:49.378Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:00:54.375Z",
+      "respondedAt": "2026-09-18T17:00:54.375Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:00:57.13Z",
+      "respondedAt": "2026-09-18T17:00:57.13Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:00:57.165Z",
+      "respondedAt": "2026-09-18T17:00:57.165Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:01:02.169Z",
+      "respondedAt": "2026-09-18T17:01:02.169Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:01:07.176Z",
+      "respondedAt": "2026-09-18T17:01:07.176Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:01:12.173Z",
+      "respondedAt": "2026-09-18T17:01:12.173Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:01:17.18Z",
+      "respondedAt": "2026-09-18T17:01:17.18Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:22.176Z",
+      "respondedAt": "2026-09-18T17:01:22.176Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:27.175Z",
+      "respondedAt": "2026-09-18T17:01:27.175Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:32.173Z",
+      "respondedAt": "2026-09-18T17:01:32.173Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:37.174Z",
+      "respondedAt": "2026-09-18T17:01:37.174Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:42.178Z",
+      "respondedAt": "2026-09-18T17:01:42.178Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:47.176Z",
+      "respondedAt": "2026-09-18T17:01:47.176Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:52.176Z",
+      "respondedAt": "2026-09-18T17:01:52.176Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:01:57.182Z",
+      "respondedAt": "2026-09-18T17:01:57.182Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:02.169Z",
+      "respondedAt": "2026-09-18T17:02:02.169Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:07.166Z",
+      "respondedAt": "2026-09-18T17:02:07.166Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:12.167Z",
+      "respondedAt": "2026-09-18T17:02:12.167Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:17.177Z",
+      "respondedAt": "2026-09-18T17:02:17.177Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:22.176Z",
+      "respondedAt": "2026-09-18T17:02:22.176Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:25.853Z",
+      "respondedAt": "2026-09-18T17:02:25.853Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:25.889Z",
+      "respondedAt": "2026-09-18T17:02:25.889Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:30.891Z",
+      "respondedAt": "2026-09-18T17:02:30.891Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:35.899Z",
+      "respondedAt": "2026-09-18T17:02:35.899Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:40.904Z",
+      "respondedAt": "2026-09-18T17:02:40.904Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:45.899Z",
+      "respondedAt": "2026-09-18T17:02:45.899Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:50.898Z",
+      "respondedAt": "2026-09-18T17:02:50.898Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:02:55.897Z",
+      "respondedAt": "2026-09-18T17:02:55.897Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:03:00.9Z",
+      "respondedAt": "2026-09-18T17:03:00.9Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:03:05.896Z",
+      "respondedAt": "2026-09-18T17:03:05.896Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:03:10.903Z",
+      "respondedAt": "2026-09-18T17:03:10.903Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:03:13.955Z",
+      "respondedAt": "2026-09-18T17:03:13.955Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:03:13.992Z",
+      "respondedAt": "2026-09-18T17:03:13.992Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:18.994Z",
+      "respondedAt": "2026-09-18T17:03:18.994Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:20.793Z",
+      "respondedAt": "2026-09-18T17:03:20.793Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:20.837Z",
+      "respondedAt": "2026-09-18T17:03:20.837Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:25.849Z",
+      "respondedAt": "2026-09-18T17:03:25.849Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:30.845Z",
+      "respondedAt": "2026-09-18T17:03:30.845Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:35.846Z",
+      "respondedAt": "2026-09-18T17:03:35.846Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:40.851Z",
+      "respondedAt": "2026-09-18T17:03:40.851Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:45.849Z",
+      "respondedAt": "2026-09-18T17:03:45.849Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:50.853Z",
+      "respondedAt": "2026-09-18T17:03:50.853Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:03:55.848Z",
+      "respondedAt": "2026-09-18T17:03:55.848Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:00.842Z",
+      "respondedAt": "2026-09-18T17:04:15.854Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:20.843Z",
+      "respondedAt": "2026-09-18T17:04:35.843Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:04:35.848Z",
+      "respondedAt": "2026-09-18T17:04:35.848Z"
+    },
+    {
+      "search": "",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:04:40.851Z",
+      "respondedAt": "2026-09-18T17:04:40.851Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:45.851Z",
+      "respondedAt": "2026-09-18T17:04:45.851Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:50.856Z",
+      "respondedAt": "2026-09-18T17:04:50.856Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:52.134Z",
+      "respondedAt": "2026-09-18T17:04:52.134Z"
+    },
+    {
+      "search": "",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:55.845Z",
+      "respondedAt": "2026-09-18T17:04:55.845Z"
+    },
+    {
+      "search": "slow",
+      "mode": "fail",
+      "requestedAt": "2026-09-18T17:04:58.7Z",
+      "respondedAt": "2026-09-18T17:05:22.275Z"
+    },
+    {
+      "search": "fast",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:05:13.552Z",
+      "respondedAt": "2026-09-18T17:05:13.552Z"
+    },
+    {
+      "search": "fast",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:05:18.559Z",
+      "respondedAt": "2026-09-18T17:05:18.559Z"
+    },
+    {
+      "search": "fast",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:05:23.554Z",
+      "respondedAt": "2026-09-18T17:05:23.554Z"
+    },
+    {
+      "search": "fast",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:05:28.556Z",
+      "respondedAt": "2026-09-18T17:05:28.556Z"
+    },
+    {
+      "search": "slow",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:05:32.847Z",
+      "respondedAt": "2026-09-18T17:06:15.067Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:05.555Z",
+      "respondedAt": "2026-09-18T17:06:05.555Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:10.56Z",
+      "respondedAt": "2026-09-18T17:06:10.56Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:15.567Z",
+      "respondedAt": "2026-09-18T17:06:15.567Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:20.568Z",
+      "respondedAt": "2026-09-18T17:06:20.568Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:25.568Z",
+      "respondedAt": "2026-09-18T17:06:25.568Z"
+    },
+    {
+      "search": "latest",
+      "mode": "ok",
+      "requestedAt": "2026-09-18T17:06:30.565Z",
+      "respondedAt": "2026-09-18T17:06:30.565Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:00.562Z",
+      "respondedAt": "2026-09-18T17:07:00.562Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:02.742Z",
+      "respondedAt": "2026-09-18T17:07:02.742Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:05.565Z",
+      "respondedAt": "2026-09-18T17:07:05.565Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:10.56Z",
+      "respondedAt": "2026-09-18T17:07:10.56Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:15.566Z",
+      "respondedAt": "2026-09-18T17:07:15.566Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:20.569Z",
+      "respondedAt": "2026-09-18T17:07:20.569Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:25.562Z",
+      "respondedAt": "2026-09-18T17:07:25.562Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:30.559Z",
+      "respondedAt": "2026-09-18T17:07:30.559Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:35.563Z",
+      "respondedAt": "2026-09-18T17:07:35.563Z"
+    },
+    {
+      "search": "latest",
+      "mode": "empty",
+      "requestedAt": "2026-09-18T17:07:40.563Z",
+      "respondedAt": "2026-09-18T17:07:40.563Z"
+    }
+  ],
+  "pending": 0
+}

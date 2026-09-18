@@ -68,7 +68,7 @@ import {
 } from '../features/session/warehouseApi';
 import { normalizeEvidenceImage } from '../features/airPickup/evidenceImage';
 import { AirPickupModuleHeader } from '../features/airPickup/AirPickupModuleHeader';
-import { selectExistingRecordsById } from '../features/airPickup/receiptSelection';
+import { exchangeProgressPercent, selectExistingRecordsById } from '../features/airPickup/receiptSelection';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 
 const DRAFT_KEY = 'cmhub-air-pickup-create-draft-v1';
@@ -164,7 +164,7 @@ function localDateTimeValue(value: string | null = null) {
 function ExchangeProgress({ order }: { order: AirPickupOrder }) {
   const progress = order.exchangeProgress;
   if (!progress.total) return <span className="cmhub-air-progress-empty">换单数据待录入</span>;
-  const percent = Math.min(100, Math.round((progress.processed / progress.total) * 100));
+  const percent = exchangeProgressPercent(progress.processed, progress.total);
   return <div className="cmhub-air-progress" aria-label={`换单进度 ${progress.processed} / ${progress.total}，${percent}%`}>
     <div className="cmhub-air-progress-heading"><strong>{progress.processed.toLocaleString()} / {progress.total.toLocaleString()}</strong><span>{percent}%</span></div>
     <Progress percent={percent} showText={false} size="small" status={progress.exceptions ? 'warning' : percent === 100 ? 'success' : 'normal'} />
@@ -297,36 +297,69 @@ export default function AirPickupPage() {
 
   useWorkbenchMotion(motionScopeRef, { tabKey: motionTabKey });
 
-  const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    setError('');
+  const mounted = useRef(true);
+  const listSequence = useRef(0);
+  const listPending = useRef(false);
+  const previousQuery = useRef('');
+  const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
+  const refreshPaused = useRef(false);
+  refreshPaused.current = selectedIds.length > 0 || editorOpen || receiptOpen || handoverOpen
+    || batchEditOpen || Boolean(removeAsset) || Boolean(voidTarget);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; listSequence.current++; };
+  }, []);
+
+  const load = useCallback(async (quiet = false, background = false) => {
+    // Polling must not supersede a slow foreground request or an explicit refresh.
+    if (background && (listPending.current || refreshPaused.current)) return;
+    const sequence = ++listSequence.current;
+    listPending.current = true;
+    const selectedClient = clients.find(client => client.id === clientFilter);
+    const query = JSON.stringify([clientFilter, selectedClient?.name, evidenceStatus, page, search, status]);
+    if (previousQuery.current !== query) {
+      previousQuery.current = query;
+      setOrders([]); setLastLoadedAt(null); setSelectedIds([]);
+      setTotal(0); setSummary(emptySummary);
+    }
+    const current = () => mounted.current && sequence === listSequence.current;
+    if (!quiet) { setLoading(true); setError(''); }
     try {
-      const selectedClient = clients.find(client => client.id === clientFilter);
       const result = await listAirPickups({ search: search || selectedClient?.name || '', status, evidenceStatus, page, pageSize: 20 });
+      if (!current() || (background && refreshPaused.current)) return;
+      setError('');
+      setLastLoadedAt(Date.now());
       setOrders(result.data);
       setTotal(result.pagination.total);
       setSummary(result.summary);
       setSelectedIds(current => current.filter(id => result.data.some(order => order.id === id)));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '提货单数据加载失败。');
+      if (current() && !(background && refreshPaused.current))
+        setError(cause instanceof Error ? cause.message : '提货单数据加载失败。');
     } finally {
-      if (!quiet) setLoading(false);
+      if (current()) {
+        listPending.current = false;
+        setLoading(false);
+      }
     }
   }, [clientFilter, clients, evidenceStatus, page, search, status]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (clients.length) return;
-    void listAirPickupClients().then(setClients).catch(() => undefined);
+    let current = true;
+    void listAirPickupClients().then(result => { if (current) setClients(result); }).catch(() => undefined);
+    return () => { current = false; };
   }, [clients.length]);
   useEffect(() => {
+    if (searchDraft === search) return;
     const timer = window.setTimeout(() => { setSearch(searchDraft); setPage(1); }, 300);
     return () => window.clearTimeout(timer);
   }, [searchDraft]);
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && !editorOpen && !receiptOpen && !handoverOpen) void load(true); }, 5_000);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(true, true); }, 5_000);
     return () => window.clearInterval(timer);
-  }, [editorOpen, handoverOpen, load, receiptOpen]);
+  }, [load]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const selectedOrders = useMemo(() => selectedIds.map(id => orders.find(order => order.id === id)).filter(Boolean) as AirPickupOrder[], [orders, selectedIds]);
@@ -512,13 +545,13 @@ export default function AirPickupPage() {
       />
 
       <div className="cmhub-air-summary" data-motion-enter aria-label="状态概览">
-        <article><Plane size={18} /><span>提单总数</span><strong>{total}</strong></article>
+        <article><Plane size={18} /><span>提单总数</span><strong>{lastLoadedAt === null ? '—' : total}</strong></article>
         <article><PackageCheck size={18} /><span>已选择</span><strong>{selectedIds.length}</strong></article>
-        <article><Archive size={18} /><span>待入库</span><strong>{summary.recorded}</strong></article>
-        <article><Camera size={18} /><span>凭证待补</span><strong>{summary.evidencePending}</strong></article>
+        <article><Archive size={18} /><span>待入库</span><strong>{lastLoadedAt === null ? '—' : summary.recorded}</strong></article>
+        <article><Camera size={18} /><span>凭证待补</span><strong>{lastLoadedAt === null ? '—' : summary.evidencePending}</strong></article>
       </div>
 
-      {error && <Alert type="error" content={error} action={<Button size="mini" onClick={() => void load()}>重试</Button>} />}
+      {error && <Alert type="error" content={lastLoadedAt === null ? error : `${error} 当前保留上次成功同步的数据。`} action={<Button size="mini" onClick={() => void load()}>重试</Button>} />}
 
       <div data-motion-enter>
       <Card className="cmhub-module-frame cmhub-air-list-card" bordered>
@@ -528,7 +561,7 @@ export default function AirPickupPage() {
             <h2>提单列表</h2>
             <p>按状态、客户和凭证追溯每一笔流转记录。</p>
           </div>
-          <small>每 5 秒自动同步</small>
+          <small>{selectedIds.length ? '选择期间暂停自动同步' : '每 5 秒自动同步'}{lastLoadedAt !== null && ` · 上次成功 ${formatWarehouseUpdatedAt(new Date(lastLoadedAt).toISOString())}`}</small>
         </div>
         <div className="cmhub-air-filter-row">
           <Tabs activeTab={status || 'ALL'} onChange={key => { setStatus(key === 'ALL' ? '' : key as AirPickupStatus); setEvidenceStatus(''); setPage(1); setSelectedIds([]); }}>
@@ -595,7 +628,7 @@ export default function AirPickupPage() {
             <time className="cmhub-air-updated-at" role="cell" dateTime={order.updatedAt} title={warehouseFullDateTimeFormatter.format(new Date(order.updatedAt))}>{formatWarehouseUpdatedAt(order.updatedAt)}</time>
             <div className="cmhub-air-order-action" role="cell">{renderNextAction(order)}</div>
           </article>)}
-          {!loading && !orders.length && <Empty description="当前筛选条件下没有提货记录" />}
+          {!loading && !error && lastLoadedAt !== null && !orders.length && <Empty description="当前筛选条件下没有提货记录" />}
         </div>
         {total > 20 && <footer className="cmhub-air-queue-pagination"><Pagination current={page} pageSize={20} total={total} showTotal onChange={setPage} /></footer>}
       </Card>

@@ -967,7 +967,7 @@ body { background: var(--cmhub-canvas); color: var(--cmhub-text); font-family: v
   .cmhub-air-order-identity { grid-area: identity; }
   .cmhub-air-order-progress { grid-area: progress; }
   .cmhub-air-order-state { grid-area: state; }
-  .cmhub-air-updated-at { grid-area: time; justify-self: end; }
+  .cmhub-air-action-queue > article > .cmhub-air-updated-at { grid-area: time; justify-self: end; }
   .cmhub-air-order-action { display: block !important; grid-area: action; }
   .cmhub-air-batchbar { align-items: flex-start; flex-direction: column; gap: 8px; }
 }
@@ -1387,7 +1387,7 @@ body { background: var(--cmhub-canvas); color: var(--cmhub-text); font-family: v
   .cmhub-air-order-identity { grid-area: identity; }
   .cmhub-air-order-progress { grid-area: progress; }
   .cmhub-air-order-state { grid-area: state; }
-  .cmhub-air-updated-at { grid-area: time; justify-self: end; }
+  .cmhub-air-action-queue > article > .cmhub-air-updated-at { grid-area: time; justify-self: end; }
   .cmhub-air-order-action { display: block !important; grid-area: action; }
 }
 
@@ -2274,7 +2274,7 @@ body { background: var(--cmhub-canvas); color: var(--cmhub-text); font-family: v
   .cmhub-air-order-identity { grid-area: identity; }
   .cmhub-air-order-progress { grid-area: progress; }
   .cmhub-air-order-state { grid-area: state; }
-  .cmhub-air-updated-at { grid-area: time; justify-self: end; }
+  .cmhub-air-action-queue > article > .cmhub-air-updated-at { grid-area: time; justify-self: end; }
   .cmhub-air-order-action { grid-area: action; }
 }
 
