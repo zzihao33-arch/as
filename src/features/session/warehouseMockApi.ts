@@ -106,6 +106,7 @@ const permissionDefinitions: WarehousePermissionView[] = [
   ['accounts.reset_password', 'accounts', '重置仓库账户密码', 'HIGH'],
   ['roles.view', 'roles', '查看角色权限', 'HIGH'],
   ['roles.manage', 'roles', '管理角色权限', 'HIGH'],
+  ['integration_logs.view', 'integration_logs', '查看推送日志', 'HIGH'],
   ['security_audit.view', 'security_audit', '查看身份安全审计', 'HIGH'],
 ].map(([code, module, name, riskLevel]) => ({
   code: String(code),

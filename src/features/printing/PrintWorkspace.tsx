@@ -42,6 +42,7 @@ import { readCloudLabelFile, useWarehousePrintLibrary, type CloudPrintTarget } f
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
 import { useSharedWorkPrintAudit } from './sharedWorkPrintAudit';
+import { appAudioArbitrator } from '../audio/audioArbitration';
 import {
   claimSharedWorkBatchItem,
   checkGlobalIntercepts,
@@ -1172,6 +1173,8 @@ export default function App() {
     if (!audioEnabled && !options.force) return;
 
     const requestTime = performance.now();
+    const duration = scanResult === 'success' ? 0.38 : 0.76;
+    if (!appAudioArbitrator.reserve('scan', Date.now(), duration * 1000 + 90)) return;
 
     try {
       const didInterrupt = stopActiveAudio();
@@ -1181,7 +1184,6 @@ export default function App() {
 
       const context = await getAudioContext();
       const startTime = context.currentTime;
-      const duration = scanResult === 'success' ? 0.38 : 0.76;
       const volume = Math.max(0, Math.min(1, audioVolume / 100));
       const boost = audioBoostEnabled ? Math.pow(10, 3 / 20) : 1;
       const masterGain = context.createGain();
@@ -1266,6 +1268,7 @@ export default function App() {
   };
 
   const playInterceptAlert = async () => {
+    if (!appAudioArbitrator.reserve('intercept', Date.now(), 6_090)) return;
     try {
       const didInterrupt = stopActiveAudio();
       if (didInterrupt) setAudioInterruptCount(count => count + 1);

@@ -3,6 +3,7 @@ import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { WarehouseApiError } from '../session/warehouseApi';
 import { getLogNotifications, markLogsRead } from './api';
 import { advanceNotification, initialNotification, type NotificationState } from './notificationState';
+import { appAudioArbitrator } from '../audio/audioArbitration';
 import './integration-logs.css';
 
 interface LogNotifications {
@@ -49,6 +50,7 @@ function NotificationScope({ userId, allowed, children }: { userId: string; allo
     if (muted || ctx?.state !== 'running') return;
     // Coalesce across tabs of this account as well as within each poll loop.
     const now = Date.now();
+    if (!appAudioArbitrator.reserve('notification', now, 350)) return;
     try {
       const key = `cmhub:push-log-sound:${userId}`;
       const last = Number(localStorage.getItem(key) ?? '0');
