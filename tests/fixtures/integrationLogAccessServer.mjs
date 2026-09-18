@@ -8,6 +8,8 @@ let sessionDelayMs = 0;
 let cursor = 3;
 const reads = new Map();
 const counts = {};
+let requestSequence = 0;
+const events = [];
 const records = Array.from({ length: 3 }, (_, index) => ({
   id: String(3 - index), occurredAt: new Date().toISOString(), completedAt: new Date().toISOString(),
   requestId: `fixture-request-${3 - index}`, clientId: 'fixture-client', clientName: '合成验收客户',
@@ -41,7 +43,15 @@ http.createServer(async (req, res) => {
     if (url.searchParams.has('advance')) cursor += Number(url.searchParams.get('advance'));
     return send({ mode, user, sessionDelayMs, cursor });
   }
-  if (url.pathname === '/__stats') return send({ mode, user, cursor, reads: Object.fromEntries(reads), counts });
+  if (url.pathname === '/__stats') return send({ mode, user, cursor, reads: Object.fromEntries(reads), counts, events });
+  const requestId = ++requestSequence;
+  const requestUser = user;
+  const recordEvent = (phase, status) => {
+    events.push({ requestId, phase, method: req.method, path: url.pathname, user: requestUser, status, at: new Date().toISOString() });
+    if (events.length > 100) events.shift();
+  };
+  recordEvent('request');
+  res.once('finish', () => recordEvent('response', res.statusCode));
   counts[`${req.method} ${url.pathname}`] = (counts[`${req.method} ${url.pathname}`] || 0) + 1;
   if (url.pathname === '/warehouse/v1/session') {
     if (req.method === 'DELETE') { mode = 'expired'; return send(null); }
