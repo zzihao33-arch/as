@@ -331,6 +331,9 @@ export default function AirPickupPage() {
     }
     if (previousFilters.current !== filters) {
       previousFilters.current = filters;
+      // A delayed batch read belongs to the selection before this filter change.
+      selectionSequence.current++;
+      setSelectionLoading(false);
       selectedIdsRef.current = [];
       setSelectedIds([]); setSelectionRecords([]);
       setTotal(0); setSummary(emptySummary);
