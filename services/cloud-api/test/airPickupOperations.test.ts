@@ -2,11 +2,44 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ApiError } from '../src/errors.js';
 import {
+  createAirPickupOperations,
   evidenceStatusForCounts,
   normalizeAirBillNo,
   receivingValuesDiffer,
   validateAirEvidenceImage,
 } from '../src/airPickupOperations.js';
+import type { Pool } from 'mysql2/promise';
+import type { LabelStorage } from '../src/labelStorage.js';
+
+test('list query intersects exact client with search and preserves count on an empty page', async () => {
+  const queries: { sql: string; values: unknown[] }[] = [];
+  const mysql = {
+    query: async (sql: string, values: unknown[] = []) => {
+      queries.push({ sql, values });
+      return [sql.includes('SELECT COUNT(*)') ? [{ total_count: 21 }] : []];
+    },
+    execute: async () => [[{}]],
+  } as unknown as Pool;
+  const ops = createAirPickupOperations({ mysql, storage: {} as LabelStorage });
+  const clientId = '00000000-0000-4000-8000-000000000001';
+  const result = await ops.listOrders({ clientId, search: '180-123', status: 'RECORDED', page: 3, pageSize: 20 });
+  assert.equal(result.total, 21);
+  for (const query of queries) {
+    assert.match(query.sql, /o\.client_id = \?/);
+    assert.ok(query.values.includes(clientId));
+    assert.ok(query.values.includes('%180123%'));
+    assert.ok(query.values.includes('RECORDED'));
+  }
+  assert.ok(queries.some(query => query.sql.includes('SELECT COUNT(*)')));
+});
+
+test('list query rejects malformed client ids before contacting the database', async () => {
+  let contacted = false;
+  const mysql = { query: async () => { contacted = true; return [[]]; }, execute: async () => [[]] } as unknown as Pool;
+  const ops = createAirPickupOperations({ mysql, storage: {} as LabelStorage });
+  await assert.rejects(ops.listOrders({ clientId: 'invalid-client' }), ApiError);
+  assert.equal(contacted, false);
+});
 
 test('normalizes equivalent air bill numbers to one global key', () => {
   const values = ['abc-123', 'ABC-123', 'ABC123', ' abc 123 ', 'ＡBC123'.replace('Ａ', 'A')];

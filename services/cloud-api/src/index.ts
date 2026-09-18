@@ -553,6 +553,7 @@ warehouseRouter.get('/air-pickups', warehouseBoundary.session, requireWarehouseP
   try {
     const result = await airPickupOperations.listOrders({
       search: req.query.search,
+      clientId: req.query.clientId,
       status: req.query.status,
       evidenceStatus: req.query.evidenceStatus,
       page: req.query.page,

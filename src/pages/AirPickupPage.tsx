@@ -68,7 +68,7 @@ import {
 } from '../features/session/warehouseApi';
 import { normalizeEvidenceImage } from '../features/airPickup/evidenceImage';
 import { AirPickupModuleHeader } from '../features/airPickup/AirPickupModuleHeader';
-import { exchangeProgressPercent, selectExistingRecordsById } from '../features/airPickup/receiptSelection';
+import { exchangeProgressPercent, mergeSelectedRecords, selectExistingRecordsById } from '../features/airPickup/receiptSelection';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 
 const DRAFT_KEY = 'cmhub-air-pickup-create-draft-v1';
@@ -258,6 +258,12 @@ export default function AirPickupPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionRecords, setSelectionRecords] = useState<AirPickupOrder[]>([]);
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
+  const [receiptOrders, setReceiptOrders] = useState<AirPickupOrder[]>([]);
+  const [handoverOrders, setHandoverOrders] = useState<AirPickupOrder[]>([]);
+  const [selectionLoading, setSelectionLoading] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<AirPickupOrder | null>(null);
   const [saving, setSaving] = useState(false);
@@ -300,14 +306,16 @@ export default function AirPickupPage() {
   const mounted = useRef(true);
   const listSequence = useRef(0);
   const listPending = useRef(false);
+  const selectionSequence = useRef(0);
   const previousQuery = useRef('');
+  const previousFilters = useRef('');
   const [lastLoadedAt, setLastLoadedAt] = useState<number | null>(null);
   const refreshPaused = useRef(false);
-  refreshPaused.current = selectedIds.length > 0 || editorOpen || receiptOpen || handoverOpen
+  refreshPaused.current = selectedIds.length > 0 || selectionLoading || editorOpen || receiptOpen || handoverOpen
     || batchEditOpen || Boolean(removeAsset) || Boolean(voidTarget);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; listSequence.current++; };
+    return () => { mounted.current = false; listSequence.current++; selectionSequence.current++; };
   }, []);
 
   const load = useCallback(async (quiet = false, background = false) => {
@@ -315,24 +323,31 @@ export default function AirPickupPage() {
     if (background && (listPending.current || refreshPaused.current)) return;
     const sequence = ++listSequence.current;
     listPending.current = true;
-    const selectedClient = clients.find(client => client.id === clientFilter);
-    const query = JSON.stringify([clientFilter, selectedClient?.name, evidenceStatus, page, search, status]);
+    const query = JSON.stringify([clientFilter, evidenceStatus, page, search, status]);
+    const filters = JSON.stringify([clientFilter, evidenceStatus, search, status]);
     if (previousQuery.current !== query) {
       previousQuery.current = query;
-      setOrders([]); setLastLoadedAt(null); setSelectedIds([]);
+      setOrders([]); setLastLoadedAt(null);
+    }
+    if (previousFilters.current !== filters) {
+      previousFilters.current = filters;
+      selectedIdsRef.current = [];
+      setSelectedIds([]); setSelectionRecords([]);
       setTotal(0); setSummary(emptySummary);
     }
     const current = () => mounted.current && sequence === listSequence.current;
     if (!quiet) { setLoading(true); setError(''); }
     try {
-      const result = await listAirPickups({ search: search || selectedClient?.name || '', status, evidenceStatus, page, pageSize: 20 });
+      const result = await listAirPickups({ search, clientId: clientFilter, status, evidenceStatus, page, pageSize: 20 });
       if (!current() || (background && refreshPaused.current)) return;
+      const lastPage = Math.max(1, Math.ceil(result.pagination.total / 20));
+      if (page > lastPage) { setPage(lastPage); return; }
       setError('');
       setLastLoadedAt(Date.now());
       setOrders(result.data);
       setTotal(result.pagination.total);
       setSummary(result.summary);
-      setSelectedIds(current => current.filter(id => result.data.some(order => order.id === id)));
+      setSelectionRecords(current => mergeSelectedRecords(current, result.data, selectedIdsRef.current));
     } catch (cause) {
       if (current() && !(background && refreshPaused.current))
         setError(cause instanceof Error ? cause.message : '提货单数据加载失败。');
@@ -342,7 +357,7 @@ export default function AirPickupPage() {
         setLoading(false);
       }
     }
-  }, [clientFilter, clients, evidenceStatus, page, search, status]);
+  }, [clientFilter, evidenceStatus, page, search, status]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -362,7 +377,7 @@ export default function AirPickupPage() {
   }, [load]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
-  const selectedOrders = useMemo(() => selectedIds.map(id => orders.find(order => order.id === id)).filter(Boolean) as AirPickupOrder[], [orders, selectedIds]);
+  const selectedOrders = useMemo(() => mergeSelectedRecords(selectionRecords, orders, selectedIds), [selectionRecords, orders, selectedIds]);
   const selectedRecorded = selectedOrders.filter(order => order.status === 'RECORDED');
   const selectedReceived = selectedOrders.filter(order => order.status === 'RECEIVED' && !order.handoverBatchId);
 
@@ -395,15 +410,52 @@ export default function AirPickupPage() {
     setEditorOpen(true);
   };
 
-  const openReceipt = (targets: AirPickupOrder[]) => {
+  const readBatchTargets = async (ids: string[], kind: 'receipt' | 'handover') => {
+    if (ids.length > 200) { Message.error('每批最多处理200张提货单，请减少选择后重试。'); return null; }
+    const sequence = ++selectionSequence.current;
+    setSelectionLoading(true);
+    try {
+      const targets = await Promise.all([...new Set(ids)].map(getAirPickup));
+      if (!mounted.current || sequence !== selectionSequence.current) return null;
+      const refreshed = new Map(targets.map(order => [order.id, order]));
+      setOrders(current => current.map(order => refreshed.get(order.id) ?? order));
+      setSelectionRecords(current => mergeSelectedRecords(current, targets, selectedIdsRef.current));
+      const invalid = targets.find(order => kind === 'receipt'
+        ? order.status !== 'RECORDED'
+        : order.status !== 'RECEIVED' || Boolean(order.handoverBatchId));
+      if (invalid) { Message.error(`${invalid.billNo} 的流转状态已变化，请重新核对选择。`); return null; }
+      return targets;
+    } catch (cause) {
+      if (mounted.current && sequence === selectionSequence.current)
+        Message.error(cause instanceof Error ? cause.message : '所选提单暂时无法完整读取，请重试；本次未提交任何批量操作。');
+      return null;
+    } finally {
+      if (mounted.current && sequence === selectionSequence.current) setSelectionLoading(false);
+    }
+  };
+
+  const openReceipt = async (selected: AirPickupOrder[]) => {
+    const targets = await readBatchTargets(selected.map(order => order.id), 'receipt');
+    if (!targets?.length) return;
     const next = Object.fromEntries(targets.map(order => [order.id, { actualCartons: order.forecastCartons,
       actualPackages: order.forecastPackages, actualWeight: order.forecastWeight,
       actualWeightUnit: order.forecastWeightUnit, differenceReason: '' }]));
+    setReceiptOrders(targets);
     setReceiptDrafts(next);
     setReceiptReceivedAt(localDateTimeValue());
     receiptEvidence.forEach(item => URL.revokeObjectURL(item.previewUrl));
     setReceiptEvidence([]);
     setReceiptOpen(true);
+  };
+
+  const openHandoverDraft = async (ids: string[]) => {
+    const targets = await readBatchTargets(ids, 'handover');
+    if (!targets?.length) return;
+    setHandoverOrders(targets);
+    setHandoverOrderIds(ids);
+    handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() });
+    setHandoverBatch(null);
+    setHandoverOpen(true);
   };
 
   const clearReceiptEvidence = () => {
@@ -417,6 +469,7 @@ export default function AirPickupPage() {
   const closeReceiptEditor = () => {
     setReceiptOpen(false);
     setReceiptDrafts({});
+    setReceiptOrders([]);
     clearReceiptEvidence();
   };
 
@@ -519,6 +572,12 @@ export default function AirPickupPage() {
   };
 
   const toggleSelected = (order: AirPickupOrder, checked: boolean) => {
+    selectionSequence.current++;
+    setSelectionLoading(false);
+    const nextIds = checked
+      ? selectedIds.includes(order.id) ? selectedIds : [...selectedIds, order.id]
+      : selectedIds.filter(id => id !== order.id);
+    setSelectionRecords(current => mergeSelectedRecords(current, [order], nextIds));
     setSelectedIds(current => checked
       ? current.includes(order.id) ? current : [...current, order.id]
       : current.filter(id => id !== order.id));
@@ -529,7 +588,7 @@ export default function AirPickupPage() {
       return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<PackageCheck size={14} aria-hidden="true" />} onClick={() => openReceipt([order])}>确认入库</Button>;
     }
     if (canHandover && order.status === 'RECEIVED' && !order.handoverBatchId) {
-      return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<Truck size={14} aria-hidden="true" />} onClick={() => { setHandoverOrderIds([order.id]); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverOpen(true); }}>确认交仓</Button>;
+      return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<Truck size={14} aria-hidden="true" />} onClick={() => void openHandoverDraft([order.id])}>确认交仓</Button>;
     }
     if (canAddEvidence && order.status === 'HANDED_OVER' && order.evidenceStatus !== 'COMPLETE' && order.handoverBatchId) {
       return <Button className="cmhub-air-row-action" size="small" type="primary" icon={<Camera size={14} aria-hidden="true" />} onClick={() => void openBatch(order.handoverBatchId!)}>补齐凭证</Button>;
@@ -564,7 +623,7 @@ export default function AirPickupPage() {
           <small>{selectedIds.length ? '选择期间暂停自动同步' : '每 5 秒自动同步'}{lastLoadedAt !== null && ` · 上次成功 ${formatWarehouseUpdatedAt(new Date(lastLoadedAt).toISOString())}`}</small>
         </div>
         <div className="cmhub-air-filter-row">
-          <Tabs activeTab={status || 'ALL'} onChange={key => { setStatus(key === 'ALL' ? '' : key as AirPickupStatus); setEvidenceStatus(''); setPage(1); setSelectedIds([]); }}>
+          <Tabs activeTab={status || 'ALL'} onChange={key => { setStatus(key === 'ALL' ? '' : key as AirPickupStatus); setEvidenceStatus(''); setPage(1); setSelectedIds([]); setSelectionRecords([]); }}>
             <Tabs.TabPane key="ALL" title="全部" />
             <Tabs.TabPane key="RECORDED" title="已录入" />
             <Tabs.TabPane key="RECEIVED" title="已入库" />
@@ -602,10 +661,10 @@ export default function AirPickupPage() {
         {selectedIds.length > 0 && <div className="cmhub-air-batchbar" role="status">
           <span>已选择 {selectedIds.length} 单。仅相同流转状态的提货单可批量处理。</span>
           <Space>
-            <Button type="text" size="small" onClick={() => setSelectedIds([])}>清除选择</Button>
-            {canReceive && <Button className="cmhub-air-batch-action" type="secondary" size="small" disabled={!selectedRecorded.length || selectedRecorded.length !== selectedOrders.length} icon={<PackageCheck size={15} aria-hidden="true" />} onClick={() => openReceipt(selectedRecorded)}>批量入库 <span className="cmhub-air-action-count">{selectedRecorded.length}</span></Button>}
-            {canHandover && <Button className="cmhub-air-batch-action" type="primary" size="small" disabled={!selectedReceived.length || selectedReceived.length !== selectedOrders.length} icon={<Truck size={15} aria-hidden="true" />}
-              onClick={() => { setHandoverOrderIds(selectedReceived.map(order => order.id)); handoverForm.setFieldsValue({ handedOverAt: localDateTimeValue() }); setHandoverBatch(null); setHandoverOpen(true); }}>批量交仓 <span className="cmhub-air-action-count">{selectedReceived.length}</span></Button>}
+            <Button type="text" size="small" onClick={() => { selectionSequence.current++; setSelectionLoading(false); setSelectedIds([]); setSelectionRecords([]); }}>清除选择</Button>
+            {canReceive && <Button className="cmhub-air-batch-action" type="secondary" size="small" loading={selectionLoading} disabled={!selectedRecorded.length || selectedRecorded.length !== selectedIds.length} icon={<PackageCheck size={15} aria-hidden="true" />} onClick={() => void openReceipt(selectedRecorded)}>批量入库 <span className="cmhub-air-action-count">{selectedRecorded.length}</span></Button>}
+            {canHandover && <Button className="cmhub-air-batch-action" type="primary" size="small" loading={selectionLoading} disabled={!selectedReceived.length || selectedReceived.length !== selectedIds.length} icon={<Truck size={15} aria-hidden="true" />}
+              onClick={() => void openHandoverDraft(selectedReceived.map(order => order.id))}>批量交仓 <span className="cmhub-air-action-count">{selectedReceived.length}</span></Button>}
           </Space>
         </div>}
 
@@ -682,10 +741,10 @@ export default function AirPickupPage() {
       <Modal className="cmhub-air-modal cmhub-air-receipt-modal" title={`批量入库确认 · ${Object.keys(receiptDrafts).length} 单`} visible={receiptOpen} style={{ width: 1180 }}
         okText="整批确认入库" unmountOnExit onCancel={closeReceiptEditor} onOk={async () => {
           const selected = Object.entries(receiptDrafts);
-          const unavailable = selected.find(([id]) => !orders.some(order => order.id === id));
+          const unavailable = selected.find(([id]) => !receiptOrders.some(order => order.id === id));
           if (unavailable) { Message.error('提货单列表已刷新，请重新打开入库窗口后再提交。'); return; }
-          const missing = selected.find(([id, draft]) => differs(orders.find(order => order.id === id)!, draft) && !draft.differenceReason.trim());
-          if (missing) { Message.error(`${orders.find(order => order.id === missing[0])?.billNo} 实际值有差异，请填写差异说明。`); return; }
+          const missing = selected.find(([id, draft]) => differs(receiptOrders.find(order => order.id === id)!, draft) && !draft.differenceReason.trim());
+          if (missing) { Message.error(`${receiptOrders.find(order => order.id === missing[0])?.billNo} 实际值有差异，请填写差异说明。`); return; }
           setSaving(true);
           try {
             const hadReceiptEvidence = receiptEvidence.length > 0;
@@ -711,7 +770,7 @@ export default function AirPickupPage() {
               <Input aria-label="共同入库时间" type="datetime-local" value={receiptReceivedAt} onChange={setReceiptReceivedAt} />
             </label>
             <div className="cmhub-air-receipt-list">
-              {selectExistingRecordsById(orders, Object.keys(receiptDrafts)).map(order => {
+              {selectExistingRecordsById(receiptOrders, Object.keys(receiptDrafts)).map(order => {
                 const id = order.id;
                 const draft = receiptDrafts[id];
                 const changed = differs(order, draft);
@@ -757,7 +816,7 @@ export default function AirPickupPage() {
             </section>
             <section className="cmhub-air-receipt-summary-card">
               <h3>确认摘要</h3>
-              <dl><div><dt>提货单</dt><dd>{Object.keys(receiptDrafts).length}</dd></div><div><dt>已填写</dt><dd>{Object.values(receiptDrafts).filter(Boolean).length}</dd></div><div><dt>存在差异</dt><dd>{selectExistingRecordsById(orders, Object.keys(receiptDrafts)).filter(order => differs(order, receiptDrafts[order.id])).length}</dd></div><div><dt>入库照片</dt><dd>{receiptEvidence.length}</dd></div></dl>
+              <dl><div><dt>提货单</dt><dd>{Object.keys(receiptDrafts).length}</dd></div><div><dt>已填写</dt><dd>{Object.values(receiptDrafts).filter(Boolean).length}</dd></div><div><dt>存在差异</dt><dd>{selectExistingRecordsById(receiptOrders, Object.keys(receiptDrafts)).filter(order => differs(order, receiptDrafts[order.id])).length}</dd></div><div><dt>入库照片</dt><dd>{receiptEvidence.length}</dd></div></dl>
             </section>
           </aside>
         </div>
@@ -787,7 +846,7 @@ export default function AirPickupPage() {
             <Form.Item label="司机电话" field="driverPhone"><Input maxLength={32} placeholder="选填" /></Form.Item>
             <Form.Item label="共同交仓时间" field="handedOverAt" rules={[{ required: true }]}><Input type="datetime-local" /></Form.Item>
           </div>
-          <div className="cmhub-air-selected-bills">{handoverOrderIds.map(id => orders.find(order => order.id === id)).filter(Boolean).map(order => <Tag key={order!.id}>{order!.billNo}</Tag>)}</div>
+          <div className="cmhub-air-selected-bills">{selectExistingRecordsById(handoverOrders, handoverOrderIds).map(order => <Tag key={order.id}>{order.billNo}</Tag>)}</div>
         </Form> : <div className="cmhub-air-handover-workspace">
           <Descriptions column={3} size="small" border data={[
             { label: '提货单', value: `${handoverBatch.orders.length} 单` },

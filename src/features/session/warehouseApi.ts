@@ -461,7 +461,7 @@ export interface AirHandoverBatch {
 }
 
 export async function listAirPickups(filters: {
-  search?: string; status?: AirPickupStatus | ''; evidenceStatus?: AirEvidenceStatus | ''; page?: number; pageSize?: number;
+  search?: string; clientId?: string; status?: AirPickupStatus | ''; evidenceStatus?: AirEvidenceStatus | ''; page?: number; pageSize?: number;
 } = {}) {
   const query = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });

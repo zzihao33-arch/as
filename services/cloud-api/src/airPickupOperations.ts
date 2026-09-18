@@ -375,8 +375,9 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       return rows.map(row => ({ id: row.id, code: row.client_code, name: row.display_name }));
     },
 
-    async listOrders(input: { search?: unknown; status?: unknown; evidenceStatus?: unknown; page?: unknown; pageSize?: unknown }) {
+    async listOrders(input: { search?: unknown; clientId?: unknown; status?: unknown; evidenceStatus?: unknown; page?: unknown; pageSize?: unknown }) {
       const search = input.search === undefined || input.search === '' ? null : text(input.search, 'search', 100);
+      const clientId = input.clientId === undefined || input.clientId === '' ? null : uuid(input.clientId, 'clientId');
       const status = input.status === undefined || input.status === '' ? null : text(input.status, 'status', 32) as AirPickupStatus | null;
       const evidence = input.evidenceStatus === undefined || input.evidenceStatus === '' ? null : text(input.evidenceStatus, 'evidenceStatus', 32) as EvidenceStatus | null;
       if (status && !['RECORDED', 'RECEIVED', 'HANDED_OVER', 'VOIDED'].includes(status)) throw new ApiError(400, 'VALIDATION_ERROR', 'status 不受支持。');
@@ -385,14 +386,18 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const pageSize = pageValue(input.pageSize, 20, 100);
       const offset = (page - 1) * pageSize;
       const normalizedSearch = search ? `%${search.replace(/[\s\u3000\-－—–]+/g, '').toUpperCase()}%` : null;
-      const [rows] = await mysql.query<OrderRow[]>(
-        `${ORDER_SELECT}, COUNT(*) OVER () AS total_count
-         WHERE (? IS NULL OR o.bill_no_normalized LIKE ? OR o.cargo_name LIKE ? OR o.client_name_snapshot LIKE ?)
+      const where = `WHERE (? IS NULL OR o.bill_no_normalized LIKE ? OR o.cargo_name LIKE ? OR o.client_name_snapshot LIKE ?)
+           AND (? IS NULL OR o.client_id = ?)
            AND (? IS NULL OR o.order_status = ?)
-           AND (? IS NULL OR o.evidence_status = ?)
-         ORDER BY o.updated_at DESC, o.id LIMIT ${pageSize} OFFSET ${offset}`,
-        [normalizedSearch, normalizedSearch, search ? `%${search}%` : null, search ? `%${search}%` : null,
-          status, status, evidence, evidence],
+           AND (? IS NULL OR o.evidence_status = ?)`;
+      const parameters = [normalizedSearch, normalizedSearch, search ? `%${search}%` : null, search ? `%${search}%` : null,
+        clientId, clientId, status, status, evidence, evidence];
+      const [countRows] = await mysql.query<(RowDataPacket & { total_count: number | string })[]>(
+        `SELECT COUNT(*) AS total_count FROM air_pickup_orders o ${where}`, parameters,
+      );
+      const [rows] = await mysql.query<OrderRow[]>(
+        `${ORDER_SELECT} ${where} ORDER BY o.updated_at DESC, o.id LIMIT ${pageSize} OFFSET ${offset}`,
+        parameters,
       );
       const [summaryRows] = await mysql.execute<(RowDataPacket & {
         recorded_count: number | string; received_count: number | string;
@@ -407,7 +412,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
          FROM air_pickup_orders`,
       );
       const summary = summaryRows[0];
-      return { orders: rows.map(toOrder), total: Number(rows[0]?.total_count ?? 0), page, pageSize,
+      return { orders: rows.map(toOrder), total: Number(countRows[0]?.total_count ?? 0), page, pageSize,
         summary: {
           recorded: Number(summary?.recorded_count ?? 0), received: Number(summary?.received_count ?? 0),
           handedOver: Number(summary?.handed_over_count ?? 0), voided: Number(summary?.voided_count ?? 0),

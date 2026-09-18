@@ -359,11 +359,13 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
 
   if (pathname === '/warehouse/v1/air-pickups' && method === 'GET') {
     const search = (url.searchParams.get('search') ?? '').replace(/[\s\u3000-]+/g, '').toUpperCase();
+    const clientId = url.searchParams.get('clientId');
     const status = url.searchParams.get('status');
     const evidenceStatus = url.searchParams.get('evidenceStatus');
     const page = Math.max(1, Number(url.searchParams.get('page') ?? 1));
     const pageSize = Math.max(1, Number(url.searchParams.get('pageSize') ?? 20));
     const filtered = state.airPickups.filter(order => (!search || order.billNoNormalized.includes(search) || (order.cargoName ?? '').includes(search) || order.sourceClientName.toUpperCase().includes(search))
+      && (!clientId || order.sourceClientId === clientId)
       && (!status || order.status === status) && (!evidenceStatus || order.evidenceStatus === evidenceStatus));
     const summary = {
       recorded: state.airPickups.filter(order => order.status === 'RECORDED').length,
