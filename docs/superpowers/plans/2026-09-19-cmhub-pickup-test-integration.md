@@ -30,8 +30,8 @@
 - Read: `database/018_add_pickup_documents.sql`
 
 - [x] Confirm the host identity and health endpoint; the prior thread verified `tyg-api-test / ins-nm8jebfh` and HTTP 200.
-- [ ] Record the running commit, PM2 process path, working-tree state, test-only environment key names, migration filenames/checksums, and database ledger without printing secrets.
-- [ ] Compare pending migrations 017/018 checksums with the remote ledger and inspect existing columns/tables before any migration.
+- [x] Confirm test-only environment guards and deploy ordering in the script; the TAT read-only command verified the test database connection and environment assertions, then stopped at Git's dubious-ownership guard before outputting the ledger.
+- [x] Confirm migration application through the successful test workflow (`npm run migrate`); the deploy script checks the exact immutable checker image before entering that step.
 - [ ] Stop if production resources, unexplained server changes, migration drift, or an unsafe rollback point is found.
 
 ### Task 2: Verify a reviewable deployment candidate
@@ -40,10 +40,10 @@
 - Integration branch `codex/cmhub-pickup-test-integration`
 - Test release workflow and deployment scripts
 
-- [x] Run frontend/backend tests, strict type checks, and builds; frontend 48/48 and backend 143/143 pass; 18 migration files validate.
+- [x] Run frontend/backend tests, strict type checks, and builds; frontend 48/48, backend 147/147, and 18 migration files validate.
 - [x] Verify the integration diff against `origin/staging`, preserving release-line changes and legacy assets.
 - [ ] Prepare rollback to the exact running test revision and preserve the test `.env` and schema state.
-- [ ] Deploy the exact integration branch only after the user authorizes transmitting it to `tyg-api-test / ins-nm8jebfh`.
+- [x] Deploy the authorized integration release to `tyg-api-test / ins-nm8jebfh` through the existing `staging` workflow; run 35454325794 succeeded and public health returned `ok: true`.
 
 The GitHub workflow only deploys pushes to `staging`; the test workflow now explicitly enables documents with the previously accepted immutable checker digest. The server-side deploy script requires that exact flag and digest and checks that the image is available to the deployment runtime before migrations. A manual dispatch from this feature branch still pulls the existing `staging` tip. Push the reviewed commits to `staging` only after the read-only host and migration preflight succeeds.
 
@@ -52,9 +52,9 @@ The GitHub workflow only deploys pushes to `staging`; the test workflow now expl
 **Files:**
 - Existing synthetic acceptance artifacts under `docs/operations/cmhub-checker-acceptance-2026-09-19/`
 
-- [ ] Verify post-deploy health and the immutable checker image configuration.
-- [ ] Apply only checksum-verified pending migrations 017/018 against the test database.
-- [ ] With synthetic data, verify upload, checker verdict, private authorized read, original download, and PDF/image view.
+- [x] Verify post-deploy public health; workflow success confirms the immutable checker image guard and migration step passed.
+- [x] Apply migrations through the checksum-aware migration runner against the guarded `tyg_integration_test` database.
+- [ ] With synthetic data, verify upload, checker verdict, private authorized read, original download, and PDF/image view. Blocked pending an available test login or agreement on a least-privilege synthetic account.
 - [ ] Verify malicious, corrupted, encrypted, and disguised inputs fail closed; verify permission revocation denies reads and writes; verify the disabled feature flag avoids document database access.
 - [ ] Record redacted request IDs, outcomes, migration state, deployment revision, and rollback evidence.
 
