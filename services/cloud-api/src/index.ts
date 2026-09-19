@@ -15,6 +15,7 @@ import { createSharedWarehouseWork } from './sharedWarehouseWork.js';
 import { createAirPickupOperations } from './airPickupOperations.js';
 import { createCustomerProfiles } from './customerProfiles.js';
 import { createPickupDocuments } from './pickupDocuments.js';
+import { createPickupDocumentChecker } from './pickupDocumentSandbox.js';
 import { createPickupDocumentsRouter } from './pickupDocumentsHttp.js';
 import { createAttendanceOperations } from './attendanceOperations.js';
 import { createOutboundWebhooks } from './outboundWebhooks.js';
@@ -94,7 +95,10 @@ const sharedWarehouseWork = createSharedWarehouseWork({ mysql, storage: labelSto
 const airPickupOperations = createAirPickupOperations({ mysql, storage: labelStorage,
   databaseTimeOffsetMinutes: config.airPickupDatabaseTimeOffsetMinutes });
 const customerProfiles = createCustomerProfiles({ mysql });
-const pickupDocuments = createPickupDocuments({ mysql, storage: labelStorage, enabled: config.pickupDocumentsEnabled });
+const pickupDocumentChecker = config.pickupDocumentsEnabled && config.pickupDocumentSandboxImage
+  ? createPickupDocumentChecker({ image: config.pickupDocumentSandboxImage }) : undefined;
+const pickupDocuments = createPickupDocuments({ mysql, storage: labelStorage, enabled: config.pickupDocumentsEnabled,
+  checker: pickupDocumentChecker });
 const attendanceOperations = createAttendanceOperations({ mysql, storage: labelStorage });
 const warehouseBoundary = createWarehouseHttpBoundary({
   identity: warehouseIdentity,
