@@ -54,7 +54,7 @@ The GitHub workflow only deploys pushes to `staging`; the test workflow now expl
 
 - [x] Verify post-deploy public health; workflow success confirms the immutable checker image guard and migration step passed.
 - [x] Apply migrations through the checksum-aware migration runner against the guarded `tyg_integration_test` database.
-- [ ] With synthetic data, verify upload, checker verdict, private authorized read, original download, and PDF/image view. Blocked pending an available test login or agreement on a least-privilege synthetic account.
+- [ ] With synthetic data, verify upload, checker verdict, private authorized read, original download, and PDF/image view. Test Admin login succeeded and synthetic customer/order creation was acknowledged, but the order list returns “服务暂时不可用” and the system page flags the test API as disconnected; no file was uploaded. Synthetic customer code `E2E260919` and bill number `E2E260919001` remain in the test database pending a safe cleanup/readback path.
 - [ ] Verify malicious, corrupted, encrypted, and disguised inputs fail closed; verify permission revocation denies reads and writes; verify the disabled feature flag avoids document database access.
 - [ ] Record redacted request IDs, outcomes, migration state, deployment revision, and rollback evidence.
 
