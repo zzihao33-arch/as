@@ -14,6 +14,8 @@ import { createTygV11Integration } from './tygV11.js';
 import { createSharedWarehouseWork } from './sharedWarehouseWork.js';
 import { createAirPickupOperations } from './airPickupOperations.js';
 import { createCustomerProfiles } from './customerProfiles.js';
+import { createPickupDocuments } from './pickupDocuments.js';
+import { createPickupDocumentsRouter } from './pickupDocumentsHttp.js';
 import { createAttendanceOperations } from './attendanceOperations.js';
 import { createOutboundWebhooks } from './outboundWebhooks.js';
 import { shipmentWithLabelSelect, toShipment, type ShipmentRow } from './shipmentRecord.js';
@@ -39,7 +41,9 @@ const inboundBatchBodyParser = express.json({ limit: config.inboundBatchJsonLimi
 const tygLabelPushBodyParser = express.json({ limit: config.tygLabelPushJsonLimit });
 const shipmentBodyParser = express.json({ limit: config.shipmentJsonLimit });
 app.use((req, res, next) => {
-  if (req.method === 'POST' && /^\/api\/v1\/(inbound-batches|shipments|label-pushes)\/?$/i.test(req.path)) return next();
+  if (req.method === 'POST' && req.path === '/api/v1/inbound-batches') return next();
+  if (req.method === 'POST' && /^\/api\/v1\/(shipments|label-pushes)\/?$/i.test(req.path)) return next();
+  if (req.method === 'PUT' && /^\/warehouse\/v1\/air-pickups\/[^/]+\/document-uploads\/[^/]+\/content\/?$/i.test(req.path)) return next();
   return jsonBodyParser(req, res, next);
 });
 
@@ -84,6 +88,7 @@ const warehouseOperations = createWarehouseOperations({ mysql, storage: labelSto
 const sharedWarehouseWork = createSharedWarehouseWork({ mysql, storage: labelStorage });
 const airPickupOperations = createAirPickupOperations({ mysql, storage: labelStorage });
 const customerProfiles = createCustomerProfiles({ mysql });
+const pickupDocuments = createPickupDocuments({ mysql, storage: labelStorage, enabled: config.pickupDocumentsEnabled });
 const attendanceOperations = createAttendanceOperations({ mysql, storage: labelStorage });
 const warehouseBoundary = createWarehouseHttpBoundary({
   identity: warehouseIdentity,
@@ -92,7 +97,6 @@ const warehouseBoundary = createWarehouseHttpBoundary({
 });
 const pdfBodyParser = express.raw({ type: 'application/pdf', limit: config.labelPdfLimit });
 const evidenceBodyParser = express.raw({ type: ['image/jpeg', 'image/png'], limit: '10mb' });
-const pickupDocumentBodyParser = express.raw({ type: '*/*', limit: '20mb' });
 const attendancePhotoBodyParser = express.raw({ type: ['image/jpeg', 'image/png'], limit: '1mb' });
 
 app.get('/healthz', async (_req, res, next) => {
@@ -199,6 +203,7 @@ app.use('/api/v1', upstreamRouter);
 
 const warehouseRouter = express.Router();
 warehouseRouter.use(warehouseBoundary.origin);
+warehouseRouter.use(createPickupDocumentsRouter({ documents: pickupDocuments, authenticate: warehouseBoundary.session }));
 
 function warehouseAudit(req: Request) {
   return {
@@ -664,18 +669,7 @@ warehouseRouter.put(
   '/air-pickups/:orderId/documents',
   warehouseBoundary.session,
   requireWarehousePermission('air_pickups.create'),
-  pickupDocumentBodyParser,
-  async (req, res, next) => {
-    try {
-      const asset = await airPickupOperations.storePickupDocument(req.warehouseSession!, warehouseAudit(req), req.params.orderId, {
-        filename: req.query.filename,
-        contentType: req.header('content-type'),
-        sha256: req.header('x-document-sha256'),
-        content: req.body,
-      });
-      res.status(201).json({ data: asset, requestId: req.requestId });
-    } catch (error) { next(error); }
-  },
+  (_req, _res, next) => next(new ApiError(410, 'PICKUP_DOCUMENT_UPLOAD_MIGRATED', '请使用已启用的安全提货凭证流程')),
 );
 
 warehouseRouter.get('/air-pickup-documents/:assetId/content', warehouseBoundary.session, requireWarehousePermission('air_pickups.view'), async (req, res, next) => {
@@ -693,11 +687,8 @@ warehouseRouter.get('/air-pickup-documents/:assetId/content', warehouseBoundary.
   } catch (error) { next(error); }
 });
 
-warehouseRouter.delete('/air-pickup-documents/:assetId', warehouseBoundary.session, requireWarehousePermission('air_pickups.correct'), async (req, res, next) => {
-  try {
-    await airPickupOperations.removePickupDocument(req.warehouseSession!, warehouseAudit(req), req.params.assetId, req.body ?? {});
-    res.status(204).end();
-  } catch (error) { next(error); }
+warehouseRouter.delete('/air-pickup-documents/:assetId', warehouseBoundary.session, requireWarehousePermission('air_pickups.correct'), (_req, _res, next) => {
+  next(new ApiError(410, 'PICKUP_DOCUMENT_MANAGEMENT_MIGRATED', '历史提货文件仅供读取；请使用已启用的安全提货凭证流程'));
 });
 
 warehouseRouter.post('/air-pickup-receipt-batches', warehouseBoundary.session, requireWarehousePermission('air_pickups.receive'), async (req, res, next) => {
@@ -1026,6 +1017,15 @@ function runLabelRetention(): void {
   }).finally(() => { labelRetentionTask = null; });
 }
 
+let documentRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+let documentRecoveryTask: Promise<void> | null = null;
+function recoverDocumentUploads() {
+  if (documentRecoveryTask) return;
+  documentRecoveryTask = pickupDocuments.reconcileExpired(25).then(() => undefined).catch(() => {
+    console.error('Document upload recovery unavailable; original operation IDs must be retained.');
+  }).finally(() => { documentRecoveryTask = null; });
+}
+
 async function runAttendanceRetention(): Promise<void> {
   try {
     const purged = await attendanceOperations.purgeExpiredEvidence();
@@ -1038,6 +1038,12 @@ async function runAttendanceRetention(): Promise<void> {
 async function start(): Promise<void> {
   // Fail startup clearly if the required migration has not been applied.
   await mysql.query('SELECT expires_at, bytes_deleted_at FROM label_assets LIMIT 0');
+  if (config.pickupDocumentsEnabled) {
+    await mysql.query('SELECT document_lease_expires_at FROM warehouse_ui_operations LIMIT 0');
+    recoverDocumentUploads();
+    documentRecoveryTimer = setInterval(recoverDocumentUploads, 30000);
+    documentRecoveryTimer.unref();
+  }
   await outboundWebhooks.start();
   await runAttendanceRetention();
   attendanceRetentionTimer = setInterval(() => void runAttendanceRetention(), 60 * 60_000);
@@ -1055,6 +1061,7 @@ async function shutdown(signal: string): Promise<void> {
   outboundWebhooks.stop();
   if (attendanceRetentionTimer) clearInterval(attendanceRetentionTimer);
   if (labelRetentionTimer) clearInterval(labelRetentionTimer);
+  if (documentRecoveryTimer) clearInterval(documentRecoveryTimer);
   if (!server) {
     await closeConnections();
     process.exit(0);
@@ -1062,6 +1069,7 @@ async function shutdown(signal: string): Promise<void> {
   }
   server.close(async () => {
     if (labelRetentionTask) await labelRetentionTask;
+    if (documentRecoveryTask) await documentRecoveryTask;
     await closeConnections();
     process.exit(0);
   });

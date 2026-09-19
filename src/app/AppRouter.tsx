@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import DashboardPage from '../pages/DashboardPage';
 import FeaturePage from '../pages/FeaturePage';
@@ -15,12 +15,16 @@ const SystemStatusPage = lazy(() => import('../pages/SystemStatusPage'));
 
 function RequireSession() {
   const session = useWarehouseSession();
-  if (session.status === 'anonymous') return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (session.status === 'anonymous') return <Navigate to="/login" state={{ returnTo: location.pathname + location.search + location.hash }} replace />;
   return <WarehouseSessionGate><Outlet /></WarehouseSessionGate>;
 }
 
 function LoginRoute() {
-  return <WarehouseSessionGate><Navigate to="/" replace /></WarehouseSessionGate>;
+  const location = useLocation();
+  const returnTo = location.state?.returnTo;
+  const target = typeof returnTo === 'string' && returnTo.startsWith('/') && !returnTo.startsWith('//') && !returnTo.startsWith('/login') ? returnTo : '/';
+  return <WarehouseSessionGate><Navigate to={target} replace /></WarehouseSessionGate>;
 }
 
 function RequirePermission({ permission }: { permission: string }) {

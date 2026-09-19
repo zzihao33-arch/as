@@ -378,9 +378,9 @@ const ORDER_SELECT = `SELECT o.*, rb.batch_no AS receipt_batch_no, hb.batch_no A
     LEFT JOIN (
       SELECT shipment_id, outcome FROM (
         SELECT shipment_id, outcome,
-          ROW_NUMBER() OVER (PARTITION BY shipment_id ORDER BY occurred_at DESC, created_at DESC, id DESC) AS row_number
+          ROW_NUMBER() OVER (PARTITION BY shipment_id ORDER BY occurred_at DESC, created_at DESC, id DESC) AS attempt_rank
         FROM print_attempts
-      ) ranked_attempts WHERE row_number = 1
+      ) ranked_attempts WHERE attempt_rank = 1
     ) latest ON latest.shipment_id = s.id
     WHERE s.air_pickup_order_id IS NOT NULL
     GROUP BY s.air_pickup_order_id

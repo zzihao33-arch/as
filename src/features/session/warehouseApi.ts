@@ -1,3 +1,29 @@
+import { guardSessionRequest, warehouseSessionFence, StaleSessionResponse, assertCurrentSession } from './sessionRecovery';
+
+
+export async function warehouseFetch(url: string, init: RequestInit): Promise<Response> {
+  const epoch = warehouseSessionFence.current();
+  const managed = /\/warehouse\/v1\/sessions?(?:[/?]|$)/.test(url);
+  const response = await fetch(url, init);
+  if (!managed && !warehouseSessionFence.isCurrent(epoch)) throw new StaleSessionResponse();
+  if (!response.ok && !managed && !url.includes('/warehouse/v1/workstations')) {
+    const payload = await response.clone().json().catch(() => null);
+    warehouseSessionFence.report(response.status, payload?.error?.code ?? 'REQUEST_FAILED', epoch, url);
+    assertCurrentSession(epoch);
+  }
+  // Body parsing can finish after an account switch, even after headers arrived.
+  for (const method of ['json', 'blob'] as const) {
+    const read = response[method].bind(response);
+    Object.defineProperty(response, method, { value: async () => {
+      const value = await read();
+      if (response.ok && !managed && !warehouseSessionFence.isCurrent(epoch)) throw new StaleSessionResponse();
+      if (response.ok && !managed && !url.includes('/warehouse/v1/workstations')) warehouseSessionFence.succeeded(epoch, url);
+      return value;
+    } });
+  }
+  return response;
+}
+
 const configuredApiBase = import.meta.env.VITE_CMHUB_API_BASE_URL?.trim();
 export const WAREHOUSE_API_BASE = (configuredApiBase || (import.meta.env.DEV ? 'http://127.0.0.1:8080' : 'https://api.cmhubtool.com')).replace(/\/$/, '');
 export const WAREHOUSE_MOCK_API_ENABLED = import.meta.env.DEV && import.meta.env.VITE_CMHUB_MOCK_API === 'true';
@@ -46,21 +72,38 @@ export interface WarehouseShipment {
   labelAsset: null | { id: string; sha256: string; byteSize: number; downloadPath: string };
 }
 export class WarehouseApiError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
-    super(message);
+  constructor(readonly status: number, readonly code: string, message: string, options?: ErrorOptions) {
+    super(message, options);
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export function warehouseRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return guardSessionRequest(path, () => requestOnce<T>(path, init));
+}
+
+const request = warehouseRequest;
+
+async function requestOnce<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockWarehouseRequest } = await import('./warehouseMockApi');
+    assertCurrentSession(epoch);
     return mockWarehouseRequest<T>(path, init);
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
-  });
+  let response: Response;
+  try {
+    response = await warehouseFetch(`${WAREHOUSE_API_BASE}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    });
+  } catch (cause) {
+    if (cause instanceof StaleSessionResponse) throw cause;
+    // Browsers expose CORS, DNS, TLS and offline failures as the same opaque
+    // TypeError (usually "Failed to fetch"). Keep that implementation detail
+    // out of the product UI while retaining the original error for diagnostics.
+    throw new WarehouseApiError(0, 'NETWORK_UNAVAILABLE', '无法连接云端 API，请检查网络后重试。', { cause });
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
     throw new WarehouseApiError(response.status, payload?.error?.code ?? 'REQUEST_FAILED', payload?.error?.message ?? '云端请求失败');
@@ -119,11 +162,13 @@ export async function listWarehouseShipments(cursor: string | null, limit = 200)
 }
 
 export async function downloadWarehouseLabel(downloadPath: string): Promise<Blob> {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockDownloadWarehouseLabel } = await import('./warehouseMockApi');
-    return mockDownloadWarehouseLabel(downloadPath);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(downloadPath, () => mockDownloadWarehouseLabel(downloadPath));
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
     throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_DOWNLOAD_FAILED', payload?.error?.message ?? '面单下载失败');
@@ -293,14 +338,17 @@ export async function listMissingSharedWorkBatchItems(batchId: string, offset = 
 }
 
 export async function uploadSharedWorkBatchLabel(batchId: string, firstLegTrackingNo: string, file: File) {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockUploadSharedWorkBatchLabel } = await import('./warehouseMockApi');
-    return mockUploadSharedWorkBatchLabel(batchId, firstLegTrackingNo, file);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(`/warehouse/v1/work-batches/${batchId}/label`, () => mockUploadSharedWorkBatchLabel(batchId, firstLegTrackingNo, file));
   }
   const query = new URLSearchParams({ filename: file.name });
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  assertCurrentSession(epoch);
   const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/work-batches/${batchId}/items/by-first-leg/${encodeURIComponent(firstLegTrackingNo)}/label?${query}`, {
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}/warehouse/v1/work-batches/${batchId}/items/by-first-leg/${encodeURIComponent(firstLegTrackingNo)}/label?${query}`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/pdf', 'X-Label-SHA256': sha256 },
@@ -559,14 +607,17 @@ export async function createAirPickup(input: {
 export async function uploadAirReceiptEvidence(batchId: string, input: {
   file: File; qualityWarnings?: string[]; qualityOverride?: boolean;
 }) {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockUploadAirReceiptEvidence } = await import('./warehouseMockApi');
-    return mockUploadAirReceiptEvidence(batchId, input);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(`/warehouse/v1/air-pickup-receipt-batches/${batchId}/evidence`, () => mockUploadAirReceiptEvidence(batchId, input));
   }
   const query = new URLSearchParams({ filename: input.file.name });
   const digest = await crypto.subtle.digest('SHA-256', await input.file.arrayBuffer());
+  assertCurrentSession(epoch);
   const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/air-pickup-receipt-batches/${batchId}/evidence?${query}`, {
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}/warehouse/v1/air-pickup-receipt-batches/${batchId}/evidence?${query}`, {
     method: 'PUT', credentials: 'include',
     headers: {
       'Content-Type': input.file.type,
@@ -650,14 +701,17 @@ export async function confirmAirHandoverBatch(batchId: string) {
 export async function uploadAirHandoverEvidence(batchId: string, input: {
   type: 'POD' | 'LOADING'; file: File; qualityWarnings?: string[]; qualityOverride?: boolean;
 }) {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockUploadAirHandoverEvidence } = await import('./warehouseMockApi');
-    return mockUploadAirHandoverEvidence(batchId, input);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(`/warehouse/v1/air-handover-batches/${batchId}/evidence`, () => mockUploadAirHandoverEvidence(batchId, input));
   }
   const query = new URLSearchParams({ type: input.type, filename: input.file.name });
   const digest = await crypto.subtle.digest('SHA-256', await input.file.arrayBuffer());
+  assertCurrentSession(epoch);
   const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/air-handover-batches/${batchId}/evidence?${query}`, {
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}/warehouse/v1/air-handover-batches/${batchId}/evidence?${query}`, {
     method: 'PUT', credentials: 'include',
     headers: {
       'Content-Type': input.file.type,
@@ -675,21 +729,25 @@ export async function uploadAirHandoverEvidence(batchId: string, input: {
 }
 
 export async function downloadAirEvidence(downloadPath: string): Promise<Blob> {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockDownloadAirEvidence } = await import('./warehouseMockApi');
-    return mockDownloadAirEvidence(downloadPath);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(downloadPath, () => mockDownloadAirEvidence(downloadPath));
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
   if (!response.ok) throw new WarehouseApiError(response.status, 'EVIDENCE_DOWNLOAD_FAILED', '凭证读取失败');
   return response.blob();
 }
 
 export async function downloadAirPickupDocument(downloadPath: string): Promise<Blob> {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockDownloadAirPickupDocument } = await import('./warehouseMockApi');
-    return mockDownloadAirPickupDocument(downloadPath);
+    assertCurrentSession(epoch);
+    return guardSessionRequest(downloadPath, () => mockDownloadAirPickupDocument(downloadPath));
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
   if (!response.ok) throw new WarehouseApiError(response.status, 'PICKUP_DOCUMENT_DOWNLOAD_FAILED', '提货文件读取失败');
   return response.blob();
 }
@@ -833,9 +891,11 @@ export async function submitAttendancePunch(input: {
   longitude?: number;
   accuracy?: number;
 }) {
+  const epoch = warehouseSessionFence.current();
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockSubmitAttendancePunch } = await import('./warehouseMockApi');
-    return mockSubmitAttendancePunch(input);
+    assertCurrentSession(epoch);
+    return guardSessionRequest('/warehouse/v1/attendance/punches', () => mockSubmitAttendancePunch(input));
   }
   const query = new URLSearchParams({
     punchType: input.punchType,
@@ -850,8 +910,9 @@ export async function submitAttendancePunch(input: {
   if (input.longitude !== undefined) query.set('longitude', String(input.longitude));
   if (input.accuracy !== undefined) query.set('accuracy', String(input.accuracy));
   const digest = await crypto.subtle.digest('SHA-256', await input.photo.arrayBuffer());
+  assertCurrentSession(epoch);
   const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/attendance/punches?${query}`, {
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}/warehouse/v1/attendance/punches?${query}`, {
     method: 'PUT', credentials: 'include',
     headers: { 'Content-Type': input.photo.type || 'image/jpeg', 'X-Image-SHA256': sha256 },
     body: input.photo,
@@ -875,7 +936,7 @@ export async function listAttendanceDailyResults(filters: { dateFrom?: string; d
 
 export async function openAttendancePunchPhoto(attemptId: string) {
   if (WAREHOUSE_MOCK_API_ENABLED) return null;
-  const response = await fetch(`${WAREHOUSE_API_BASE}/warehouse/v1/attendance/punch-attempts/${encodeURIComponent(attemptId)}/photo`, {
+  const response = await warehouseFetch(`${WAREHOUSE_API_BASE}/warehouse/v1/attendance/punch-attempts/${encodeURIComponent(attemptId)}/photo`, {
     credentials: 'include',
   });
   if (!response.ok) {

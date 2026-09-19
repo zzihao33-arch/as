@@ -34,7 +34,6 @@ import {
   Eye,
   FileCheck2,
   FileText,
-  FileUp,
   ImagePlus,
   ImageOff,
   PackageCheck,
@@ -44,7 +43,6 @@ import {
   Search,
   ShieldAlert,
   Truck,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -63,11 +61,9 @@ import {
   listAirPickups,
   listCustomerProfiles,
   removeAirEvidence,
-  removeAirPickupDocument,
   updateAirPickup,
   updateAirHandoverBatch,
   uploadAirHandoverEvidence,
-  uploadAirPickupDocument,
   uploadAirReceiptEvidence,
   voidAirPickup,
   type AirEvidenceStatus,
@@ -83,6 +79,7 @@ import {
 import { normalizeEvidenceImage } from '../features/airPickup/evidenceImage';
 import { selectExistingRecordsById } from '../features/airPickup/receiptSelection';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
+import { PickupDocumentsPanel, useDocumentPolicy } from '../features/airPickup/PickupDocumentsPanel';
 
 const DRAFT_KEY = 'cmhub-air-pickup-create-draft-v1';
 const DRAFT_TTL = 60 * 60_000;
@@ -266,6 +263,8 @@ function HandoverConfirmationPanel({ batch }: { batch: AirHandoverBatch }) {
 export default function AirPickupPage() {
   const warehouseSession = useWarehouseSession();
   const navigate = useNavigate();
+  const documentPolicy = useDocumentPolicy();
+  const [documentOrder, setDocumentOrder] = useState<{ id: string; no: string } | null>(null);
   const motionScopeRef = useRef<HTMLElement>(null);
   const [orders, setOrders] = useState<AirPickupOrder[]>([]);
   const [summary, setSummary] = useState<AirPickupSummary>(emptySummary);
@@ -292,7 +291,6 @@ export default function AirPickupPage() {
   const [receiptDrafts, setReceiptDrafts] = useState<Record<string, ReceiptDraft>>({});
   const [receiptReceivedAt, setReceiptReceivedAt] = useState(localDateTimeValue());
   const [receiptEvidence, setReceiptEvidence] = useState<PendingReceiptEvidence[]>([]);
-  const [pickupDocuments, setPickupDocuments] = useState<File[]>([]);
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [handoverOrderIds, setHandoverOrderIds] = useState<string[]>([]);
   const [handoverBatch, setHandoverBatch] = useState<AirHandoverBatch | null>(null);
@@ -302,23 +300,18 @@ export default function AirPickupPage() {
   const [batchCandidates, setBatchCandidates] = useState<AirPickupOrder[]>([]);
   const [detailOrder, setDetailOrder] = useState<AirPickupOrder | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailDocumentSaving, setDetailDocumentSaving] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [removeAsset, setRemoveAsset] = useState<AirHandoverEvidence | null>(null);
-  const [removeDocument, setRemoveDocument] = useState<AirPickupDocument | null>(null);
   const [voidTarget, setVoidTarget] = useState<AirPickupOrder | null>(null);
   const [form] = Form.useForm();
   const [customerForm] = Form.useForm();
   const [handoverForm] = Form.useForm();
   const [removeForm] = Form.useForm();
-  const [removeDocumentForm] = Form.useForm();
   const [voidForm] = Form.useForm();
   const [batchEditForm] = Form.useForm();
   const podInput = useRef<HTMLInputElement>(null);
   const loadingInput = useRef<HTMLInputElement>(null);
   const receiptInput = useRef<HTMLInputElement>(null);
-  const pickupDocumentInput = useRef<HTMLInputElement>(null);
-  const detailPickupDocumentInput = useRef<HTMLInputElement>(null);
 
   const canCreate = warehouseSession.hasPermission('air_pickups.create');
   const canEdit = warehouseSession.hasPermission('air_pickups.edit');
@@ -376,7 +369,6 @@ export default function AirPickupPage() {
 
   const openCreate = async () => {
     setEditingOrder(null);
-    setPickupDocuments([]);
     let initial: { customerId?: string; forecastCartons: number; forecastPackages: number; forecastWeightUnit: AirWeightUnit } = {
       forecastCartons: 1, forecastPackages: 1, forecastWeightUnit: 'KG',
     };
@@ -399,7 +391,6 @@ export default function AirPickupPage() {
 
   const openEdit = (order: AirPickupOrder) => {
     setEditingOrder(order);
-    setPickupDocuments([]);
     form.setFieldsValue({ cargoName: order.cargoName ?? '', forecastCartons: order.forecastCartons,
       forecastPackages: order.forecastPackages, forecastWeight: order.forecastWeight,
       forecastWeightUnit: order.forecastWeightUnit, remarks: order.remarks ?? '' });
@@ -476,26 +467,6 @@ export default function AirPickupPage() {
     }
   };
 
-  const handlePickupDocumentFiles = (files: FileList | null) => {
-    if (!files?.length) return;
-    const supported = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv']);
-    const accepted = Array.from(files).filter(file => {
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      if (!extension || !supported.has(extension)) { Message.error(`${file.name} 不是支持的提货文件`); return false; }
-      if (file.size > 20 * 1024 * 1024) { Message.error(`${file.name} 超过 20MB 限制`); return false; }
-      return true;
-    });
-    setPickupDocuments(current => {
-      const next = [...current];
-      for (const file of accepted) {
-        if (next.length >= 10) { Message.error('每张提货单最多上传 10 个提货文件'); break; }
-        if (!next.some(item => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)) next.push(file);
-      }
-      return next;
-    });
-    if (pickupDocumentInput.current) pickupDocumentInput.current.value = '';
-  };
-
   const downloadPickupDocument = async (document: AirPickupDocument) => {
     try {
       const blob = await downloadAirPickupDocument(document.downloadPath);
@@ -504,26 +475,6 @@ export default function AirPickupPage() {
       anchor.href = url; anchor.download = document.filename; anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (cause) { Message.error(cause instanceof Error ? cause.message : '提货文件下载失败'); }
-  };
-
-  const handleDetailPickupDocumentFiles = async (files: FileList | null) => {
-    if (!detailOrder || !files?.length) return;
-    const supported = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv']);
-    const candidates = Array.from(files).filter(file => {
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      return extension && supported.has(extension) && file.size <= 20 * 1024 * 1024;
-    });
-    if (candidates.length !== files.length) { Message.error('仅可上传 PDF、Word、Excel、CSV，且单个文件不超过 20MB'); }
-    if (!candidates.length) return;
-    if ((detailOrder.pickupDocuments?.length ?? 0) + candidates.length > 10) { Message.error('每张提货单最多上传 10 个提货文件'); return; }
-    setDetailDocumentSaving(true);
-    try {
-      for (const file of candidates) await uploadAirPickupDocument(detailOrder.id, file);
-      setDetailOrder(await getAirPickup(detailOrder.id));
-      await load(true);
-      Message.success('提货文件已上传');
-    } catch (cause) { Message.error(cause instanceof Error ? cause.message : '提货文件上传失败'); }
-    finally { setDetailDocumentSaving(false); if (detailPickupDocumentInput.current) detailPickupDocumentInput.current.value = ''; }
   };
 
   const openDetail = async (order: AirPickupOrder) => {
@@ -726,7 +677,7 @@ export default function AirPickupPage() {
       </div>
 
       <Modal className="cmhub-air-modal cmhub-air-editor-modal" header={editingOrder ? `编辑 ${editingOrder.billNo}` : '录入空运提货单'} visible={editorOpen} width={600} confirmLoading={saving}
-        confirmBtn={editingOrder ? '保存修改' : '保存并录入'} onClose={() => { setEditorOpen(false); setPickupDocuments([]); form.reset(); }} onConfirm={() => form.submit()} destroyOnClose={false}>
+        confirmBtn={editingOrder ? '保存修改' : '保存并录入'} onClose={() => { setEditorOpen(false); form.reset(); }} onConfirm={() => form.submit()} destroyOnClose={false}>
         <Form form={form} layout="vertical" onValuesChange={(_, values) => {
           if (!editingOrder) localStorage.setItem(DRAFT_KEY, JSON.stringify({ savedAt: Date.now(), values }));
         }} onSubmit={async ({ fields }) => {
@@ -734,25 +685,11 @@ export default function AirPickupPage() {
           try {
             const input = fields as { customerId?: string; billNo?: string; cargoName?: string; forecastCartons: number; forecastPackages: number;
               forecastWeight: number; forecastWeightUnit: AirWeightUnit; remarks?: string };
-            let failedDocumentCount = 0;
             if (editingOrder) await updateAirPickup(editingOrder.id, { ...input, expectedVersion: editingOrder.version });
-            else {
-              const created = await createAirPickup(input as Parameters<typeof createAirPickup>[0]);
-              const failures: string[] = [];
-              for (const file of pickupDocuments) {
-                try { await uploadAirPickupDocument(created.id, file); }
-                catch { failures.push(file.name); }
-              }
-              failedDocumentCount = failures.length;
-              if (failures.length) {
-                try { setDetailOrder(await getAirPickup(created.id)); } catch { /* the order itself is safely persisted */ }
-                Message.warning(`提货单已录入；${failures.length} 个提货文件未上传，可在详情中重新选择后补传`);
-              }
-            }
+            else await createAirPickup(input as Parameters<typeof createAirPickup>[0]);
             localStorage.removeItem(DRAFT_KEY); setEditorOpen(false); setEditingOrder(null); form.reset();
-            setPickupDocuments([]);
             if (editingOrder) Message.success('提货单已更新');
-            else if (!failedDocumentCount) Message.success('提货单及提货文件已录入');
+            else Message.success('提货单已录入，可在详情中使用安全流程上传凭证');
             await load();
           } catch (cause) { Message.error(cause instanceof Error ? cause.message : '保存失败'); }
           finally { setSaving(false); }
@@ -792,18 +729,6 @@ export default function AirPickupPage() {
             </Form.FormItem>
           </div>
           </section>
-          {!editingOrder && <Form.FormItem label="提货文件（选填）" tips="支持 PDF、Word、Excel、CSV；最多 10 个文件，单个不超过 20MB保存后仅已登录运营人员可在详情下载">
-            <div className="cmhub-air-pickup-document-picker">
-              <input ref={pickupDocumentInput} hidden type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,application/pdf,application/msword,application/vnd.ms-excel,text/csv" onChange={event => handlePickupDocumentFiles(event.target.files)} />
-              <Button icon={<FileUp size={15} />} onClick={() => pickupDocumentInput.current?.click()}>选择提货文件</Button>
-              {pickupDocuments.length > 0 && <div className="cmhub-air-pickup-document-list">
-                {pickupDocuments.map((file, index) => <div key={`${file.name}-${file.lastModified}-${index}`}>
-                  <FileText size={15} /><span title={file.name}>{file.name}</span><small>{(file.size / 1024 / 1024).toFixed(1)} MB</small>
-                  <button type="button" aria-label={`移除 ${file.name}`} onClick={() => setPickupDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}><X size={14} /></button>
-                </div>)}
-              </div>}
-            </div>
-          </Form.FormItem>}
           <Form.FormItem label="备注" name="remarks"><Textarea maxlength={200} autosize={{ minRows: 3, maxRows: 5 }} /></Form.FormItem>
         </Form>
       </Modal>
@@ -1043,7 +968,9 @@ export default function AirPickupPage() {
           {detailOrder.handoverBatchId && <Button icon={<Archive size={14} />} onClick={() => void openBatch(detailOrder.handoverBatchId!)}>查看交仓批次</Button>}
         </Space>}>
         {detailLoading ? <div className="cmhub-module-loading"><Spin />正在加载详情…</div> : detailOrder && <div className="cmhub-air-detail">
-          <Space>{statusTag(detailOrder.status)}{evidenceTag(detailOrder)}{!detailOrder.billNoIsStandard && <Tag theme="warning">非标准单号</Tag>}</Space>
+          <Space>{statusTag(detailOrder.status)}{evidenceTag(detailOrder)}{!detailOrder.billNoIsStandard && <Tag theme="warning">非标准单号</Tag>}
+            {documentPolicy.policy?.enabled && documentPolicy.policy.capabilities.view && <Button onClick={() => setDocumentOrder({ id: detailOrder.id, no: detailOrder.billNo })}>提货凭证</Button>}
+          </Space>
           <dl className="cmhub-air-detail-facts">
             {[
               { label: '归属客户', value: `${detailOrder.customerType === 'BUSINESS' ? '业务客户' : detailOrder.customerType === 'UPSTREAM' ? '上游客户' : '未分类'} · ${detailOrder.customerName}` },
@@ -1058,16 +985,11 @@ export default function AirPickupPage() {
             ].map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}
           </dl>
           <section className="cmhub-air-pickup-document-section">
-            <header><div><h3>提货文件</h3><p>运营下载后可交给司机提货；文件仅向登录后的授权人员开放</p></div>
-              {canCreate && detailOrder.status !== 'VOIDED' && <Button size="small" loading={detailDocumentSaving} icon={<FileUp size={14} />} onClick={() => detailPickupDocumentInput.current?.click()}>补传文件</Button>}
-            </header>
-            <input ref={detailPickupDocumentInput} hidden type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,application/pdf,application/msword,application/vnd.ms-excel,text/csv" onChange={event => void handleDetailPickupDocumentFiles(event.target.files)} />
+            <header><div><h3>历史提货文件</h3><p>升级前的文件保留原样供授权人员读取；新增凭证请使用上方安全上传入口</p></div></header>
             {(detailOrder.pickupDocuments?.length ?? 0) > 0
               ? <div className="cmhub-air-pickup-document-list">{detailOrder.pickupDocuments!.map(document => <div key={document.id}>
                 <FileText size={16} /><span title={document.filename}>{document.filename}</span><small>{(document.byteSize / 1024 / 1024).toFixed(1)} MB · {formatDate(document.createdAt)}</small>
-                <Space size={2}><Button size="small" variant="text" icon={<Download size={14} />} onClick={() => void downloadPickupDocument(document)}>下载</Button>
-                  {canCorrect && <Button size="small" variant="text" theme="danger" icon={<X size={14} />} onClick={() => setRemoveDocument(document)}>移除</Button>}
-                </Space>
+                <Button size="small" variant="text" icon={<Download size={14} />} onClick={() => void downloadPickupDocument(document)}>下载</Button>
               </div>)}</div>
               : <p className="cmhub-air-pickup-document-empty">暂无提货文件</p>}
           </section>
@@ -1087,6 +1009,10 @@ export default function AirPickupPage() {
         </div>}
       </Drawer>
 
+      <Drawer className="cmhub-document-drawer" header={<strong>提货凭证 · {documentOrder?.no ?? ''}</strong>} visible={Boolean(documentOrder)} size="720px" footer={null}
+        onClose={() => setDocumentOrder(null)} destroyOnClose>
+        {documentOrder && <PickupDocumentsPanel key={`${warehouseSession.inputOwner}:${documentOrder.id}`} orderId={documentOrder.id} />}
+      </Drawer>
       <Modal className="cmhub-air-modal cmhub-air-preview-modal" header="凭证预览" visible={Boolean(previewUrl)} width={800} footer={null} onClose={() => { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
         {previewUrl && <img className="cmhub-air-preview" src={previewUrl} alt="交仓凭证预览" />}
       </Modal>
@@ -1096,22 +1022,6 @@ export default function AirPickupPage() {
           if (!removeAsset || !handoverBatch) return;
           try { await removeAirEvidence(removeAsset.id, fields as { password: string; reason: string }); setRemoveAsset(null); removeForm.reset(); setHandoverBatch(await getAirHandoverBatch(handoverBatch.id)); await load(true); Message.success('凭证已从业务视图移除，审计记录已保留'); }
           catch (cause) { Message.error(cause instanceof Error ? cause.message : '凭证移除失败'); }
-        }}>
-          <Alert theme="warning" message="此操作需要主管/系统管理员权限、当前账户密码和原因原文件按留存策略保留" />
-          <Form.FormItem label="操作原因" name="reason" rules={[{ required: true }]}><Textarea maxlength={500} /></Form.FormItem>
-          <Form.FormItem label="当前账户密码" name="password" rules={[{ required: true }]}><Input type="password" /></Form.FormItem>
-        </Form>
-      </Modal>
-
-      <Modal className="cmhub-air-modal" header="移除提货文件" visible={Boolean(removeDocument)} width={600} confirmBtn={{ content: '验证并移除', theme: 'danger' }} onClose={() => { setRemoveDocument(null); removeDocumentForm.reset(); }} onConfirm={() => removeDocumentForm.submit()}>
-        <Form form={removeDocumentForm} layout="vertical" onSubmit={async ({ fields }) => {
-          if (!removeDocument || !detailOrder) return;
-          try {
-            await removeAirPickupDocument(removeDocument.id, fields as { password: string; reason: string });
-            setDetailOrder(await getAirPickup(detailOrder.id));
-            setRemoveDocument(null); removeDocumentForm.reset(); await load(true);
-            Message.success('提货文件已从业务视图移除，审计记录已保留');
-          } catch (cause) { Message.error(cause instanceof Error ? cause.message : '提货文件移除失败'); }
         }}>
           <Alert theme="warning" message="此操作需要主管/系统管理员权限、当前账户密码和原因原文件按留存策略保留" />
           <Form.FormItem label="操作原因" name="reason" rules={[{ required: true }]}><Textarea maxlength={500} /></Form.FormItem>
