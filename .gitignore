@@ -8,6 +8,8 @@ data/
 .cursor/
 cursor-install.log
 *.log
+__pycache__/
+*.pyc
 .env
 .env.*
 !.env.example
