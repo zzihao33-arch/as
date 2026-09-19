@@ -18,7 +18,7 @@
 .cmhub-document-notice.arco-alert-error .arco-alert-icon-wrapper { background: rgb(var(--danger-1)); }
 .cmhub-document-notice .arco-alert-content { min-width: 0; overflow-wrap: anywhere; }
 .cmhub-document-actions { padding-top: 6px; }
-.cmhub-pickup-documents .arco-btn, .cmhub-pickup-file-selection .arco-btn { min-height: 40px; }
+.cmhub-pickup-documents .arco-btn, .cmhub-pickup-file-selection .arco-btn { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .cmhub-document-preview-modal, .cmhub-document-maintenance { width: min(760px, calc(100vw - 24px)) !important; }
 .cmhub-document-image { display: block; max-width: 100%; height: auto; margin: auto; }
 .cmhub-document-pdf { width: 100%; height: min(72vh, 850px); border: 0; }

@@ -9,7 +9,6 @@ import { getDocumentPolicy, listPickupDocuments, putPickupDocument, queryPickupD
 import '@arco-design/web-react/es/Alert/style/css.js';
 import '@arco-design/web-react/es/Button/style/css.js';
 import '@arco-design/web-react/es/Checkbox/style/css.js';
-import '@arco-design/web-react/es/Drawer/style/css.js';
 import '@arco-design/web-react/es/Empty/style/css.js';
 import '@arco-design/web-react/es/Form/style/css.js';
 import '@arco-design/web-react/es/Input/style/css.js';
@@ -19,6 +18,8 @@ import '@arco-design/web-react/es/Spin/style/css.js';
 import '@arco-design/web-react/es/Tag/style/css.js';
 import './pickupDocuments.css';
 
+// Document dialogs must sit above the TDesign host drawer (z-index 1500).
+const documentModalLayer = { wrapStyle: { zIndex: 1601 }, maskStyle: { zIndex: 1600 } };
 const sizeLabel = (bytes: number) => `${(bytes / 1048576).toLocaleString(undefined, { maximumFractionDigits: 2 })} MiB`;
 const message = (error: unknown) => error instanceof Error ? error.message : '暂时无法完成，请重试。';
 export function useDocumentPolicy() {
@@ -258,12 +259,12 @@ export function PickupDocumentsPanel({ orderId, initialFiles = [], onFilesAccept
       event.target.value = ''; }} />
     {list?.capabilities.add && <><DocumentFileSelection policy={policy} files={files} onChange={setFiles} />
       {files.length > 0 && <Button type="primary" onClick={() => void uploadSelected()}>上传 {files.length} 份文件</Button>}</>}
-    <Modal className="cmhub-document-preview-modal" title={preview?.filename ?? '文件预览'} visible={Boolean(preview)} footer={null}
+    <Modal {...documentModalLayer} className="cmhub-document-preview-modal" title={preview?.filename ?? '文件预览'} visible={Boolean(preview)} footer={null}
       onCancel={() => { previewSequence.current++; setPreview(null); }} unmountOnExit>
       {preview && (preview.image ? <img className="cmhub-document-image" src={preview.url} alt={preview.filename} />
         : <iframe title={preview.filename} src={preview.url} className="cmhub-document-pdf" />)}
     </Modal>
-    <Modal className="cmhub-document-maintenance" title={maintenance?.mode === 'replace' ? '替换提货凭证' : '移除提货凭证'} visible={Boolean(maintenance)}
+    <Modal {...documentModalLayer} className="cmhub-document-maintenance" title={maintenance?.mode === 'replace' ? '替换提货凭证' : '移除提货凭证'} visible={Boolean(maintenance)}
       confirmLoading={maintenanceBusy} okText="验证并确认" onCancel={() => { if (!maintenanceBusy) { setMaintenance(null); maintenanceForm.resetFields(); setMaintenanceFile(null); } }} onOk={() => maintenanceForm.submit()}>
       <p className="cmhub-document-filename">{maintenance?.asset.filename}</p>
       <Alert className="cmhub-document-notice" type="warning" content={maintenance?.mode === 'replace' ? '更正版保存成功后才替换旧版，失败时旧版保留。' : '移除后保留原件及操作历史。'} />
@@ -274,7 +275,7 @@ export function PickupDocumentsPanel({ orderId, initialFiles = [], onFilesAccept
         <Form.Item label="验证当前账号密码" field="password" rules={[{ required: true, message: '请输入密码' }]}><Input.Password autoComplete="current-password" /></Form.Item>
       </Form>
     </Modal>
-    <Modal className="cmhub-document-maintenance" title="继续原文件替换" visible={Boolean(registrationPrompt)} okText="验证并继续"
+    <Modal {...documentModalLayer} className="cmhub-document-maintenance" title="继续原文件替换" visible={Boolean(registrationPrompt)} okText="验证并继续"
       onCancel={() => { setRegistrationPrompt(null); setRegistrationPassword(''); }} onOk={() => {
         if (!registrationPrompt || !registrationPassword) return;
         void controllers.current.get(registrationPrompt.id)?.replayRegistration(registrationPrompt.file, registrationPassword);
