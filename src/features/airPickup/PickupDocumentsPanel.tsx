@@ -6,6 +6,17 @@ import { warehouseSessionFence } from '../session/sessionRecovery';
 import { createDocumentUpload, DOCUMENT_JOURNAL_KEY, readDocumentJournal, writeDocumentJournal, type UploadState } from './pickupDocumentRecovery';
 import { getDocumentPolicy, listPickupDocuments, putPickupDocument, queryPickupDocument, readPickupDocument,
   registerPickupDocument, reregisterPickupDocument, removePickupDocument, type DocumentAsset, type DocumentList, type DocumentPolicy, type Replacement } from './pickupDocumentsApi';
+import '@arco-design/web-react/es/Alert/style/css.js';
+import '@arco-design/web-react/es/Button/style/css.js';
+import '@arco-design/web-react/es/Checkbox/style/css.js';
+import '@arco-design/web-react/es/Drawer/style/css.js';
+import '@arco-design/web-react/es/Empty/style/css.js';
+import '@arco-design/web-react/es/Form/style/css.js';
+import '@arco-design/web-react/es/Input/style/css.js';
+import '@arco-design/web-react/es/Modal/style/css.js';
+import '@arco-design/web-react/es/Space/style/css.js';
+import '@arco-design/web-react/es/Spin/style/css.js';
+import '@arco-design/web-react/es/Tag/style/css.js';
 import './pickupDocuments.css';
 
 const sizeLabel = (bytes: number) => `${(bytes / 1048576).toLocaleString(undefined, { maximumFractionDigits: 2 })} MiB`;
