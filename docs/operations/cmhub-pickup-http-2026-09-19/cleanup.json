@@ -1,0 +1,24 @@
+{
+  "invocationId": "inv-u8ux4jg6wn",
+  "completedAt": "2026-09-19T21:07:51.933Z",
+  "orderId": "4b0389a6-f63b-44d3-a6c1-d68a8cdbd617",
+  "customerId": "155a68fe-ecc3-4cc3-8354-5ca62debde7c",
+  "removedAssets": 7,
+  "removedUploads": 22,
+  "removedObjects": 7,
+  "objectReadback": "all 404",
+  "remaining": {
+    "orders": 0,
+    "customers": 0,
+    "assets": 0,
+    "uploads": 0
+  },
+  "checkerContainers": 0,
+  "health": {
+    "ok": true,
+    "outboundWebhooks": {
+      "enabled": false
+    }
+  },
+  "securityAudit": "retained"
+}
