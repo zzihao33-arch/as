@@ -1,13 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { Pool } from 'mysql2/promise';
+import type { LabelStorage } from '../src/labelStorage.js';
 import { ApiError } from '../src/errors.js';
 import {
   evidenceStatusForCounts,
+  createAirPickupOperations,
   normalizeAirBillNo,
   receivingValuesDiffer,
   validateAirEvidenceImage,
   validatePickupDocument,
 } from '../src/airPickupOperations.js';
+
+test('pickup list executes its paginated query and counts filtered orders before pagination', async () => {
+  // Execute the portable SELECT against a real SQL engine so invalid SQL is not hidden by canned rows.
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE air_pickup_orders (
+      id TEXT, receipt_batch_id TEXT, handover_batch_id TEXT, bill_no_normalized TEXT,
+      cargo_name TEXT, customer_name_snapshot TEXT, client_name_snapshot TEXT, customer_profile_id TEXT,
+      order_status TEXT, evidence_status TEXT, created_at TEXT, updated_at TEXT);
+      CREATE TABLE air_receipt_batches (id TEXT, batch_no TEXT);
+      CREATE TABLE air_handover_batches (id TEXT, batch_no TEXT);
+      CREATE TABLE shipments (id TEXT, air_pickup_order_id TEXT);
+      CREATE TABLE print_attempts (id TEXT, shipment_id TEXT, outcome TEXT, occurred_at TEXT, created_at TEXT);
+      INSERT INTO air_pickup_orders (id,bill_no_normalized,order_status,evidence_status,created_at,updated_at) VALUES
+      ('one','E2E001','RECORDED','NONE','2026-09-19','2026-09-19'),
+      ('two','E2E002','RECORDED','NONE','2026-09-19','2026-09-18'),
+      ('three','OTHER003','VOIDED','NONE','2026-09-19','2026-09-17');`);
+    const query = async (sql: string, values: SQLInputValue[] = []) => [db.prepare(sql).all(...values).map(row => ({
+      ...row, ...(row.created_at ? { created_at: new Date(String(row.created_at)), updated_at: new Date(String(row.updated_at)) } : {}),
+    }))];
+    const service = createAirPickupOperations({ mysql: { query, execute: query } as unknown as Pool, storage: {} as LabelStorage });
+    const first = await service.listOrders({ search: 'E2E', page: 1, pageSize: 1 });
+    assert.deepEqual(first.orders.map(order => order.id), ['one']);
+    assert.equal(first.total, 2);
+    const second = await service.listOrders({ search: 'E2E', page: 2, pageSize: 1 });
+    assert.deepEqual(second.orders.map(order => order.id), ['two']);
+    assert.equal(second.total, 2);
+    assert.deepEqual(second.summary, { recorded: 2, received: 0, handedOver: 0, voided: 1, evidencePending: 0 });
+  } finally { db.close(); }
+});
 
 test('normalizes equivalent air bill numbers to one global key', () => {
   const values = ['abc-123', 'ABC-123', 'ABC123', ' abc 123 ', 'ＡBC123'.replace('Ａ', 'A')];
