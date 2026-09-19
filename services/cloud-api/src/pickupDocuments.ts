@@ -234,7 +234,7 @@ export function createPickupDocuments(dependencies: { mysql: Pool; storage: Labe
     } finally { if (!released) connection.release(); }
   }
   async function renew(lease: DocumentLease) {
-    const [result] = await mysql.execute<import('mysql2').ResultSetHeader>(`UPDATE warehouse_ui_operations SET document_lease_expires_at=? WHERE operation_id=? AND status='PROCESSING' AND attempt_no=? AND document_lease_token=? AND document_lease_expires_at>NOW(3)`, [new Date(Date.now() + LEASE_MS), lease.upload.uploadId, lease.attempt, lease.token]);
+    const [result] = await mysql.execute<import('mysql2').ResultSetHeader>(`UPDATE warehouse_ui_operations SET document_lease_expires_at=? WHERE operation_id=? AND status='PROCESSING' AND attempt_no=? AND document_lease_token=? AND document_lease_expires_at>UTC_TIMESTAMP(3)`, [new Date(Date.now() + LEASE_MS), lease.upload.uploadId, lease.attempt, lease.token]);
     if (result.affectedRows !== 1) throw error(409, 'DOCUMENT_ATTEMPT_STALE', '此上传执行已失效，请查询原上传。');
   }
   async function fail(lease: DocumentLease, caught: unknown) {
@@ -330,7 +330,7 @@ export function createPickupDocuments(dependencies: { mysql: Pool; storage: Labe
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 25) throw error(400, 'DOCUMENT_INVALID_REQUEST', '恢复批量上限无效。');
     sweeping = true;
     try {
-      const [rows] = await mysql.query<RowDataPacket[]>(`SELECT operation_id,attempt_no FROM warehouse_ui_operations WHERE operation_type='PICKUP_DOCUMENT_UPLOAD' AND status='PROCESSING' AND scope_key='GLOBAL' AND contract_version=2 AND canonicalization_version=1 AND (document_lease_expires_at<NOW(3) OR document_lease_expires_at IS NULL AND updated_at<DATE_SUB(NOW(3),INTERVAL 2 MINUTE)) ORDER BY updated_at LIMIT ?`, [limit]);
+      const [rows] = await mysql.query<RowDataPacket[]>(`SELECT operation_id,attempt_no FROM warehouse_ui_operations WHERE operation_type='PICKUP_DOCUMENT_UPLOAD' AND status='PROCESSING' AND scope_key='GLOBAL' AND contract_version=2 AND canonicalization_version=1 AND (document_lease_expires_at<UTC_TIMESTAMP(3) OR document_lease_expires_at IS NULL AND updated_at<DATE_SUB(NOW(3),INTERVAL 2 MINUTE)) ORDER BY updated_at LIMIT ?`, [limit]);
       let recovered = 0;
       for (const row of rows) if (await reconcile(row.operation_id, Number(row.attempt_no)) === 'FAILED_NOT_SAVED') recovered++;
       return { inspected: rows.length, recovered };
