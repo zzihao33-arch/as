@@ -47,6 +47,7 @@ try {
       join(outputDirectory, 'test', 'sharedWarehouseWork.test.js'),
       join(outputDirectory, 'test', 'airPickupOperations.test.js'),
       join(outputDirectory, 'test', 'pickupDocumentPolicy.test.js'),
+      join(outputDirectory, 'test', 'pickupDocumentSandbox.test.js'),
       join(outputDirectory, 'test', 'pickupDocuments.test.js'),
       join(outputDirectory, 'test', 'pickupDocuments.mysql.test.js'),
       join(outputDirectory, 'test', 'inboundBatchIngest.test.js'),
