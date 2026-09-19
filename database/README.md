@@ -2,6 +2,8 @@
 
 These MySQL 8.0 migrations are an immutable, ordered history. For a new database, review the scripts and apply every numbered `.sql` file exactly once in ascending order:
 
+The employee-document v1 production candidate uses migrations `019_add_warehouse_ui_operations.sql` and `020_add_pickup_documents.sql`. This release line already uses 017 for the UTC label-expiry default and 018 for integration push logs. Migration 020 keeps the existing `air_pickup_document_assets` table and its rows intact; checked v2 uploads use `air_pickup_document_assets_v2`. Existing attachment reads remain available while legacy writes are disabled. No existing role receives new permissions. Verify the target's migration history and checksums before rollout, and keep `PICKUP_DOCUMENTS_ENABLED=false` until the real checker and access tests pass.
+
 1. `001_create_logistics_api_schema.sql` creates the `cmhub` database, base tables, and least-privileged application user. Replace `REPLACE_WITH_A_LONG_RANDOM_PASSWORD` in a controlled copy before applying it; never commit the real password.
 2. `002_add_upstream_raw_payload.sql` adds upstream-order fields, backfills pre-existing rows with an empty JSON object, and then makes `shipments.raw_data` required.
 3. `003_harden_upstream_integrations.sql` separates a client organization from its rotatable API keys, adds per-key scopes and lifecycle fields, backfills all existing keys, and creates the durable inbound-message/idempotency ledger.
@@ -18,6 +20,8 @@ These MySQL 8.0 migrations are an immutable, ordered history. For a new database
 14. `014_add_customer_profiles.sql` separates manually managed business/upstream customer profiles from API integration identities, backfills integrated upstream customers, and records the single customer ownership of each air-pickup order.
 15. `015_add_air_pickup_documents.sql` adds private pickup documents linked to retained air-pickup orders.
 16. `016_add_label_retention.sql` adds seven-day PDF expiry and byte-deletion markers. Apply before starting the unified TYG API. Its non-null expression default covers legacy inserts during rolling deployment; MySQL 8.0.13+ is required. See `docs/operations/tyg-label-retention.md` for the worker and private COS lifecycle acceptance checks.
+19. `019_add_warehouse_ui_operations.sql` adds the durable UI operation ledger required by retryable checked document uploads.
+20. `020_add_pickup_documents.sql` adds the checked v2 upload and preview metadata, extends the event/operation enums, and leaves the legacy attachment table and rows intact.
 
 Do not edit, skip, or replay a migration after it has been applied to a shared environment. A repository checkout does not prove which migrations production has received: verify the live schema and deployment record first, take a backup, test against a production-like copy, and schedule the DDL/backfill for an approved change window. Add future changes as the next numbered migration. In particular, do not use `001` to rotate an existing MySQL password; `CREATE USER IF NOT EXISTS` leaves an existing account unchanged.
 

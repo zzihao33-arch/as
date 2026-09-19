@@ -138,6 +138,7 @@ if (outboundWebhookLeaseSeconds * 1000 < outboundWebhookTimeoutMs + 10_000) {
 }
 
 export const config = {
+  pickupDocumentsEnabled: process.env.PICKUP_DOCUMENTS_ENABLED === 'true',
   environment,
   apiKeyEnvironment: asChoice('API_KEY_ENVIRONMENT', ['live', 'test'] as const, environment === 'production' ? 'live' : 'test'),
   host: process.env.HOST?.trim() || '127.0.0.1',

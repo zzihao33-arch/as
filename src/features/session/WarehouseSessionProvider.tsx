@@ -1,6 +1,6 @@
 import { Alert, Button, Checkbox, Form, Input, Modal, Select, Spin, Typography } from '@arco-design/web-react';
 import { Building2, Cloud, KeyRound, LogIn, RefreshCw } from 'lucide-react';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, type ReactNode, type Dispatch, type SetStateAction, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   changeWarehousePassword,
   createWarehouseSession,
@@ -14,6 +14,8 @@ import {
   type WarehouseWorkstation,
 } from './warehouseApi';
 
+import { createProtectedDraftStore, warehouseSessionFence, sessionInputOwner, operationJournalOwner } from './sessionRecovery';
+
 type SessionStatus = 'loading' | 'anonymous' | 'ready' | 'error';
 type WarehouseSessionContextValue = {
   status: SessionStatus;
@@ -25,7 +27,12 @@ type WarehouseSessionContextValue = {
   selectWorkspace(warehouseId: string): Promise<void>;
   changePassword(input: { currentPassword: string; newPassword: string }): Promise<void>;
   hasPermission(permission: string): boolean;
+  revalidatePermissions(): Promise<void>;
   retry(): void;
+  inputOwner: string;
+  operationOwner: string;
+  inputEpoch: number;
+  drafts: ReturnType<typeof createProtectedDraftStore>;
 };
 
 const WarehouseSessionContext = createContext<WarehouseSessionContextValue | null>(null);
@@ -52,101 +59,197 @@ export function WarehouseSessionProvider({ children }: { children: ReactNode }) 
   const [session, setSession] = useState<WarehouseSessionView | null>(null);
   const [workstation, setWorkstation] = useState<WarehouseWorkstation | null>(null);
   const [error, setError] = useState('');
-  const [reloadKey, setReloadKey] = useState(0);
+  const [inputEpoch, setInputEpoch] = useState(0);
+  const drafts = useRef(createProtectedDraftStore()).current;
+  const activeRef = useRef<WarehouseSessionView | null>(null);
+  const alive = useRef(true);
   const promptedExpiryRef = useRef('');
+  const valid = useCallback((epoch: number) => alive.current && warehouseSessionFence.isCurrent(epoch), []);
+  const begin = useCallback((automatic = false) => {
+    const epoch = warehouseSessionFence.advance(!automatic);
+    setInputEpoch(epoch);
+    setStatus('loading');
+    setError('');
+    return epoch;
+  }, []);
+  const forgetInputs = useCallback(() => {
+    drafts.clear();
+    try {
+      localStorage.removeItem('cmhub-air-pickup-create-draft-v1');
+      localStorage.removeItem('cmhub-air-pickup-create-draft-v2');
+    } catch { /* storage may be unavailable */ }
+  }, [drafts]);
 
-  const activate = useCallback(async (activeSession: WarehouseSessionView) => {
+  const forgetDocumentUploads = useCallback(() => {
+    try { sessionStorage.removeItem('cmhub-pickup-document-uploads-v1'); } catch { /* storage unavailable */ }
+  }, []);
+
+  const activate = useCallback(async (activeSession: WarehouseSessionView, epoch: number) => {
+    if (!valid(epoch)) return;
     const activeWorkstation = activeSession.warehouseId
       && activeSession.passwordState === 'ACTIVE'
       && (activeSession.permissions.includes('scan.use') || activeSession.permissions.includes('attendance.punch'))
-      ? await registerWarehouseWorkstation(installationIdentity())
-      : null;
+      ? await registerWarehouseWorkstation(installationIdentity()) : null;
+    if (!valid(epoch)) return;
+    const previous = activeRef.current;
+    const owner = sessionInputOwner(activeSession);
+    if (previous && sessionInputOwner(previous) !== owner) forgetInputs();
+    if (previous && operationJournalOwner(previous) !== operationJournalOwner(activeSession)) forgetDocumentUploads();
+    drafts.activate(owner);
+    activeRef.current = activeSession;
     setSession(activeSession);
     setWorkstation(activeWorkstation);
     setError('');
     setStatus('ready');
-  }, []);
+  }, [drafts, forgetInputs, forgetDocumentUploads, valid]);
 
-  useEffect(() => {
-    let current = true;
-    setStatus('loading');
-    void getWarehouseSession().then(async restored => {
-      if (!current) return;
+  const restore = useCallback(async (automatic = false) => {
+    const epoch = begin(automatic);
+    try {
+      const restored = await getWarehouseSession();
+      if (!valid(epoch)) return;
       if (!restored) {
         setSession(null);
         setWorkstation(null);
         setStatus('anonymous');
         return;
       }
-      await activate(restored);
-    }).catch(cause => {
-      if (!current) return;
+      await activate(restored, epoch);
+    } catch (cause) {
+      if (!valid(epoch)) return;
       setError(cause instanceof Error ? cause.message : '无法连接仓库云端服务。');
       setStatus('error');
-    });
-    return () => { current = false; };
-  }, [activate, reloadKey]);
+    }
+  }, [activate, begin, valid]);
+
+  // Keep unchanged permissions mounted so a 403 cannot create a reload loop.
+  const revalidatePermissions = useCallback(async () => {
+    const epoch = warehouseSessionFence.current();
+    const previous = activeRef.current;
+    if (!previous) return;
+    try {
+      const restored = await getWarehouseSession();
+      if (!valid(epoch) || activeRef.current !== previous) return;
+      if (!restored) {
+        begin(); setSession(null); setWorkstation(null); setStatus('anonymous');
+      } else if (restored.sessionId !== previous.sessionId || sessionInputOwner(restored) !== sessionInputOwner(previous)) {
+        await activate(restored, begin());
+      } else {
+        activeRef.current = restored; setSession(restored);
+      }
+    } catch (cause) {
+      if (!valid(epoch) || activeRef.current !== previous) return;
+      begin(); setSession(null); setWorkstation(null);
+      setError(cause instanceof Error ? cause.message : '无法确认当前账号权限，请重新连接。');
+      setStatus('error');
+    }
+  }, [activate, begin, valid]);
 
   useEffect(() => {
-    if (!session || session.passwordState !== 'ACTIVE') return;
-    const promptAt = new Date(session.expiresAt).getTime() - 30 * 60_000;
-    const delay = Math.max(0, promptAt - Date.now());
+    alive.current = true;
+    const stop = warehouseSessionFence.subscribe(() => { void restore(true); });
+    void restore();
+    return () => { alive.current = false; warehouseSessionFence.advance(); stop(); };
+  }, [restore]);
+
+  useEffect(() => {
+    if (status !== 'ready' || !session || session.passwordState !== 'ACTIVE') return;
+    const scheduledEpoch = warehouseSessionFence.current();
+    const delay = Math.max(0, new Date(session.expiresAt).getTime() - 30 * 60_000 - Date.now());
     const timer = window.setTimeout(() => {
-      if (promptedExpiryRef.current === session.expiresAt) return;
+      if (!valid(scheduledEpoch) || promptedExpiryRef.current === session.expiresAt) return;
       promptedExpiryRef.current = session.expiresAt;
       Modal.confirm({
         title: '登录即将过期',
         content: '是否继续当前仓库作业？确认后会在 16 小时单次上限内续期。',
         okText: '继续使用',
         cancelText: '稍后处理',
-        onOk: async () => { await activate(await renewWarehouseSession()); },
+        onOk: async () => {
+          if (!valid(scheduledEpoch)) return;
+          let renewalEpoch = scheduledEpoch;
+          try {
+            const renewed = await renewWarehouseSession();
+            if (!valid(scheduledEpoch)) return;
+            if (activeRef.current && sessionInputOwner(renewed) === sessionInputOwner(activeRef.current)) {
+              // A same-scope renewal must not unmount forms or invalidate in-flight document reads.
+              activeRef.current = renewed; setSession(renewed); setError('');
+            } else {
+              renewalEpoch = begin();
+              await activate(renewed, renewalEpoch);
+            }
+          }
+          catch (cause) {
+            if (valid(renewalEpoch)) { setError(cause instanceof Error ? cause.message : '续期失败。'); setStatus('error'); }
+          }
+        },
       });
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [activate, session]);
+  }, [activate, begin, session, status, valid]);
 
   const value = useMemo<WarehouseSessionContextValue>(() => ({
-    status,
-    session,
-    workstation,
-    error,
+    status, session, workstation, error, inputEpoch, drafts,
+    inputOwner: session ? sessionInputOwner(session) : '',
+    operationOwner: session ? operationJournalOwner(session) : '',
     async login(input) {
-      setStatus('loading');
-      try {
-        await activate(await createWarehouseSession(input));
-      } catch (cause) {
+      const epoch = begin();
+      try { await activate(await createWarehouseSession(input), epoch); }
+      catch (cause) {
+        if (!valid(epoch)) return;
         setError(cause instanceof Error ? cause.message : '登录失败。');
         setStatus('anonymous');
         throw cause;
       }
     },
     async logout() {
-      await deleteWarehouseSession().catch(() => undefined);
+      const epoch = begin();
+      forgetInputs();
+      activeRef.current = null;
+      forgetDocumentUploads();
       setSession(null);
       setWorkstation(null);
-      setStatus('anonymous');
+      try { await deleteWarehouseSession(); }
+      catch (cause) {
+        if (!valid(epoch)) return;
+        setError(cause instanceof Error ? cause.message : '退出尚未确认，请重试。');
+        setStatus('error');
+        throw cause;
+      }
+      if (valid(epoch)) setStatus('anonymous');
     },
     async selectWorkspace(warehouseId) {
-      setStatus('loading');
-      try {
-        await activate(await selectWarehouseWorkspace(warehouseId));
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : '无法进入仓库。');
-        setStatus('ready');
+      if (activeRef.current?.warehouseId && !window.confirm('切换工作空间将放弃未保存输入，是否继续？')) return;
+      const epoch = begin();
+      forgetInputs();
+      forgetDocumentUploads();
+      try { await activate(await selectWarehouseWorkspace(warehouseId), epoch); }
+      catch (cause) {
+        if (!valid(epoch)) return;
+        setError(cause instanceof Error ? cause.message : '无法确认工作空间，请重新连接核对。');
+        setStatus('error');
         throw cause;
       }
     },
     async changePassword(input) {
-      await changeWarehousePassword(input);
-      const restored = await getWarehouseSession();
-      if (!restored) throw new Error('登录会话已失效，请重新登录。');
-      await activate(restored);
+      const epoch = begin();
+      try {
+        await changeWarehousePassword(input);
+        if (!valid(epoch)) return;
+        const restored = await getWarehouseSession();
+        if (!valid(epoch)) return;
+        if (!restored) { setSession(null); setStatus('anonymous'); return; }
+        await activate(restored, epoch);
+      } catch (cause) {
+        if (!valid(epoch)) return;
+        setError(cause instanceof Error ? cause.message : '密码修改失败。');
+        setStatus('error');
+        throw cause;
+      }
     },
-    hasPermission(permission) {
-      return Boolean(session?.permissions.includes(permission));
-    },
-    retry() { setReloadKey(key => key + 1); },
-  }), [activate, error, session, status, workstation]);
+    hasPermission(permission) { return status === 'ready' && Boolean(session?.permissions.includes(permission)); },
+    revalidatePermissions,
+    retry() { void restore(); },
+  }), [activate, begin, drafts, error, forgetInputs, forgetDocumentUploads, inputEpoch, revalidatePermissions, restore, session, status, valid, workstation]);
 
   return <WarehouseSessionContext.Provider value={value}>{children}</WarehouseSessionContext.Provider>;
 }
@@ -155,6 +258,21 @@ export function useWarehouseSession() {
   const context = useContext(WarehouseSessionContext);
   if (!context) throw new Error('useWarehouseSession must be used inside WarehouseSessionProvider.');
   return context;
+}
+
+/** In-memory input survives a temporary gate unmount, never an identity change. */
+export function useProtectedInput<T>(key: string, initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
+  const { drafts, inputEpoch } = useWarehouseSession();
+  const [value, setValue] = useState<T>(() => drafts.has(key) ? drafts.get(key) as T
+    : typeof initial === 'function' ? (initial as () => T)() : initial);
+  const set = useCallback<Dispatch<SetStateAction<T>>>((next) => {
+    if (!warehouseSessionFence.isCurrent(inputEpoch)) return;
+    const previous = drafts.has(key) ? drafts.get(key) as T : value;
+    const result = typeof next === 'function' ? (next as (old: T) => T)(previous) : next;
+    drafts.set(key, result);
+    setValue(result);
+  }, [drafts, inputEpoch, key, value]);
+  return [value, set];
 }
 
 function PasswordChangeGate({ children }: { children: ReactNode }) {

@@ -68,6 +68,7 @@ import {
 } from '../features/session/warehouseApi';
 import { normalizeEvidenceImage } from '../features/airPickup/evidenceImage';
 import { AirPickupModuleHeader } from '../features/airPickup/AirPickupModuleHeader';
+import { PickupDocumentsPanel, useDocumentPolicy } from '../features/airPickup/PickupDocumentsPanel';
 import { selectExistingRecordsById } from '../features/airPickup/receiptSelection';
 import { useWarehouseSession } from '../features/session/WarehouseSessionProvider';
 
@@ -244,6 +245,8 @@ function HandoverConfirmationPanel({ batch }: { batch: AirHandoverBatch }) {
 
 export default function AirPickupPage() {
   const warehouseSession = useWarehouseSession();
+  const documentPolicy = useDocumentPolicy();
+  const [documentOrder, setDocumentOrder] = useState<{ id: string; no: string } | null>(null);
   const motionScopeRef = useRef<HTMLElement>(null);
   const [orders, setOrders] = useState<AirPickupOrder[]>([]);
   const [summary, setSummary] = useState<AirPickupSummary>(emptySummary);
@@ -832,7 +835,11 @@ export default function AirPickupPage() {
           {detailOrder.handoverBatchId && <Button icon={<Archive size={14} />} onClick={() => void openBatch(detailOrder.handoverBatchId!)}>查看交仓批次</Button>}
         </Space>}>
         {detailLoading ? <div className="cmhub-module-loading"><Spin />正在加载详情…</div> : detailOrder && <div className="cmhub-air-detail">
-          <Space>{statusTag(detailOrder.status)}{evidenceTag(detailOrder)}{!detailOrder.billNoIsStandard && <Tag color="orange">非标准单号</Tag>}</Space>
+          <Space>
+            {statusTag(detailOrder.status)}{evidenceTag(detailOrder)}{!detailOrder.billNoIsStandard && <Tag color="orange">非标准单号</Tag>}
+            {documentPolicy.policy?.enabled && documentPolicy.policy.capabilities.view
+              && <Button onClick={() => setDocumentOrder({ id: detailOrder.id, no: detailOrder.billNo })}>提货凭证</Button>}
+          </Space>
           <dl className="cmhub-air-detail-facts">
             {[
               { label: '来源客户', value: detailOrder.sourceClientName },
@@ -860,6 +867,11 @@ export default function AirPickupPage() {
             {(event.evidence?.length ?? 0) > 0 && <div className="cmhub-air-event-evidence">{event.evidence!.map(asset => <EvidenceThumbnail key={asset.id} asset={asset} onPreview={previewEvidence} />)}</div>}
           </Timeline.Item>)}</Timeline>
         </div>}
+      </Drawer>
+
+      <Drawer className="cmhub-document-drawer" title={<strong>提货凭证 · {documentOrder?.no ?? ''}</strong>} visible={Boolean(documentOrder)} width={720}
+        footer={null} onCancel={() => setDocumentOrder(null)} unmountOnExit>
+        {documentOrder && <PickupDocumentsPanel key={`${warehouseSession.inputOwner}:${documentOrder.id}`} orderId={documentOrder.id} />}
       </Drawer>
 
       <Modal className="cmhub-air-modal cmhub-air-preview-modal" title="凭证预览" visible={Boolean(previewUrl)} footer={null} onCancel={() => { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}>
