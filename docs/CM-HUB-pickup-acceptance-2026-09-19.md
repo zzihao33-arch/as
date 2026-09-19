@@ -1,0 +1,54 @@
+# CM-HUB 员工提货凭证测试验收（2026-09-19）
+
+## 已验证范围
+
+测试主机 `tyg-api-test / ins-nm8jebfh`；数据库 `tyg_integration_test`；私有 COS 前缀 `test`；API `https://api-test.cmhubtool.com`。本轮只操作测试环境，生产开关保持原有关闭状态，未发布生产。测试出站 webhook 关闭。
+
+- 后端代码 `16caa30`：列表分页 SQL 修复 `32e17ec`，上传租约 UTC 比较修复 `16caa30`。
+- 后端部署工作流 [35467818039](https://github.com/zzihao33-arch/as/actions/runs/35467818039) 成功。
+- 前端样式修复 `4e519ce` / 层级修复 `4cfb6c3`：补齐凭证组件使用的 Arco 基础样式，避免按钮和预览弹窗未应用样式，并将预览及维护弹窗放在 TDesign 提货抽屉之上。
+- API 自动验收通过，完整脱敏请求状态、请求 ID 与清理结果见 [HTTP 报告](operations/cmhub-pickup-http-2026-09-19/http-acceptance.json)。
+- PDF、PNG、DOCX、XLSX 原件上传/下载成功；下载 SHA-256 与上传一致。PDF/PNG 预览 API 返回相同字节，`private, no-store` 与 `nosniff` 头通过。
+- 同一上传重放返回原资产；多轮相同 PNG/DOCX/XLSX 内容去重。
+- 临时员工撤权后列表、下载、上传均 403，恢复权限后下载 200；匿名读取 401。
+- 损坏、伪装、加密 PDF、含 JavaScript 的活动 PDF、标准 EICAR 原始测试串均 422，状态 `FAILED_NOT_SAVED`。
+- 旧 `.xls` 返回 503 `DOCUMENT_CHECK_UNAVAILABLE` 且未保存；随后正常 PDF 上传仍成功。
+- Office 只提供原件下载；Office 在线预览、转换 worker 和公共司机入口仍延期。
+
+## 回归与运行环境
+
+后端 150/150 测试、18 份迁移文件校验、类型检查和构建通过；前端 48/48 测试、严格类型检查和构建通过。后端回归使用 SQL 引擎复现分页语法错误，以及数据库时区 +8 时误拒有效租约、-8 时误放过过期租约；先观察失败，再验证修复。关闭功能的测试使用不可访问数据库/存储代理，证明开关关闭后不访问未迁移的文档存储。真实部署保持开关开启供上述业务验收；未以线上切换开关替代该隔离回归。
+
+远端台账为 19 行，其中含已有历史 `017_use_utc_label_expiry_default`；当前仓库 18 个迁移校验通过，未改写历史台账。
+
+API 用户 `cmhub`（UID 1001）使用独立 rootless Docker，固定镜像摘要 `sha256:7646609d5c8d1011d4e24169ef4b8ed73839c702967d74af9c51d05e111d0f51`。未向 API 用户开放 rootful Docker 或其他用户的 socket。该镜像从已验收用户的同一不可变镜像流式载入。
+
+主机原先仅向用户委托 memory/pids，容器 `--cpus=1` 因缺少 `cpu.max` 无法启动。当前 `/etc/systemd/system/user@1001.service.d/90-cmhub-document-cpu.conf` 委托 cpu/cpuset/io/memory/pids，并配置 CPUQuota=400%、MemoryMax=8G、TasksMax=512。旧用户管理器直接重启曾出现 219/CGROUP / resource busy，已恢复，再通过 daemon-reload 和运行时资源属性在线应用成功；不要照抄失败的重启操作。未进行整机重启验收。
+
+真实 API 环境的完整容器参数探测退出 0（TAT `inv-u8uwh9gr5p`），随后完整上传扫描成功。每个扫描容器继续限制为非特权 UID 65532、无网络、只读根文件系统、全部 capabilities 移除、2 GiB 内存、1 CPU、64 PID、256 MiB 临时盘。
+
+## 回退与测试数据
+
+修复前回退目录 `/var/backups/cmhub-pickup-20260919-2018` 权限 0700，含原 `7f0e98c` 对应 dist、0600 环境文件副本与迁移摘要。旧版本本身存在列表 SQL 故障，因此该回退点用于应急恢复基线，不能当成业务验收通过版本。新增迁移保持向后兼容，未做破坏性回退。
+
+合成提单 `E2E260919001` 与客户 `E2E260919` 专用于本次验收；临时员工账号和角色已由每轮脚本 finally 清理，安全审计按设计保留。业务记录及对象清理已完成，见下方收尾结果。
+
+首次 EICAR 用例把测试串追加到完整 PDF 末尾，不能作为标准 EICAR 阳性样本，该用例的预期无效。正式通过报告改用标准原始 EICAR 测试串，并独立验证正确构造的活动 PDF；初次额外保存的合成 PDF 也纳入按提单清理。
+
+## 重跑方法
+
+从 `services/cloud-api` 运行 `python scripts/createPickupHttpFixtures.py`（需要 pypdf、Pillow、python-docx、openpyxl），准备新建的专用 E2E 提单，再设置 `CMHUB_TEST_ORDER_ID`、`CMHUB_TEST_BILL_NO`（E2E 前缀）、`CMHUB_TEST_LOGIN`、`CMHUB_TEST_PASSWORD`，运行 `node scripts/acceptPickupDocuments.mjs`。可用 `CMHUB_ACCEPT_OUTPUT` 指定报告。密码仅从进程环境读取，不写入报告；运行后清除进程环境变量。脚本只连接固定测试 API，保留文档供浏览器验证，测试完成后需按该次精确提单 ID 清理业务记录和对象。
+
+运行配置参考：[Docker rootless 资源限制说明](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources)。
+
+## 浏览器验证
+
+测试域名已加载 `4cfb6c3` 的发布资源（入口 `index-BVkHcnWB.js`）。PNG 图片 `complete=true`，原始尺寸 64×64；图片中心的最上层命中元素为 IMG，预览 wrapper 的 z-index 为 1601，确认没有被 TDesign 抽屉遮挡。Chrome PDF 查看器已显示页数 1/1 及单页缩略图。Office 行显示“请下载原件查看”。
+
+浏览器实际选择本地合成 PNG 并点击“上传 1 份文件”，最终显示“原件已保存”，同内容去重没有增加资产数；完成提示已关闭。
+
+## 收尾结果
+
+2026-09-19 21:07:51 UTC，TAT `inv-u8ux4jg6wn` 成功（退出码 0）：删除本次 1 条提单、1 条客户档案、7 条文档资产及其预览、22 条上传登记及对应操作、7 个私有 COS 对象；对象删除后逐一确认 404。本次订单/客户/资产/上传记录剩余均为 0。清理只使用精确 ID，并先断言没有关联货件、历史资产、入库/交仓批次、其他客户提单或处理中上传。安全审计保留。
+
+API 用户的 `docker ps -a --filter name=cmhub-document-` 输出为空；最终健康检查 HTTP 200，`ok=true`、`outboundWebhooks.enabled=false`。清理摘要见 [cleanup.json](operations/cmhub-pickup-http-2026-09-19/cleanup.json)。测试阶段已完成；生产未发布。整机重启验证仍需在正式发布准备阶段另行完成。

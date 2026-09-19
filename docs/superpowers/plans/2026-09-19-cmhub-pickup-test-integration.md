@@ -1,66 +1,36 @@
 # CM-HUB Employee Pickup Document Test Integration Plan
 
-> **For agentic workers:** Execute this plan task by task. Test environment changes require a final preflight and a concrete rollback point.
+Goal: integrate the isolated checker with the authorized CM-HUB test release, validate private employee document upload/read/download and permission revocation, and leave production disabled.
 
-**Goal:** Integrate the isolated document checker candidate with the current CM-HUB test release line and verify real private upload, authorized read/download, and permission revocation while keeping production disabled.
+Scope: `tyg-api-test / ins-nm8jebfh`, database `tyg_integration_test`, private COS prefix `test`, synthetic data only. Legacy 015 assets preserved. Office online preview/conversion and public driver entry remain deferred; legacy XLS fails closed.
 
-**Architecture:** The integration branch starts at `origin/staging` and cherry-picks the candidate into an isolated worktree. The test release line already uses migration 015 for legacy pickup documents, so preserve its table and downloads; migrations 017/018 add the operation-ledger fields and checker-backed v2 table. Verify the test host, backend revision, migration ledger, object-storage test prefix, and deployment workflow before changing remote state. Use only synthetic test orders and documents.
+## Task 1: Establish test baseline — complete
 
-**Tech Stack:** Node.js 22, Express, TypeScript, MySQL, PM2, Tencent Cloud CVM command console, isolated Docker document checker.
+- [x] Verify exact host, test-only environment, migration ledger and source revision.
+- [x] Preserve rollback dist/environment/ledger under `/var/backups/cmhub-pickup-20260919-2018` (0700; environment 0600).
+- [x] Confirm no production resource or migration drift; preserve historical extra ledger entry.
 
-**Spec:** `docs/CM-HUB-v1-scope-freeze-2026-09-18.md`; `docs/CM-HUB-pickup-v1-candidate-2026-09-19.md`.
+## Task 2: Deploy a verified candidate — complete
 
-## Global Constraints
+- [x] Reproduce and fix malformed list pagination SQL, then UTC upload lease comparison, with SQL-engine regressions.
+- [x] Backend 150/150 tests, 18 migration checks, typecheck and build; frontend 48/48 tests, strict typecheck and build.
+- [x] Deploy backend `16caa30` via successful test workflow 35467818039.
+- [x] Correct rootless runtime access and CPU controller delegation while retaining all container restrictions.
+- [x] Deploy frontend `4cfb6c3`, including missing component styles and dialogs above the host drawer.
 
-- Production `PICKUP_DOCUMENTS_ENABLED=false`.
-- Test database must be `tyg_integration_test`; object storage prefix must be `test`.
-- Only synthetic user accounts, orders, and document bytes may be used.
-- Do not overwrite unrelated API or push-log work; deploy only from the controlled test release path.
-- Apply only checksum-verified migrations 017/018 after the release-line schema is inspected; do not overwrite or remove migration 015 assets.
-- Legacy `.xls` remains unavailable and fails closed; Office preview and public driver entry remain out of scope.
+## Task 3: End-to-end acceptance — complete
 
----
+- [x] Real employee API uploads PDF/PNG/DOCX/XLSX, scanner verdicts, hash-identical original downloads, PDF/PNG private previews, replay and deduplication.
+- [x] Permission revocation denies list/download/upload, restoration permits download; anonymous read denied.
+- [x] Corrupt/disguised/encrypted/active PDF and standard EICAR rejected; legacy XLS unavailable without saving; valid upload succeeds afterwards.
+- [x] Disabled-feature regression refuses storage/database access through throwing dependencies.
+- [x] Browser PNG decoding, unobscured modal, PDF 1/1 rendering, and native file selection/upload completion.
 
-### Task 1: Establish a current test baseline
+## Task 4: Close test stage — complete
 
-**Files:**
-- Read: `docs/deployment/test-environment.md`
-- Read: `deploy/ubuntu/deploy-test-api.sh`
-- Read: `database/017_add_warehouse_ui_operations.sql`
-- Read: `database/018_add_pickup_documents.sql`
+- [x] Keep verified release; failed infrastructure change attempts were recovered before further work.
+- [x] Remove this task's synthetic order/customer, 7 assets/COS objects, 22 registrations/operations; verify zero residual business records. Delete temporary accounts/roles; retain security audit.
+- [x] Verify no checker containers remain and health returns 200 with outbound webhooks disabled.
+- [x] Save concise continuation and detailed evidence; production unchanged and disabled.
 
-- [x] Confirm the host identity and health endpoint; the prior thread verified `tyg-api-test / ins-nm8jebfh` and HTTP 200.
-- [x] Confirm test-only environment guards and deploy ordering in the script; the TAT read-only command verified the test database connection and environment assertions, then stopped at Git's dubious-ownership guard before outputting the ledger.
-- [x] Confirm migration application through the successful test workflow (`npm run migrate`); the deploy script checks the exact immutable checker image before entering that step.
-- [ ] Stop if production resources, unexplained server changes, migration drift, or an unsafe rollback point is found.
-
-### Task 2: Verify a reviewable deployment candidate
-
-**Files:**
-- Integration branch `codex/cmhub-pickup-test-integration`
-- Test release workflow and deployment scripts
-
-- [x] Run frontend/backend tests, strict type checks, and builds; frontend 48/48, backend 147/147, and 18 migration files validate.
-- [x] Verify the integration diff against `origin/staging`, preserving release-line changes and legacy assets.
-- [ ] Prepare rollback to the exact running test revision and preserve the test `.env` and schema state.
-- [x] Deploy the authorized integration release to `tyg-api-test / ins-nm8jebfh` through the existing `staging` workflow; run 35454325794 succeeded and public health returned `ok: true`.
-
-The GitHub workflow only deploys pushes to `staging`; the test workflow now explicitly enables documents with the previously accepted immutable checker digest. The server-side deploy script requires that exact flag and digest and checks that the image is available to the deployment runtime before migrations. A manual dispatch from this feature branch still pulls the existing `staging` tip. Push the reviewed commits to `staging` only after the read-only host and migration preflight succeeds.
-
-### Task 3: Exercise the end-to-end test flow
-
-**Files:**
-- Existing synthetic acceptance artifacts under `docs/operations/cmhub-checker-acceptance-2026-09-19/`
-
-- [x] Verify post-deploy public health; workflow success confirms the immutable checker image guard and migration step passed.
-- [x] Apply migrations through the checksum-aware migration runner against the guarded `tyg_integration_test` database.
-- [ ] With synthetic data, verify upload, checker verdict, private authorized read, original download, and PDF/image view. Test Admin login succeeded and synthetic customer/order creation was acknowledged, but the order list returns “服务暂时不可用” and the system page flags the test API as disconnected; no file was uploaded. Synthetic customer code `E2E260919` and bill number `E2E260919001` remain in the test database pending a safe cleanup/readback path.
-- [ ] Verify malicious, corrupted, encrypted, and disguised inputs fail closed; verify permission revocation denies reads and writes; verify the disabled feature flag avoids document database access.
-- [ ] Record redacted request IDs, outcomes, migration state, deployment revision, and rollback evidence.
-
-### Task 4: Close the test stage
-
-- [ ] Restore the previous test deployment if a check fails; retain additive schema only when rollback compatibility is verified.
-- [ ] Confirm no synthetic test records or checker containers remain, and test API health is normal.
-- [ ] Update the continuation record with verified evidence and remaining gaps.
-- [ ] Keep production disabled until all release gates and an explicit production rollout are reviewed.
+Evidence: [Acceptance report](../../CM-HUB-pickup-acceptance-2026-09-19.md), including exact revisions, request IDs, rollback limits and cleanup results. Full host reboot and any production rollout are outside this completed test stage and require a separate release decision.

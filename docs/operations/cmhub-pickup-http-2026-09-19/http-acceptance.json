@@ -1,0 +1,466 @@
+{
+  "runId": "pickup-1789851005537",
+  "startedAt": "2026-09-19T20:50:05.537Z",
+  "orderId": "4b0389a6-f63b-44d3-a6c1-d68a8cdbd617",
+  "checks": [
+    {
+      "method": "POST",
+      "path": "/sessions",
+      "status": 201,
+      "requestId": "f530fcb0-7965-4c34-8639-2614543e9a3a",
+      "elapsedMs": 292
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickup-document-policy",
+      "status": 200,
+      "requestId": "c0db628f-607b-4a3f-87da-f649aeac83f7",
+      "elapsedMs": 126
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups?search=E2E260919001&page=1&pageSize=20",
+      "status": 200,
+      "requestId": "03fd0067-0d3e-4a0f-bd64-3fc6e7431256",
+      "elapsedMs": 50
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617",
+      "status": 200,
+      "requestId": "1c3f44e1-a9ec-4cbb-816b-63e9ee3e0c0b",
+      "elapsedMs": 57
+    },
+    {
+      "method": "POST",
+      "path": "/roles",
+      "status": 201,
+      "requestId": "8aea659f-5fca-440e-9d34-022ddc1bac05",
+      "elapsedMs": 48
+    },
+    {
+      "method": "PATCH",
+      "path": "/roles/76b9886d-b3c5-4237-b8b4-af3d32e0b521",
+      "status": 200,
+      "requestId": "26efef77-436f-4fe3-8543-ecb7a79b8eb1",
+      "elapsedMs": 50
+    },
+    {
+      "method": "POST",
+      "path": "/accounts",
+      "status": 201,
+      "requestId": "fa7065e3-993f-4432-8ac9-d54d46e39345",
+      "elapsedMs": 167
+    },
+    {
+      "method": "POST",
+      "path": "/sessions",
+      "status": 201,
+      "requestId": "847b10f5-add6-46bf-a843-94947f28f701",
+      "elapsedMs": 156
+    },
+    {
+      "method": "POST",
+      "path": "/session/password",
+      "status": 204,
+      "elapsedMs": 261
+    },
+    {
+      "method": "POST",
+      "path": "/sessions",
+      "status": 201,
+      "requestId": "e1833619-eecd-4626-8caa-5cec9c1aced2",
+      "elapsedMs": 147
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "c570edcf-efcd-4647-a709-1986085e94d5",
+      "elapsedMs": 71
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/f41d3d8f-5a57-4868-acbe-a16232d60531/content",
+      "status": 201,
+      "requestId": "6e555ad9-e0c8-460e-ad37-df5fda23bc44",
+      "elapsedMs": 9302
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/f41d3d8f-5a57-4868-acbe-a16232d60531/content",
+      "status": 200,
+      "requestId": "713079f6-61e9-4818-863f-c499b2d1b226",
+      "elapsedMs": 200
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/c25e006d-715f-48e0-8b8d-a84cba943b2a/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 123
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/c25e006d-715f-48e0-8b8d-a84cba943b2a/content?variant=preview&disposition=inline",
+      "status": 200,
+      "elapsedMs": 123
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "66703768-26ac-4042-89a4-5db9141c0f3d",
+      "elapsedMs": 63
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/23c9e423-3841-48a4-a5ca-cf7d64e6b959/content",
+      "status": 200,
+      "requestId": "ef6a06bc-6db0-4203-85b9-7401dbe261b4",
+      "elapsedMs": 9191
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/23c9e423-3841-48a4-a5ca-cf7d64e6b959/content",
+      "status": 200,
+      "requestId": "aa28ab92-a251-47e2-8bc1-420ccae2cd4d",
+      "elapsedMs": 328
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/cb4c2a49-5d78-47e3-b134-a03a32ee3099/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 178
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/cb4c2a49-5d78-47e3-b134-a03a32ee3099/content?variant=preview&disposition=inline",
+      "status": 200,
+      "elapsedMs": 304
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "0075b41f-64fd-4974-89ac-eeb8f18920e9",
+      "elapsedMs": 587
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/42a3af46-f8c0-42d3-a315-ce3f5db02993/content",
+      "status": 200,
+      "requestId": "9e5a0d43-bc59-4dc2-8d7a-131030a58717",
+      "elapsedMs": 11096
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/42a3af46-f8c0-42d3-a315-ce3f5db02993/content",
+      "status": 200,
+      "requestId": "c8d7c8bb-02ef-4f33-9d4e-079a61b28246",
+      "elapsedMs": 301
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/baa9d6ef-b298-42bb-89a8-b06aefab43a3/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 160
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "6284309d-b323-4f82-9bf9-0a0f5f097687",
+      "elapsedMs": 61
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/1ea73e36-3ab9-424b-a010-57c1935fac34/content",
+      "status": 200,
+      "requestId": "d98a72d1-e02d-47d8-9b0e-c1271a237491",
+      "elapsedMs": 10223
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/1ea73e36-3ab9-424b-a010-57c1935fac34/content",
+      "status": 200,
+      "requestId": "4fa782a0-69b5-40ad-ae73-70edd0a2035b",
+      "elapsedMs": 280
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/b532fe98-b0ec-4bd3-9e99-702605fa476b/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 124
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents",
+      "status": 200,
+      "requestId": "8bfaa902-f017-40b0-8853-49f1b21a9fc5",
+      "elapsedMs": 72
+    },
+    {
+      "method": "PATCH",
+      "path": "/roles/76b9886d-b3c5-4237-b8b4-af3d32e0b521",
+      "status": 200,
+      "requestId": "0fd9b3b4-16ae-4bdb-b098-35787f36da35",
+      "elapsedMs": 96
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents",
+      "status": 403,
+      "code": "PERMISSION_DENIED",
+      "requestId": "71898bd1-edc6-410d-8f71-ffb7a40a74c0",
+      "elapsedMs": 49
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/c25e006d-715f-48e0-8b8d-a84cba943b2a/content?variant=original&disposition=attachment",
+      "status": 403,
+      "code": "PERMISSION_DENIED",
+      "requestId": "85753e60-a7a9-4cd8-a9b2-f60b525a5942",
+      "elapsedMs": 66
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 403,
+      "code": "PERMISSION_DENIED",
+      "requestId": "758b93a8-e928-4578-a166-bca6c9d6f9ee",
+      "elapsedMs": 82
+    },
+    {
+      "method": "PATCH",
+      "path": "/roles/76b9886d-b3c5-4237-b8b4-af3d32e0b521",
+      "status": 200,
+      "requestId": "a024f132-4e32-4198-8390-61cd25a645e2",
+      "elapsedMs": 75
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/c25e006d-715f-48e0-8b8d-a84cba943b2a/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 120
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "7aac74d9-5999-49a6-8483-44da2c1c127c",
+      "elapsedMs": 118
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/b5bb5d54-44a3-4bb7-a8aa-549170278092/content",
+      "status": 422,
+      "code": "DOCUMENT_CONTENT_INVALID",
+      "requestId": "08d1ee80-6945-4dcf-ab92-6e1d1f1cce46",
+      "elapsedMs": 9364
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/b5bb5d54-44a3-4bb7-a8aa-549170278092",
+      "status": 200,
+      "requestId": "3d92177b-4143-49b4-a172-676350cd8af3",
+      "elapsedMs": 153
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "2864a469-c193-4547-bd07-6de18af08a2b",
+      "elapsedMs": 87
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/98c73ae7-c5cd-4932-bcc9-7ae98acde075/content",
+      "status": 422,
+      "code": "DOCUMENT_CONTENT_INVALID",
+      "requestId": "308c13b4-da34-4677-b037-e1a9cdd2c034",
+      "elapsedMs": 9278
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/98c73ae7-c5cd-4932-bcc9-7ae98acde075",
+      "status": 200,
+      "requestId": "4dec66a6-de0f-4e9b-9d88-14b38d23a0e3",
+      "elapsedMs": 152
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "2b997bbf-c41c-46fe-9cee-9330e021fa19",
+      "elapsedMs": 67
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/cd22d416-7ce3-4d64-ad17-c5fb77415734/content",
+      "status": 422,
+      "code": "DOCUMENT_CONTENT_INVALID",
+      "requestId": "eec958fe-9ae1-4ccc-b764-ccabcfa4f2d3",
+      "elapsedMs": 9030
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/cd22d416-7ce3-4d64-ad17-c5fb77415734",
+      "status": 200,
+      "requestId": "d29b7fb5-5e61-42a5-93a2-2d64a10940f7",
+      "elapsedMs": 197
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "bced2d40-8cef-43f3-9b1a-dd3f70c9061b",
+      "elapsedMs": 64
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/70f4a1a6-7901-4788-899a-0acf9040a59d/content",
+      "status": 422,
+      "code": "DOCUMENT_CONTENT_INVALID",
+      "requestId": "532c5f52-d5d0-4092-893a-1a004cc12122",
+      "elapsedMs": 9239
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/70f4a1a6-7901-4788-899a-0acf9040a59d",
+      "status": 200,
+      "requestId": "ff5b647b-82e3-4551-8140-d53c1c0ca85d",
+      "elapsedMs": 155
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "186ca1b0-1541-491d-a9e8-9702117f33b0",
+      "elapsedMs": 46
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/b8b6a930-f1fc-4ac3-a2a0-110c0e719774/content",
+      "status": 422,
+      "code": "DOCUMENT_CONTENT_INVALID",
+      "requestId": "236bc070-c1d2-4d40-a297-a7f91865bfa6",
+      "elapsedMs": 9285
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/b8b6a930-f1fc-4ac3-a2a0-110c0e719774",
+      "status": 200,
+      "requestId": "87d08ee4-7efc-4e39-990b-fce2c59e0d38",
+      "elapsedMs": 140
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "746f5529-6fb6-4e22-8a8e-27e0f62e6948",
+      "elapsedMs": 64
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/6254ed8b-ae28-499f-9422-6581d015521b/content",
+      "status": 503,
+      "code": "DOCUMENT_CHECK_UNAVAILABLE",
+      "requestId": "dbc33849-4622-41ed-b48a-a6c92dd639a2",
+      "elapsedMs": 387
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/6254ed8b-ae28-499f-9422-6581d015521b",
+      "status": 200,
+      "requestId": "095d2868-a456-417e-87aa-c58d1ebaaf15",
+      "elapsedMs": 47
+    },
+    {
+      "method": "POST",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads",
+      "status": 201,
+      "requestId": "83859ce0-446a-41be-9e5c-dfe06b9e0fdd",
+      "elapsedMs": 45
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/59ebe1e5-7970-4d77-ab60-d09e64c75d36/content",
+      "status": 201,
+      "requestId": "caedf627-9cac-46fa-8882-22ac2919b286",
+      "elapsedMs": 9717
+    },
+    {
+      "method": "PUT",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/document-uploads/59ebe1e5-7970-4d77-ab60-d09e64c75d36/content",
+      "status": 200,
+      "requestId": "320f6af9-18bf-421f-9a36-d1d5acec8cc5",
+      "elapsedMs": 187
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/a6d79096-8184-42d0-b81a-27e9bec08072/content?variant=original&disposition=attachment",
+      "status": 200,
+      "elapsedMs": 108
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/a6d79096-8184-42d0-b81a-27e9bec08072/content?variant=preview&disposition=inline",
+      "status": 200,
+      "elapsedMs": 100
+    },
+    {
+      "method": "GET",
+      "path": "/air-pickups/4b0389a6-f63b-44d3-a6c1-d68a8cdbd617/documents/c25e006d-715f-48e0-8b8d-a84cba943b2a/content?variant=original&disposition=attachment",
+      "status": 401,
+      "code": "SESSION_REQUIRED",
+      "requestId": "62290ddd-40fb-46e0-a7dc-bee342aadd44",
+      "elapsedMs": 56
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/53747eb8-5a2b-4576-805e-5fce9c9b776c",
+      "status": 204,
+      "elapsedMs": 64
+    },
+    {
+      "method": "DELETE",
+      "path": "/roles/76b9886d-b3c5-4237-b8b4-af3d32e0b521",
+      "status": 204,
+      "elapsedMs": 46
+    },
+    {
+      "method": "DELETE",
+      "path": "/session",
+      "status": 204,
+      "elapsedMs": 60
+    }
+  ],
+  "assets": [
+    "c25e006d-715f-48e0-8b8d-a84cba943b2a",
+    "cb4c2a49-5d78-47e3-b134-a03a32ee3099",
+    "baa9d6ef-b298-42bb-89a8-b06aefab43a3",
+    "b532fe98-b0ec-4bd3-9e99-702605fa476b",
+    "a6d79096-8184-42d0-b81a-27e9bec08072"
+  ],
+  "uploads": [
+    "f41d3d8f-5a57-4868-acbe-a16232d60531",
+    "23c9e423-3841-48a4-a5ca-cf7d64e6b959",
+    "42a3af46-f8c0-42d3-a315-ce3f5db02993",
+    "1ea73e36-3ab9-424b-a010-57c1935fac34",
+    "b5bb5d54-44a3-4bb7-a8aa-549170278092",
+    "98c73ae7-c5cd-4932-bcc9-7ae98acde075",
+    "cd22d416-7ce3-4d64-ad17-c5fb77415734",
+    "70f4a1a6-7901-4788-899a-0acf9040a59d",
+    "b8b6a930-f1fc-4ac3-a2a0-110c0e719774",
+    "6254ed8b-ae28-499f-9422-6581d015521b",
+    "59ebe1e5-7970-4d77-ab60-d09e64c75d36"
+  ],
+  "cleanup": [
+    "account deleted",
+    "role deleted"
+  ],
+  "accountId": "53747eb8-5a2b-4576-805e-5fce9c9b776c",
+  "roleId": "76b9886d-b3c5-4237-b8b4-af3d32e0b521",
+  "passed": true,
+  "completedAt": "2026-09-19T20:51:48.448Z"
+}
