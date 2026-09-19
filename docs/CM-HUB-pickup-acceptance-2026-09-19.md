@@ -64,3 +64,13 @@ API 用户的 `docker ps -a --filter name=cmhub-document-` 输出为空；最终
 2026-09-19 21:37:31 UTC，修正后的最终验收 TAT `inv-u8v00d06u3` 成功（退出码 0）。新旧 boot ID 不同，重启后 uptime 456 秒；PM2 进程在线（PID 1718）；运行环境的 HOME、USER、XDG_RUNTIME_DIR 正确；`.env` 中提货凭证开关开启、测试环境和 webhook 关闭、扫描镜像摘要固定；使用真实 API 进程环境执行完整隔离 Docker 探针通过。cgroup 的 cpu/cpuset/io/memory/pids 委托、CPUQuota=400%、MemoryMax=8G、TasksMax=512 均恢复；没有扫描容器残留；本机与公网健康检查通过。
 
 测试阶段及整机重启恢复验收均已完成；生产仍未发布。
+
+## 生产基线候选重新验收
+
+从生产补丁 `ca05db3` 构造的隔离候选 `codex/pickup-production-candidate` 已以精确 SHA `8023f306f1be1059ec8a68f5653e73b7ec677565` 重新部署到同一测试实例。测试迁移账本先核对旧 017/018 提货迁移与新 019/020 的 SHA-256 完全一致，再由 `inv-w8v1ahgsup` 只登记新文件名别名，没有重放结构 SQL。部署记录为 `inv-x8v1idg2g6`，包含后端 221/221、类型检查、20 份迁移校验、构建、迁移、PM2 reload 和健康检查。
+
+完整 HTTP 验收报告保存在测试主机 `/tmp/cmhub-candidate-accept-20260919T224921Z/http-acceptance.json`。实际验收 `inv-u8v23qg7r7` 完成 62 项请求并返回 `passed=true`；包装器仅因把脚本设计的 5 个保留资产误写为 7 而退出 1。随后只读核验 `inv-v8v27f0mp8` 退出 0，确认 62 项检查、5 个资产、11 次上传路径、数据库记录、临时账号与角色清理、无残留扫描容器及公网健康一致。四类外部文件由固定扫描镜像内置的 `pikepdf`、Pillow 和 LibreOffice 在无网络、只读根文件系统及资源限制下生成，宿主机未安装软件。
+
+浏览器检索专用提单 `E2E1789858163890A` 后，凭证面板显示 5 份原件；PDF 阅读器成功显示 1/1 页，PNG 显示 64×64 图块，DOCX/XLSX 显示“请下载原件查看”。重启前预检 `inv-v8v2aw03qe`、测试实例重启 `inv-v8v2cvgnsw`、最终重启后严格核验 `inv-w8v2jtgkpj` 均完成；boot ID 从 `a2223083-5429-41b8-a020-db6dd2e2b8e8` 变为 `6da7c675-86c7-4842-9047-bce289b4dc6a`。公网短暂 503 后恢复并连续六次 200，PM2、rootless Docker、固定镜像、五类 cgroup 委托和完整容器隔离探针全部通过。重启后浏览器仍能查询该提单和 5 份凭证。
+
+本轮合成订单 `917c325e-4263-445f-a3dd-87f9e0ff4969`、客户、管理员、5 个文档对象及 11 条上传登记暂时保留，便于复核；临时员工账号和角色已自动删除。后续清理必须按该次 metadata 中的精确 ID 执行，并保留安全审计。生产仍未发布。
