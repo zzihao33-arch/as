@@ -45,7 +45,7 @@
 - [ ] Prepare rollback to the exact running test revision and preserve the test `.env` and schema state.
 - [ ] Deploy the exact integration branch only after the user authorizes transmitting it to `tyg-api-test / ins-nm8jebfh`.
 
-The current GitHub workflow only triggers automatically for pushes to `staging`, and the server-side deploy script fast-forwards `staging`; a manual workflow dispatch from this feature branch would still deploy the existing `staging` tip. Do not invoke it as-is for this branch. The workflow also rebuilds the test `.env` without the checker flag/image settings, which must be resolved and reviewed before E2E deployment.
+The GitHub workflow only deploys pushes to `staging`; the test workflow now explicitly enables documents with the previously accepted immutable checker digest. The server-side deploy script requires that exact flag and digest and checks that the image is available to the deployment runtime before migrations. A manual dispatch from this feature branch still pulls the existing `staging` tip. Push the reviewed commits to `staging` only after the read-only host and migration preflight succeeds.
 
 ### Task 3: Exercise the end-to-end test flow
 

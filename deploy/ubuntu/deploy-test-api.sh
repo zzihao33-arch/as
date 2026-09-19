@@ -32,6 +32,8 @@ install_config_from_stdin() {
     'COS_BUCKET=cmhub-labels-prod-1476409815' \
     'COS_REGION=na-ashburn' \
     'COS_PREFIX=test' \
+    'PICKUP_DOCUMENTS_ENABLED=true' \
+    'PICKUP_DOCUMENT_SANDBOX_IMAGE=sha256:7646609d5c8d1011d4e24169ef4b8ed73839c702967d74af9c51d05e111d0f51' \
     'WAREHOUSE_ALLOWED_ORIGINS=https://test.cmhubtool.com'; do
     if ! grep -Fqx "$required_line" "$next_file"; then
       rm -f "$next_file"
@@ -63,6 +65,15 @@ fi
 test_database="$(sed -n 's/^MYSQL_DATABASE=//p' "$ENV_FILE" | tail -n 1)"
 if [[ ! "$test_database" =~ test ]]; then
   echo "Refusing to deploy: MYSQL_DATABASE must be an isolated test database." >&2
+  exit 1
+fi
+checker_image="$(sed -n 's/^PICKUP_DOCUMENT_SANDBOX_IMAGE=//p' "$ENV_FILE" | tail -n 1)"
+if [[ "$checker_image" != 'sha256:7646609d5c8d1011d4e24169ef4b8ed73839c702967d74af9c51d05e111d0f51' ]]; then
+  echo "Refusing to deploy: the accepted immutable pickup-document checker image is required." >&2
+  exit 1
+fi
+if ! command -v docker >/dev/null 2>&1 || [[ "$(docker image inspect "$checker_image" --format '{{.Id}}' 2>/dev/null || true)" != "$checker_image" ]]; then
+  echo "Refusing to deploy: the accepted checker image is unavailable to the deployment runtime." >&2
   exit 1
 fi
 
