@@ -23,7 +23,7 @@
 
 API 用户 `cmhub`（UID 1001）使用独立 rootless Docker，固定镜像摘要 `sha256:7646609d5c8d1011d4e24169ef4b8ed73839c702967d74af9c51d05e111d0f51`。未向 API 用户开放 rootful Docker 或其他用户的 socket。该镜像从已验收用户的同一不可变镜像流式载入。
 
-主机原先仅向用户委托 memory/pids，容器 `--cpus=1` 因缺少 `cpu.max` 无法启动。当前 `/etc/systemd/system/user@1001.service.d/90-cmhub-document-cpu.conf` 委托 cpu/cpuset/io/memory/pids，并配置 CPUQuota=400%、MemoryMax=8G、TasksMax=512。旧用户管理器直接重启曾出现 219/CGROUP / resource busy，已恢复，再通过 daemon-reload 和运行时资源属性在线应用成功；不要照抄失败的重启操作。未进行整机重启验收。
+主机原先仅向用户委托 memory/pids，容器 `--cpus=1` 因缺少 `cpu.max` 无法启动。当前 `/etc/systemd/system/user@1001.service.d/90-cmhub-document-cpu.conf` 委托 cpu/cpuset/io/memory/pids，并配置 CPUQuota=400%、MemoryMax=8G、TasksMax=512。旧用户管理器直接重启曾出现 219/CGROUP / resource busy，已恢复，再通过 daemon-reload 和运行时资源属性在线应用成功；不要照抄失败的重启操作。整机重启恢复验收见下文。
 
 真实 API 环境的完整容器参数探测退出 0（TAT `inv-u8uwh9gr5p`），随后完整上传扫描成功。每个扫描容器继续限制为非特权 UID 65532、无网络、只读根文件系统、全部 capabilities 移除、2 GiB 内存、1 CPU、64 PID、256 MiB 临时盘。
 
@@ -51,4 +51,16 @@ API 用户 `cmhub`（UID 1001）使用独立 rootless Docker，固定镜像摘�
 
 2026-09-19 21:07:51 UTC，TAT `inv-u8ux4jg6wn` 成功（退出码 0）：删除本次 1 条提单、1 条客户档案、7 条文档资产及其预览、22 条上传登记及对应操作、7 个私有 COS 对象；对象删除后逐一确认 404。本次订单/客户/资产/上传记录剩余均为 0。清理只使用精确 ID，并先断言没有关联货件、历史资产、入库/交仓批次、其他客户提单或处理中上传。安全审计保留。
 
-API 用户的 `docker ps -a --filter name=cmhub-document-` 输出为空；最终健康检查 HTTP 200，`ok=true`、`outboundWebhooks.enabled=false`。清理摘要见 [cleanup.json](operations/cmhub-pickup-http-2026-09-19/cleanup.json)。测试阶段已完成；生产未发布。整机重启验证仍需在正式发布准备阶段另行完成。
+API 用户的 `docker ps -a --filter name=cmhub-document-` 输出为空；最终健康检查 HTTP 200，`ok=true`、`outboundWebhooks.enabled=false`。清理摘要见 [cleanup.json](operations/cmhub-pickup-http-2026-09-19/cleanup.json)。测试阶段已完成；生产未发布。
+
+## 整机重启恢复验收
+
+2026-09-19 21:26:24 UTC，重启前严格预检 TAT `inv-w8uxmxg6sx` 成功（退出码 0）。预检确认实例为 `ins-nm8jebfh`，boot ID `a9e10bc8-5d76-484d-9e03-c4d43a7a06c2`；Nginx、`pm2-cmhub.service`、`user@1001.service`、cmhub 用户级 Docker 均已启用且运行；固定扫描镜像存在；真实 API 进程在线；完整无网络、只读根文件系统、非特权用户、capabilities 全移除、2 GiB/1 CPU/64 PID/256 MiB tmpfs 的 Docker 探针退出 0；本机及公网健康检查通过。
+
+整机重启由 TAT `inv-x8uxqt03di` 仅在 `ins-nm8jebfh` 上延迟触发。公网监测从 21:29:42 UTC 开始观察到超时，随后经历 502、503，并于 21:30:11 UTC 恢复 HTTP 200；之后连续 6 次检查均为 HTTP 200，响应保持 `ok=true`、`outboundWebhooks.enabled=false`。
+
+重启后环境诊断 TAT `inv-x8uxwagrc6` 显示新 boot ID `a2223083-5429-41b8-a020-db6dd2e2b8e8`，`Linger=yes`、状态 `lingering`，`pm2-cmhub.service`、`user@1001.service` 和用户级 Docker 自动恢复。第一次重启后验收 `inv-v8uxu7ghj0` 因脚本错误地要求功能开关直接存在于 `/proc/<pid>/environ` 而退出 1；诊断确认应用按设计从服务目录 `.env` 加载这些值，运行服务没有配置漂移。
+
+2026-09-19 21:37:31 UTC，修正后的最终验收 TAT `inv-u8v00d06u3` 成功（退出码 0）。新旧 boot ID 不同，重启后 uptime 456 秒；PM2 进程在线（PID 1718）；运行环境的 HOME、USER、XDG_RUNTIME_DIR 正确；`.env` 中提货凭证开关开启、测试环境和 webhook 关闭、扫描镜像摘要固定；使用真实 API 进程环境执行完整隔离 Docker 探针通过。cgroup 的 cpu/cpuset/io/memory/pids 委托、CPUQuota=400%、MemoryMax=8G、TasksMax=512 均恢复；没有扫描容器残留；本机与公网健康检查通过。
+
+测试阶段及整机重启恢复验收均已完成；生产仍未发布。
