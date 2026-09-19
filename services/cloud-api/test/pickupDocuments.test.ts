@@ -1,10 +1,47 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Readable } from 'node:stream';
-import { receiveDocumentBytes, createDocumentReceiveSlots, createPickupDocuments } from '../src/pickupDocuments.js';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { createHash, randomUUID } from 'node:crypto';
+import { receiveDocumentBytes, createDocumentReceiveSlots, createPickupDocuments, type DocumentLease } from '../src/pickupDocuments.js';
+import { DOCUMENT_POLICY } from '../src/pickupDocumentPolicy.js';
+import { documentPdf } from './documentFixtures.js';
 import type { Pool } from 'mysql2/promise';
 import type { LabelStorage } from '../src/labelStorage.js';
 import type { WarehouseSession } from '../src/warehouseIdentity.js';
+
+for (const [offsetHours, remainingSeconds, shouldCheck] of [[8, 120, true], [-8, -120, false]] as const) {
+  test(`UTC document lease remains valid/expired with database zone ${offsetHours} hours`, async () => {
+    const db = new DatabaseSync(':memory:');
+    const now = Date.now();
+    const sqlTime = (value: number) => new Date(value).toISOString().replace('T', ' ').replace('Z', '');
+    db.function('NOW', (_precision: unknown) => sqlTime(now + offsetHours * 3600000));
+    db.function('UTC_TIMESTAMP', (_precision: unknown) => sqlTime(now));
+    db.exec(`CREATE TABLE warehouse_ui_operations (operation_id TEXT, status TEXT, attempt_no INTEGER,
+      document_lease_token TEXT, document_lease_expires_at TEXT, retryable INTEGER, error_code TEXT,
+      document_phase TEXT, completed_at TEXT);`);
+    const uploadId = randomUUID(), token = randomUUID(), userId = randomUUID();
+    db.prepare('INSERT INTO warehouse_ui_operations (operation_id,status,attempt_no,document_lease_token,document_lease_expires_at) VALUES (?,?,?,?,?)')
+      .run(uploadId, 'PROCESSING', 1, token, sqlTime(now + remainingSeconds * 1000));
+    const mysql = { execute: async (sql: string, values: unknown[]) => {
+      const result = db.prepare(sql).run(...values.map(value => value instanceof Date ? sqlTime(value.getTime()) : typeof value === 'boolean' ? Number(value) : value) as SQLInputValue[]);
+      return [{ affectedRows: Number(result.changes) }];
+    } } as unknown as Pool;
+    let checked = false;
+    const service = createPickupDocuments({ mysql, storage: {} as LabelStorage, enabled: true,
+      checker: async (_bytes, contentType) => { checked = true; return { clean: false, validated: false, contentType }; } });
+    const bytes = documentPdf('UTC lease regression');
+    const lease: DocumentLease = { orderId: randomUUID(), actor: `user:${userId}`, attempt: 1, token,
+      upload: { uploadId, filename: 'lease.pdf', byteSize: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+        declaredContentType: 'application/pdf', policyVersion: DOCUMENT_POLICY.policyVersion,
+        supersedesAssetId: null, expectedAssetVersion: null, reason: null } };
+    try {
+      await assert.rejects(service.save({ userId } as WarehouseSession, lease, bytes, { requestId: randomUUID(), ip: '127.0.0.1' }),
+        { code: shouldCheck ? 'DOCUMENT_CONTENT_INVALID' : 'DOCUMENT_ATTEMPT_STALE' });
+      assert.equal(checked, shouldCheck);
+    } finally { db.close(); }
+  });
+}
 
 test('disabled originals refuse reads and writes before touching unmigrated storage', async () => {
   const unavailable = new Proxy({}, { get() { throw new Error('disabled feature touched storage'); } });

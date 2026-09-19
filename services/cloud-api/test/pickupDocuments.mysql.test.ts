@@ -118,7 +118,7 @@ describe('T4 isolated real MySQL + filesystem original document lifecycle', { sk
     await svc.register(session, orderId, input);
     const first = await svc.acquire(session, orderId, input.uploadId, 1);
     assert.equal(await svc.reconcile(input.uploadId, 1), 'BUSY');
-    await mysql.execute('UPDATE warehouse_ui_operations SET document_lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 MINUTE) WHERE operation_id=?', [input.uploadId]);
+    await mysql.execute('UPDATE warehouse_ui_operations SET document_lease_expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE) WHERE operation_id=?', [input.uploadId]);
     assert.equal(await svc.reconcile(input.uploadId, 1), 'FAILED_NOT_SAVED');
     const retry = await svc.acquire(session, orderId, input.uploadId, 2, 1);
     await assert.rejects(svc.save(session, first.lease!, bytes, audit), { code: 'DOCUMENT_ATTEMPT_STALE' });
@@ -290,7 +290,7 @@ describe('T4 isolated real MySQL + filesystem original document lifecycle', { sk
   test('bounded sweep recovers expired byte owners without GET side effects and fences old writer', async () => {
     const orderId = await order(), svc = service(), bytes = pdf('sweep'), input = metadata(bytes);
     await svc.register(session, orderId, input); const claim = await svc.acquire(session, orderId, input.uploadId, 1);
-    await mysql.execute('UPDATE warehouse_ui_operations SET document_lease_expires_at=DATE_SUB(NOW(),INTERVAL 1 MINUTE) WHERE operation_id=?', [input.uploadId]);
+    await mysql.execute('UPDATE warehouse_ui_operations SET document_lease_expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 MINUTE) WHERE operation_id=?', [input.uploadId]);
     assert.equal((await svc.get(session, orderId, input.uploadId)).status, 'PROCESSING');
     await svc.reconcileExpired(25);
     assert.equal((await svc.get(session, orderId, input.uploadId)).status, 'FAILED_NOT_SAVED');
