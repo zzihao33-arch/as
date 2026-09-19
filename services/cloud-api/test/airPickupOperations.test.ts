@@ -12,7 +12,6 @@ import {
   receivingValuesDiffer,
   validateAirEvidenceImage,
   validatePickupDocument,
-  createAirPickupOperations,
 } from '../src/airPickupOperations.js';
 
 test('pickup list executes its paginated query and counts filtered orders before pagination', async () => {

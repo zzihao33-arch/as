@@ -502,7 +502,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
 
     async getOrder(orderIdValue: unknown) {
       const orderId = uuid(orderIdValue, 'orderId');
-      const [rows] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT()} WHERE o.id = ? LIMIT 1`, [orderId]);
+      const [rows] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT} WHERE o.id = ? LIMIT 1`, [orderId]);
       if (!rows[0]) throw new ApiError(404, 'AIR_PICKUP_NOT_FOUND', '未找到空运提货单');
       const [events] = await mysql.execute<(RowDataPacket & { revision: number; event_type: string; actor_reference: string; reason: string | null; event_data: unknown; occurred_at: Date })[]>(
         `SELECT revision, event_type, actor_reference, reason, event_data, occurred_at
@@ -861,7 +861,7 @@ export function createAirPickupOperations(dependencies: { mysql: Pool; storage: 
       const batchId = uuid(batchIdValue, 'batchId');
       const [batches] = await mysql.execute<HandoverBatchRow[]>('SELECT * FROM air_handover_batches WHERE id = ? LIMIT 1', [batchId]);
       if (!batches[0]) throw new ApiError(404, 'HANDOVER_BATCH_NOT_FOUND', '未找到交仓批次');
-      const [orders] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT()} WHERE o.handover_batch_id = ? ORDER BY o.bill_no_display`, [batchId]);
+      const [orders] = await mysql.execute<OrderRow[]>(`${ORDER_SELECT} WHERE o.handover_batch_id = ? ORDER BY o.bill_no_display`, [batchId]);
       const [assets] = await mysql.execute<EvidenceRow[]>(
         `SELECT * FROM air_handover_evidence_assets WHERE handover_batch_id = ? AND asset_status = 'READY'
          ORDER BY evidence_type, created_at`, [batchId],
