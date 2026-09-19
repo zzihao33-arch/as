@@ -123,7 +123,9 @@ jobs:
                 'LABEL_STORAGE_BACKEND=cos' \
                 'COS_BUCKET=cmhub-labels-prod-1476409815' \
                 'COS_REGION=na-ashburn' \
-                'COS_PREFIX=test'
+                'COS_PREFIX=test' \
+                'PICKUP_DOCUMENTS_ENABLED=true' \
+                'PICKUP_DOCUMENT_SANDBOX_IMAGE=sha256:7646609d5c8d1011d4e24169ef4b8ed73839c702967d74af9c51d05e111d0f51'
               node -e "process.stdout.write('COS_SECRET_ID=' + JSON.stringify(process.env.COS_SECRET_ID) + '\\n')"
               node -e "process.stdout.write('COS_SECRET_KEY=' + JSON.stringify(process.env.COS_SECRET_KEY) + '\\n')"
               printf '%s\n' \
