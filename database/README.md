@@ -153,3 +153,7 @@ Punch photos are private evidence under `LABEL_STORAGE_ROOT`; Nginx must not exp
 ## Production transition for migration 015
 
 Apply `015` before deploying pickup-document upload. These files are private operational attachments: keep their storage root outside the repository and all public web roots. Before rollout, verify the 10-file-per-order cap, 20 MB per file limit, signature checks for PDF/Office files, CSV upload, duplicate content rejection, authenticated download, and that an uploaded file remains available after the order has progressed to receipt or handover.
+
+## Test-release integration for migrations 017–018
+
+The release branch already contains `015` and its legacy `air_pickup_document_assets` schema. Do not replace that table or rewrite its rows. Migration `017` extends the durable warehouse operation ledger; `018` adds checker-backed uploads, permissions, and the new `air_pickup_document_assets_v2` table while retaining the legacy table for authenticated downloads. Legacy upload and remove routes return `410`; all new writes use the checked v2 flow. Apply `017` and `018` only after verifying the test schema ledger and checksums, and keep `PICKUP_DOCUMENTS_ENABLED=false` in production.
