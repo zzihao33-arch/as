@@ -2,7 +2,9 @@
 
 ## 结论
 
-生产环境尚不具备发布条件。本轮只执行生产只读核查，没有修改生产文件、配置、数据库、进程或网络。生产 API 健康检查保持 HTTP 200，`outboundWebhooks.enabled=false`。
+生产发布已经完成。生产实例 `air-cargo-server / ins-dmx8z3xt` 现运行候选 `b1c897a`，发布目录为 `/www/wwwroot/releases/cloud-api-b1c897a-20260920T170700Z`，运行时为 Node.js 22.23.2；提货凭证开关、COS `production/*` 存储和固定摘要扫描镜像均已启用。1,212 个数据库引用的历史对象已迁移并逐对象校验，019/020 已登记，PM2、宝塔 Nginx、rootless Docker 和公网健康均通过受控重启恢复验证。最终公网健康为 HTTP 200、`ok=true`、`outboundWebhooks.enabled=false`。
+
+最终检查发现 019/020 新表缺少 `cmhub_api` 的 MySQL 运行时权限，导致一次重启后的候选进程未监听 8080，公网短暂返回 502。已通过宝塔本机 root-only 解密通道应用逐表最小权限，未读取、打印或落盘数据库管理员密码；随后重启应用并完成整机重启验收。此次发布没有修改任何密码。
 
 原提货凭证分支不能直接覆盖生产：生产最新补丁 `ca05db3` 与提货凭证验收提交 `9bb0bb4` 从 `0ff404d` 分叉，生产线包含集成日志和 TYG 修复，而提货凭证线不包含这些提交。直接部署 `9bb0bb4` 会删除或回退已上线的集成日志功能。现已从 `ca05db3` 建立隔离候选分支 `codex/pickup-production-candidate`，只叠加 `655956e` 起的提货凭证功能与修复，并保留生产集成日志代码。
 
@@ -17,29 +19,85 @@
 
 审计期间没有读取或记录密码、密钥、令牌等敏感值。
 
-## 生产现状
+## 发布前生产现状（归档）
 
 - API 由 root 的 PM2 运行，进程命令为 `node /www/wwwroot/cloud-api/dist/index.js`，监听 `127.0.0.1:8080`。
-- Node 可执行文件为 `/www/server/nodejs/v20.10.0/bin/node`。
+- 当前线上 Node 可执行文件仍为 `/www/server/nodejs/v20.10.0/bin/node`；Node.js 22.23.2 已独立安装到 `/opt/node-v22.23.2-linux-x64`，稳定入口为 `/opt/node22`，尚未切换线上进程。
 - Nginx 由宝塔目录 `/www/server/nginx/sbin/nginx` 运行，不受发行版 `nginx.service` 管理。
 - 同步仓库位于 `/opt/cmhub-github-sync/as`，`master` 干净，HEAD 为 `27d2a243`；实际部署目录不是该 Git 工作树。
 - 最近生产发布清单为 `/root/cmhub-push-logs-20260917-ca05db3/release-manifest.json`，记录补丁提交 `ca05db3` 和备份目录 `/root/cmhub-push-logs-20260917-ca05db3/backup-2026-09-17T14-02-13-505Z`。
 - 实际部署缺少 `dist/pickupDocuments.js`、`dist/pickupDocumentSandbox.js` 和 `dist/pickupDocumentsHttp.js`。
-- 生产没有 Docker/Podman 和 rootless Docker，也没有 `cmhub` 用户；固定扫描镜像尚未安装。
-- `PICKUP_DOCUMENTS_ENABLED`、`PICKUP_DOCUMENT_SANDBOX_IMAGE`、COS bucket/region/prefix 当前未配置。生产 `OUTBOUND_WEBHOOK_ENABLED=false`。
-- 应用数据库账号不能读取 `schema_migrations`，返回 `ER_TABLEACCESS_DENIED_ERROR`；本机 root socket 也不能免密读取迁移账本。
+- 生产已安装 Docker CE 29.8.1，并以 `cmhub` UID 1004 运行 rootless daemon；rootful Docker、containerd 服务仍保持 masked。固定扫描镜像为 `sha256:fa29284f4c743a2b9c599029ac1882fe06aa645f90199b2b33046d4a029df8e8`。
+- `PICKUP_DOCUMENTS_ENABLED` 与 `LABEL_STORAGE_BACKEND=cos` 当前仍未启用；生产 `.env` 已预置 COS bucket、region、`production` 前缀、最终最小权限凭据及固定扫描镜像摘要，但尚未重载线上进程。生产 `OUTBOUND_WEBHOOK_ENABLED=false`。
+- 应用数据库账号不能读取 `schema_migrations`，返回 `ER_TABLEACCESS_DENIED_ERROR`；已通过宝塔本机 root-only 解密通道只在内存中取得数据库管理凭据并读取迁移账本，未输出或保存密码。
 - 可见业务表中只有旧表 `air_pickup_document_assets`；没有 `warehouse_ui_operations`，也没有新的提货凭证权限。
-- `pm2-undefined.service` 虽为 enabled，但内容包含 `User=undefined` 且处于 inactive。当前 root PM2 的整机重启恢复路径没有可靠证据。
+- 已建立并启用 `/etc/systemd/system/pm2-root.service`，保存 root PM2 dump；无效的 `pm2-undefined.service` 已备份后删除。当前应用 PID 未因该修复改变；整机重启恢复仍待受控验证。
 
-## 发布阻断项
+## 发布前阻断项（均已解除）
 
-1. **迁移账本必须由有权限的管理员核对。** 发布前导出 `schema_migrations` 的文件名和 SHA-256，并核对 `017_use_utc_label_expiry_default.sql`、`018_add_integration_push_logs.sql` 是否已登记且与生产清单一致。未获得该证据前不得运行自动迁移器。
-2. **扫描运行时必须先落地并验收。** 需要在生产建立与测试等价的受限运行身份、Docker 隔离、cgroup 委托和固定镜像摘要，再运行完整沙箱探针。不能让 root API 直接使用不受限的 Docker socket。
-3. **私有对象存储必须配置并验证。** 应使用独立生产 COS 前缀和最小权限凭据，先执行 bucket/prefix 读写删除探针，再启动应用。凭据不得进入仓库、发布清单或命令输出。
-4. **PM2 启动持久化必须修复。** 建立有效的 systemd 单元并完成一次整机重启恢复验收；宝塔 Nginx 的现有启动方式需保持不变并单独验证。
-5. **Node 运行时兼容性必须确认。** 现有通用部署脚本要求 Node 22+，生产实际为 Node 20.10.0。发布候选应在生产同版本上通过安装、测试和构建，或先单独升级 Node 并验证现有服务。
+1. **完成受控发布切换。** 生产 017/018 已核对，019/020 尚未应用；必须在已验证备份基础上应用增量结构、安装候选到新目录，并用 `/opt/node22/bin/node` 原子切换 PM2。功能开关先保持关闭。
+2. **迁移共享文件存储。** 现网共有 1,212 个数据库引用的私有文件、67,874,066 字节，全部存在且路径安全；共享存储后端从文件系统切到 COS 前必须先把这些对象迁移到 `production/*`，停机窗口内补传增量并完成逐对象校验，避免历史标签和考勤图片失联。
+3. **完成功能验收与重启恢复。** 代码和存储切换健康后，再启用提货凭证并执行合成上传/预览/拒绝/撤权测试；最后受控重启主机，验证 PM2、rootless Docker、Nginx 和公网健康恢复。
 
-候选重新验收阻断项已解除，证据见下节。其余五项均涉及生产权限、运行时或配置，仍不得在未获生产发布授权时实施。
+候选重新验收、COS 权限、Node 22 门禁、扫描运行时、迁移账本、PM2 单元、生产切换和恢复验收均已完成。以下内容保留为发布前决策记录。
+
+## 2026-09-20 状态刷新
+
+- 14:56:38 UTC 对 `https://api.cmhubtool.com/healthz` 发起公开只读 GET，HTTP 200，返回 `ok=true`、`outboundWebhooks.enabled=false`。
+- 本地发布代码仍为候选分支提交 `b1c897ab0499d863b5c269f0dc1e22c126a48850`，并已确认与 `origin/codex/pickup-production-candidate` 一致；工作区仅有本报告的未提交更新。
+- 再次核对测试部署工作流及 `deploy-test-api.sh`：测试目前使用 bucket 名 `cmhub-labels-prod-1476409815` 和 `COS_PREFIX=test`。生产需使用明确的独立前缀（建议 `production`）及生产专用最小权限凭据；需由云管理员证明测试凭据无法访问生产前缀、生产凭据无法写入测试前缀。仅使用不同前缀字符串不足以证明权限隔离。
+- CVM 实例列表已确认 `rid=22` 实际为弗吉尼亚，测试机 `ins-nm8jebfh` 与生产机 `ins-dmx8z3xt` 均位于 Virginia Zone 1；先前 TAT 首屏显示广州是控制台地域状态未同步完成，不代表实例迁移或 `rid=22` 属于广州。
+- 15:29:17 UTC 仅在生产实例运行既有只读基线命令，TAT `inv-u8vxd6g5vb` 退出 0。生产仍运行 `/www/server/nodejs/v20.10.0/bin/node /www/wwwroot/cloud-api/dist/index.js`；当前发布清单仍为 `ca05db3`，应用数据库账号仍无权读取迁移账本，可见业务结构仍只有旧 `air_pickup_document_assets`，没有新操作表或凭证权限；`pm2-undefined.service` 仍 enabled/inactive 且 `User=undefined`。内外网健康均为 `ok=true`、Webhook 关闭。
+- 15:31:42 UTC 运行新建的只读运行环境预检 `cmhub-prod-runtime-preflight-readonly-20260920`，TAT `inv-w8vxff0exr` 退出 0。主机为 Ubuntu 22.04.5、Linux 5.15、cgroup v2；根卷 50 GB，约 35 GB 可用；内存 15 GiB，约 12 GiB 可用，无 swap。主机有 Node 20.10.0（宝塔路径）与系统 Node 18.20.8，但没有 `cmhub` 用户、Docker/Podman、dockerd、rootlesskit、rootless 安装工具或 `newuidmap/newgidmap`。扫描运行时仍需完整安装和隔离配置。
+- COS 初始只读核查确认 bucket `cmhub-labels-prod-1476409815` 位于 `na-ashburn`，ACL 为私有读写；测试子账号 `cmhub_test_cos` 的 `CMHubTestCosPrefixAccess` 只允许 bucket 级 `cos:HeadBucket`，以及 `test/*` 下的对象读写删除。
+- 获得明确授权后创建生产子账号 `cmhub_prod_cos` 和自定义策略 `CMHubProdCosPrefixAccess`。最终状态为仅一把启用密钥、没有停用密钥，且该用户已关联生产策略。两把在配置过程中进入可见控制台输出的临时密钥均在投入使用前停用并永久删除。
+- 最终凭据通过关闭终端回显和 shell 历史写入 `/www/wwwroot/cloud-api/.env`；文件保持 `0600 root:root`，只记录五个 COS 配置键，凭据值未写入仓库或报告。没有设置 `LABEL_STORAGE_BACKEND=cos`，没有重启 PM2，因此当前运行进程行为未改变。
+- 使用最终凭据运行一次性 COS 探针：`HeadBucket` 通过，`production/*` 写入、读取和删除通过，向 `test/*` 写入返回拒绝。探针对象均已删除。随后公网健康检查仍返回 `ok=true`、`outboundWebhooks.enabled=false`。
+- 在生产主机的隔离工作树 `/root/cmhub-node20-compat-20260920T163041Z` 对精确候选提交运行 Node 20.10.0 验证。根项目安装、测试、类型检查、构建以及后端安装、类型检查、构建均能完成，但后端测试为 140/145：`airPickupOperations.test.js`、`labelRetention.test.js`、`pickupDocuments.test.js`、`tygReleaseScope.test.js`、`warehouseOperations.test.js` 均因 Node 20 不提供 `node:sqlite` 而失败。日志位于 `/root/cmhub-node20-compat-20260920T163041Z.log`。初始包装命令因使用分号继续执行并取最后构建步骤的退出码而打印了错误的 `PASS`；逐项日志和失败计数已纠正该结论，后续门禁必须使用失败即停止的串联方式。
+- 从 Node.js 官方归档安装并校验 Node.js 22.23.2 到 `/opt/node-v22.23.2-linux-x64`，未替换系统 Node 或现行宝塔 Node。精确候选 `b1c897a` 在 `/root/cmhub-node22-compat-20260920T163509Z` 使用 Node 22 以失败即停止的命令重新执行根项目和后端的安装、测试、类型检查及构建；后端 221/221、20 份迁移校验及全部构建通过，日志为 `/root/cmhub-node22-compat-20260920T163509Z.log`。
+- 生产安装 Docker CE 29.8.1、Docker CLI、rootless extras、containerd 2.3.5、UID 映射及 rootless 依赖；rootful 单元保持 masked。为 `cmhub` UID 1004 配置 linger、`cpu cpuset io memory pids` 委托、`CPUQuota=400%`、`MemoryMax=8G`、`TasksMax=512`，rootless daemon 在 `/run/user/1004/docker.sock` 运行。安装日志为 `/root/cmhub-rootless-install-20260920T163859Z.log`。
+- 在生产从精确候选的 Dockerfile 独立构建扫描镜像 `sha256:fa29284f4c743a2b9c599029ac1882fe06aa645f90199b2b33046d4a029df8e8`，构建日志为 `/root/cmhub-checker-build-20260920T164829Z.log`。真实验收脚本在 rootless、无网络、只读根文件系统、非特权 UID、capabilities 全移除及资源限制下通过安全 PNG、EICAR 拒绝和旧 XLS 关闭失败三项用例；无残留扫描容器，日志为 `/root/cmhub-checker-probe-20260920T165133Z.log`。
+- 修复 root PM2 持久化：新建并启用 `pm2-root.service`，以显式 Node 20 路径 resurrect 保存的 `/root/.pm2/dump.pm2`；旧 `pm2-undefined.service` 备份为 `/root/pm2-undefined.service.20260920T165323Z.bak` 后删除。修复过程未重启应用，PID 保持 `2538416`，内外网健康均正常。
+- 通过宝塔 `public.M('config')` 的本机解密路径把 MySQL root 凭据只放入子进程内存，完整读取生产 `schema_migrations`。001–018 均已登记；017 文件哈希为 `D07DD7E456105D1F4F219CA1FB9B7811D4BEC7E2649210B7B6BEA759FE4393DF`，018 为 `045062620C5F335A6FD99E25A769D2C0B2B73746CB2D0D555569503805A89987`，与候选一致。凭据没有写入命令行、日志或报告。
+- 发布前全库备份 `/root/cmhub-prod-backup-20260920T165914Z/cmhub.sql.gz` 已通过 gzip 完整性检查，大小 4,949,916 字节，SHA-256 为 `CDBEE435B76959ED23662FA3925DFA1E483338EEFA0EC64E7D28D545C2E1C0A1`，目录 0700、文件 0600。一次未压缩却使用 `.gz` 后缀的临时产物已识别并删除，没有用于回滚。
+- 存储切换前枚举生产所有 `storage_key` 引用：4 个交接凭证、104 个考勤图片、1,104 个标签资产，共 1,212 个唯一对象、67,874,066 字节；没有不安全路径、缺失文件或标签大小不一致。文件系统总计 13,327 个文件、654,685,856 字节，未被数据库引用的历史文件暂不作为切换可达性依据。
+- 页面访问公开健康端点被浏览器扩展拦截，随后通过 PowerShell 的只读 HTTP GET 成功；没有尝试绕过拦截。
+
+### 生产发布完成记录
+
+- 1,212 个数据库引用对象、67,874,066 字节已迁移到 COS `production/*`，并逐对象下载核对大小与 SHA-256；日志 `/root/cmhub-cos-migration-20260920.log` 结论为 `PASS`。
+- 发布前全库备份为 `/root/cmhub-prod-backup-20260920T165914Z/cmhub.sql.gz`，大小 4,949,916 字节，SHA-256 为 `CDBEE435B76959ED23662FA3925DFA1E483338EEFA0EC64E7D28D545C2E1C0A1`。发布文件备份位于 `/root/cmhub-prod-release-20260920T170700Z`。
+- 019/020 已应用并登记；候选安装到 `/www/wwwroot/releases/cloud-api-b1c897a-20260920T170700Z`，PM2 使用 `/opt/node22/bin/node` 启动该目录，随后保存新的 dump。
+- 生产配置已启用 `PICKUP_DOCUMENTS_ENABLED=true`、`LABEL_STORAGE_BACKEND=cos`、`COS_PREFIX=production` 和 `DOCKER_HOST=unix:///run/user/1004/docker.sock`；扫描镜像固定为 `sha256:fa29284f4c743a2b9c599029ac1882fe06aa645f90199b2b33046d4a029df8e8`。
+- 首次最终核验发现应用启动检查无权读取 `warehouse_ui_operations`。TAT `inv-v8w36c08cg` 通过宝塔本机解密通道应用最小数据库权限并重启应用，确认五张新表分别只有运行所需的 `SELECT`、`INSERT`、`UPDATE` 权限；本机与公网健康均恢复，PID 为 `3570870`。
+- 重启前最终门禁 TAT `inv-x8w37hgphf` 退出 0：配置、Node 22、发布目录、PM2 dump、宝塔 Nginx、rootless Docker、固定扫描镜像、无残留扫描容器及内外网健康全部通过；boot ID 为 `ecc4998a-77b6-4c25-9ed3-acd53096e1ec`。
+- 受控重启 TAT `inv-u8w38fg9x4` 退出 0。公网依次出现连接失败、502、503，随后于 2026-09-20 17:41:31 UTC 恢复 HTTP 200。
+- 重启后最终门禁 TAT `inv-u8w39w00xa` 退出 0；boot ID 变为 `9a4cf104-c617-490c-92d4-30ffec7a694c`，进程 PID 为 `2372`。PM2、宝塔 Nginx、rootless Docker、扫描镜像、COS 配置、功能开关以及内外网健康均自动恢复。
+- 两把曾进入可见控制台输出的临时 COS 密钥已永久删除；最终生产密钥仍只有一把启用。没有修改任何数据库、系统或业务账号密码。
+
+### 已实施的生产 COS 最小权限方案
+
+已新建独立子账号 `cmhub_prod_cos`，只关联策略 `CMHubProdCosPrefixAccess`。策略沿用已验证的测试策略形状，仅把对象资源收紧到 `production/*`：
+
+```json
+{
+  "statement": [
+    {
+      "action": ["cos:HeadBucket"],
+      "effect": "allow",
+      "resource": ["qcs::cos:na-ashburn:uid/1476409815:cmhub-labels-prod-1476409815/*"]
+    },
+    {
+      "action": ["cos:GetObject", "cos:HeadObject", "cos:PutObject", "cos:DeleteObject"],
+      "effect": "allow",
+      "resource": ["qcs::cos:na-ashburn:uid/1476409815:cmhub-labels-prod-1476409815/production/*"]
+    }
+  ],
+  "version": "2.0"
+}
+```
+
+不授予列出整个 bucket、修改 ACL/策略、跨前缀读取或任何公共访问权限。实测生产凭据可以完成 `production/*` 对象写入、读取和删除，不能写入 `test/*`；最终密钥只写入生产主机受限环境文件，不进入仓库或发布报告。
 
 ## 发布候选构造
 
@@ -85,7 +143,7 @@
 1. 再次记录生产健康、进程、监听、Nginx 配置测试、磁盘空间和当前发布清单。
 2. 以时间戳目录备份 `/www/wwwroot/cloud-api`、PM2 dump、非敏感配置键名、Nginx 相关配置和迁移账本；生成 SHA-256 清单并设为仅 root 可读。
 3. 由数据库管理员备份受影响表和迁移账本，核对迁移文件校验和；先执行仅结构检查，再应用新的增量迁移。
-4. 安装发布候选到新的时间戳目录，使用生产 Node 版本执行 `npm ci`、测试、类型检查和构建，不直接覆盖正在运行目录。
+4. 安装发布候选到新的时间戳目录，使用已验收的 Node 22+ 执行 `npm ci`、测试、类型检查和构建，并确保任何一步失败都中止；不直接覆盖正在运行目录。
 5. 配置生产 COS 和受限扫描运行时，保持 `PICKUP_DOCUMENTS_ENABLED=false`；完成存储与完整沙箱探针。
 6. 原子切换 API 目录或 PM2 script 路径，重载 PM2；验证本机和公网健康、现有 TYG API、集成日志及核心仓库业务。
 7. 给指定试点角色授予最小权限，再把功能开关改为 true，重载服务并执行一张合成提单的上传、预览、下载、撤权和拒绝用例。

@@ -23,6 +23,18 @@ The employee-document v1 production candidate uses migrations `019_add_warehouse
 19. `019_add_warehouse_ui_operations.sql` adds the durable UI operation ledger required by retryable checked document uploads.
 20. `020_add_pickup_documents.sql` adds the checked v2 upload and preview metadata, extends the event/operation enums, and leaves the legacy attachment table and rows intact.
 
+Migrations `019` and `020` add tables used directly by the least-privileged API account. `applyMigrations.mjs` deliberately filters `GRANT` statements, so a database administrator must apply these grants separately before enabling `PICKUP_DOCUMENTS_ENABLED`:
+
+```sql
+GRANT SELECT, INSERT, UPDATE ON cmhub.warehouse_ui_operations TO 'cmhub_api'@'127.0.0.1';
+GRANT SELECT, INSERT ON cmhub.air_pickup_document_uploads TO 'cmhub_api'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE ON cmhub.air_pickup_document_assets_v2 TO 'cmhub_api'@'127.0.0.1';
+GRANT SELECT, INSERT ON cmhub.air_pickup_document_previews TO 'cmhub_api'@'127.0.0.1';
+GRANT INSERT ON cmhub.air_pickup_document_orphan_candidates TO 'cmhub_api'@'127.0.0.1';
+```
+
+Verify the resulting table privileges and restart the API while the feature flag is still disabled. The API startup check must be able to read `warehouse_ui_operations`, and the local and public health endpoints must both return success before the feature is enabled. These database grants are separate from warehouse role permissions; migration `020` intentionally does not assign the new document permissions to existing warehouse roles.
+
 Do not edit, skip, or replay a migration after it has been applied to a shared environment. A repository checkout does not prove which migrations production has received: verify the live schema and deployment record first, take a backup, test against a production-like copy, and schedule the DDL/backfill for an approved change window. Add future changes as the next numbered migration. In particular, do not use `001` to rotate an existing MySQL password; `CREATE USER IF NOT EXISTS` leaves an existing account unchanged.
 
 Before this baseline was committed, the upstream-payload change existed in draft files as both an expanded `001` and `004_add_upstream_raw_payload.sql`. If an existing environment already has `shipments.order_id` and `shipments.raw_data`, treat `002` as that same logical change: do not execute it again. Have the database owner reconcile the verified schema with the deployment record instead.
