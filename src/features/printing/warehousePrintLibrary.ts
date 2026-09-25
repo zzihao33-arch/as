@@ -75,14 +75,18 @@ async function loadTargets(warehouseId: string): Promise<CloudPrintTarget[]> {
 }
 
 async function synchronizeWarehouse(warehouseId: string, onPage: (targets: CloudPrintTarget[]) => void): Promise<number> {
+  let stage = 'read-cursor';
+  try {
   const syncKey = `warehouse:${warehouseId}`;
   let state = await readLocalFirstValue<SyncState>('cloudSync', syncKey) ?? { cursor: null, syncedAt: 0 };
   let synchronized = 0;
   do {
+    stage = 'fetch-page';
     const page = await listWarehouseShipments(state.cursor, 200);
     // Index metadata independently of PDF downloads. A historical asset must not
     // block every later shipment; PDFs are fetched and validated when scanned.
     const staleLabelKeys: string[] = [];
+    stage = 'read-existing-index';
     for (const shipment of page.data) {
       const existing = await readLocalFirstValue<CachedCloudShipment>('cloudShipments', shipmentKey(warehouseId, shipment.id));
       if (existing?.labelAsset?.id && (
@@ -96,20 +100,34 @@ async function synchronizeWarehouse(warehouseId: string, onPage: (targets: Cloud
       value: { ...shipment, warehouseId } satisfies CachedCloudShipment,
     }));
     try {
+      stage = 'write-index';
       await updateLocalFirstEntries('cloudShipments', entries);
     } catch (cause) {
       if (!(cause instanceof DOMException && cause.name === 'QuotaExceededError')) throw cause;
+      stage = 'evict-pdf-cache';
       await clearWarehouseLabelCache(warehouseId);
+      stage = 'retry-write-index';
       await updateLocalFirstEntries('cloudShipments', entries);
     }
+    stage = 'delete-stale-pdf';
     await Promise.all(staleLabelKeys.map(key => deleteLocalFirstValue('cloudLabels', key)));
     state = { cursor: page.cursor, syncedAt: Date.now() };
+    stage = 'write-cursor';
     await writeLocalFirstValue('cloudSync', syncKey, state);
     synchronized += page.data.length;
+    stage = 'read-index';
     onPage(await loadTargets(warehouseId));
     if (!page.hasMore) break;
   } while (true);
   return synchronized;
+  } catch (cause) {
+    console.error('Cloud shipment sync failed', JSON.stringify({
+      stage,
+      name: cause instanceof Error ? cause.name : 'UnknownError',
+      message: cause instanceof Error ? cause.message : '',
+    }));
+    throw cause;
+  }
 }
 
 export async function readCloudLabelFile(warehouseId: string, target: CloudPrintTarget): Promise<File> {
