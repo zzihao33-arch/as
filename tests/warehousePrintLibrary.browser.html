@@ -18,22 +18,30 @@ document.querySelector('#run').onclick = async () => {
   const target = {shipmentId:'synthetic',labelAssetId:'synthetic',firstLegTrackingNo:'TEST-ORIGINAL',courierTrackingNo:'TEST-COURIER',labelSha256:hash,labelByteSize:blob.size,labelDownloadPath:'/warehouse/v1/label-assets/synthetic/content',updatedAt:new Date().toISOString()};
   let downloads=0;
   window.fetch = async (url, options) => {
-    if(String(url).endsWith(target.labelDownloadPath)){ downloads++; return new Response(blob,{status:200}); }
+    if(String(url).endsWith(target.labelDownloadPath)){ check(options?.cache === 'no-store','HTTP cache bypassed'); downloads++; return new Response(blob,{status:200}); }
     return savedFetch(url,options);
   };
   try {
-    const file = await readCloudLabelFile(warehouseId,target);
+    const file = await readCloudLabelFile(target);
     check(await file.text() === await blob.text(), 'on-demand PDF bytes and SHA-256');
-    await readCloudLabelFile(warehouseId,target);
-    check(downloads === 1,'cached scan does not redownload');
+    await readCloudLabelFile(target);
+    check(downloads === 2,'each print downloads a fresh PDF');
+    check(await readLocalFirstValue('cloudLabels',`${warehouseId}:synthetic`) === null,'download never persists PDF');
+    await writeLocalFirstValue('cloudLabels',`${warehouseId}:synthetic`,{warehouseId,sha256:hash,blob});
+    await readCloudLabelFile(target);
+    check(downloads === 3,'old matching PDF cache is ignored');
     await writeLocalFirstValue('cloudLabels',`${otherId}:synthetic`,{warehouseId:otherId,blob});
     await writeLocalFirstValue('printLogs',warehouseId,{outcome:'SUCCESS'});
+    await writeLocalFirstValue('cloudPrintOutbox',warehouseId,{outcome:'SUBMITTED'});
+    await writeLocalFirstValue('sharedPrintOutbox',warehouseId,{outcome:'SUBMITTED'});
     await clearWarehouseLabelCache(warehouseId);
     check(await readLocalFirstValue('cloudLabels',`${warehouseId}:synthetic`) === null,'real IndexedDB cursor removes current warehouse PDF cache');
     check(await readLocalFirstValue('cloudLabels',`${otherId}:synthetic`) !== null,'other warehouse cache retained');
     check(await readLocalFirstValue('printLogs',warehouseId) !== null,'print records retained');
-    await readCloudLabelFile(warehouseId,target);
-    check(downloads === 2,'evicted label can be downloaded again');
+    check(await readLocalFirstValue('cloudPrintOutbox',warehouseId) !== null,'pending audit retained');
+    check(await readLocalFirstValue('sharedPrintOutbox',warehouseId) !== null,'shared batch audit retained');
+    await readCloudLabelFile(target);
+    check(downloads === 4,'download still works after cache cleanup');
     output.textContent += '\nBROWSER_CHECKS=PASS';
   } catch(error) { output.textContent += `\nFAIL ${error.stack || error}`; }
   finally {
@@ -41,6 +49,8 @@ document.querySelector('#run').onclick = async () => {
     await clearWarehouseLabelCache(warehouseId);
     await clearWarehouseLabelCache(otherId);
     await deleteLocalFirstValue('printLogs',warehouseId);
+    await deleteLocalFirstValue('cloudPrintOutbox',warehouseId);
+    await deleteLocalFirstValue('sharedPrintOutbox',warehouseId);
   }
 };
 </script>

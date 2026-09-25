@@ -139,7 +139,7 @@ export async function downloadWarehouseLabel(downloadPath: string): Promise<Blob
     const { mockDownloadWarehouseLabel } = await import('./warehouseMockApi');
     return mockDownloadWarehouseLabel(downloadPath);
   }
-  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include' });
+  const response = await fetch(`${WAREHOUSE_API_BASE}${downloadPath}`, { credentials: 'include', cache: 'no-store' });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
     throw new WarehouseApiError(response.status, payload?.error?.code ?? 'LABEL_DOWNLOAD_FAILED', payload?.error?.message ?? '面单下载失败。');

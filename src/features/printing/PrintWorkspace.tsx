@@ -38,6 +38,7 @@ import {
 } from './printMatching';
 import { paginatePrintLogs } from './printLogPagination';
 import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome, type ScanFeedbackState } from './printingTypes';
+import { clearWarehouseLabelCache } from '../../shared/storage/localFirstDatabase';
 import { readCloudLabelFile, resolveCloudPrintTarget, type CloudPrintTarget } from './warehousePrintLibrary';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
@@ -300,6 +301,11 @@ export default function App() {
   const location = useLocation();
   const warehouseSession = useWarehouseSession();
   const { session: activeWarehouse, workstation } = warehouseSession;
+  useEffect(() => {
+    if (!activeWarehouse?.warehouseId) return;
+    // Best-effort migration only. Storage failures must not block online printing.
+    void clearWarehouseLabelCache(activeWarehouse.warehouseId).catch(() => {});
+  }, [activeWarehouse?.warehouseId]);
   const cloudAudit = useWarehousePrintAudit(workstation?.id);
   const sharedAudit = useSharedWorkPrintAudit(workstation?.id);
   const [mapping, setMapping] = useState<Record<string, string>>({});
@@ -1899,8 +1905,8 @@ export default function App() {
           }
           addLog(scannedValue, finalExchangeNumber, '实时拦截校验不可用，已按主管启用的单机应急模式继续使用最后同步缓存。', 'error', 'system');
         }
-        const pdfFile = cloudTarget && activeWarehouse?.warehouseId
-          ? await readCloudLabelFile(activeWarehouse.warehouseId, cloudTarget)
+        const pdfFile = cloudTarget
+          ? await readCloudLabelFile(cloudTarget)
           : localPdfFile!;
         if (cloudTarget) {
           const current = await resolveCloudPrintTarget(scannedValue);

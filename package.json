@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts tests/airPickupProgress.test.ts tests/attendanceTime.test.ts tests/integrationLogNotifications.test.ts tests/integrationLogRequests.test.ts tests/audioArbitration.test.ts tests/warehousePrintLibrary.test.mjs tests/liveScanFlow.test.mjs",
+    "test": "node --experimental-strip-types --test tests/printLogPagination.test.ts tests/printMatching.test.ts tests/qzSign.test.ts tests/airPickupReceiptSelection.test.ts tests/airPickupProgress.test.ts tests/attendanceTime.test.ts tests/integrationLogNotifications.test.ts tests/integrationLogRequests.test.ts tests/audioArbitration.test.ts tests/warehousePrintLibrary.test.mjs tests/liveScanFlow.test.mjs tests/warehouseLabelDownload.test.mjs",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "preview": "vite preview"
   },
