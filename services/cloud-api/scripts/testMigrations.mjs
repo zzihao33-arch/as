@@ -8,7 +8,7 @@ assert.deepEqual(executableStatements('CREATE DATABASE cmhub; USE cmhub; SELECT 
 
 const directory = resolve('../../database');
 const migrations = (await readdir(directory)).filter(name => /^\d{3}_[a-z0-9_]+\.sql$/i.test(name)).sort();
-assert.equal(migrations.length, 20);
+assert.equal(migrations.length, 21);
 const versions = migrations.map(name => name.slice(0, 3));
 assert.equal(new Set(versions).size, versions.length, 'migration sequence numbers must remain unique');
 assert.ok(migrations.includes('019_add_warehouse_ui_operations.sql'));

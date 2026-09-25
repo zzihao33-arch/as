@@ -912,6 +912,14 @@ warehouseRouter.get('/attendance/punch-attempts/:attemptId/photo', warehouseBoun
   } catch (error) { next(error); }
 });
 
+warehouseRouter.get('/shipments/lookup', warehouseBoundary.session, requireWarehousePermission('scan.use'), requireWarehouseWorkspace, async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const data = await warehouseOperations.lookupShipment(req.warehouseSession!, req.query.trackingNo);
+    res.json({ data, requestId: req.requestId });
+  } catch (error) { next(error); }
+});
+
 warehouseRouter.get('/shipments', warehouseBoundary.session, requireWarehouseShipmentFeedPermission, requireWarehouseWorkspace, async (req, res, next) => {
   try {
     const result = await warehouseOperations.listShipments(req.warehouseSession!, {

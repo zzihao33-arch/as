@@ -98,6 +98,37 @@ export function createWarehouseOperations(dependencies: {
   const { mysql, storage, outboundWebhooks } = dependencies;
 
   return {
+    async lookupShipment(_session: WarehouseSession, trackingNoValue: unknown) {
+      const trackingNo = text(trackingNoValue, 'trackingNo', 128)!;
+      // Both indexed branches retain non-printable matches: a blocked duplicate
+      // must never silently select a different customer's printable shipment.
+      const [rows] = await mysql.execute<ShipmentDeliveryRow[]>(
+        `SELECT s.id, s.first_leg_tracking_no, s.courier_tracking_no, s.carrier, s.status, s.version, s.updated_at,
+                CASE WHEN la.asset_status = 'READY' THEN la.id ELSE NULL END AS label_asset_id,
+                la.content_sha256, la.byte_size
+         FROM (
+           SELECT id FROM shipments WHERE first_leg_tracking_no = ?
+           UNION SELECT id FROM shipments WHERE courier_tracking_no = ?
+           LIMIT 2
+         ) matched
+         INNER JOIN shipments s ON s.id = matched.id
+         LEFT JOIN label_assets la ON la.id = s.current_label_asset_id
+           AND la.expires_at > UTC_TIMESTAMP(3) AND la.bytes_deleted_at IS NULL
+         LIMIT 2`, [trackingNo, trackingNo],
+      );
+      if (rows.length > 1) throw new ApiError(409, 'TRACKING_AMBIGUOUS', '单号匹配到多票运单，已阻断打印，请核对客户推送的单号。');
+      const row = rows[0];
+      if (!row) return null;
+      if (row.status !== 'READY_TO_PRINT') throw new ApiError(409, 'SHIPMENT_NOT_PRINTABLE', '当前运单不允许打印，请核对运单状态。');
+      if (!row.label_asset_id) throw new ApiError(409, 'LABEL_UNAVAILABLE', '当前面单尚未就绪、已过期或已失效，请客户重新推送。');
+      return {
+        id: row.id, firstLegTrackingNo: row.first_leg_tracking_no, courierTrackingNo: row.courier_tracking_no,
+        carrier: row.carrier, status: row.status, version: row.version, updatedAt: row.updated_at.toISOString(),
+        labelAsset: { id: row.label_asset_id, sha256: row.content_sha256, byteSize: Number(row.byte_size),
+          downloadPath: `/warehouse/v1/label-assets/${row.label_asset_id}/content` },
+      };
+    },
+
     async listShipments(_session: WarehouseSession, input: { cursor?: unknown; limit?: unknown }) {
       const cursor = decodeDeliveryCursor(input.cursor);
       const limit = limitValue(input.limit);
