@@ -126,6 +126,14 @@ export async function listWarehouseShipments(cursor: string | null, limit = 200)
   return request<{ data: WarehouseShipment[]; cursor: string | null; hasMore: boolean }>(`/warehouse/v1/shipments?${query}`);
 }
 
+export async function lookupWarehouseShipment(trackingNo: string): Promise<WarehouseShipment | null> {
+  const query = new URLSearchParams({ trackingNo });
+  const result = await request<{ data: WarehouseShipment | null }>(`/warehouse/v1/shipments/lookup?${query}`, {
+    cache: 'no-store', signal: AbortSignal.timeout(15_000),
+  });
+  return result.data;
+}
+
 export async function downloadWarehouseLabel(downloadPath: string): Promise<Blob> {
   if (WAREHOUSE_MOCK_API_ENABLED) {
     const { mockDownloadWarehouseLabel } = await import('./warehouseMockApi');

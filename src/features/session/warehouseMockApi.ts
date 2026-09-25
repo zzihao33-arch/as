@@ -351,6 +351,7 @@ export async function mockWarehouseRequest<T>(path: string, init: RequestInit = 
   if (pathname === '/warehouse/v1/workstations' && method === 'POST') {
     return { data: { id: WORKSTATION_ID, installationId: body.installationId, displayName: body.displayName } } as T;
   }
+  if (pathname === '/warehouse/v1/shipments/lookup' && method === 'GET') return { data: null } as T;
   if (pathname === '/warehouse/v1/shipments' && method === 'GET') return { data: [], cursor: null, hasMore: false } as T;
   if (pathname === '/warehouse/v1/print-attempts' && method === 'POST') return { data: { id: crypto.randomUUID() } } as T;
   if (pathname === '/warehouse/v1/air-pickup-clients' && method === 'GET') {

@@ -8,10 +8,11 @@ import {
   writeLocalFirstValue,
 } from '../../shared/storage/localFirstDatabase';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
-import { downloadWarehouseLabel, listWarehouseShipments, type WarehouseShipment } from '../session/warehouseApi';
+import { downloadWarehouseLabel, listWarehouseShipments, lookupWarehouseShipment, type WarehouseShipment } from '../session/warehouseApi';
 import { normalizeBarcode } from './printMatching';
 
 export interface CloudPrintTarget {
+  version: number;
   shipmentId: string;
   labelAssetId: string;
   firstLegTrackingNo: string;
@@ -37,7 +38,7 @@ async function sha256(blob: Blob): Promise<string> {
 
 async function downloadAndValidateLabel(warehouseId: string, target: CloudPrintTarget): Promise<CachedCloudLabel> {
   const key = labelKey(warehouseId, target.labelAssetId);
-  const existing = await readLocalFirstValue<CachedCloudLabel>('cloudLabels', key);
+  const existing = await readLocalFirstValue<CachedCloudLabel>('cloudLabels', key).catch(() => null);
   if (existing?.sha256 === target.labelSha256.toLowerCase() && existing.blob.size === target.labelByteSize) return existing;
   const blob = await downloadWarehouseLabel(target.labelDownloadPath);
   if (blob.size !== target.labelByteSize || await blob.slice(0, 5).text() !== '%PDF-') {
@@ -50,9 +51,8 @@ async function downloadAndValidateLabel(warehouseId: string, target: CloudPrintT
   const label = { warehouseId, assetId: target.labelAssetId, sha256: actualHash, blob, cachedAt: Date.now() };
   try {
     await writeLocalFirstValue('cloudLabels', key, label);
-  } catch (cause) {
-    // The validated in-memory file remains usable when the optional PDF cache is full.
-    if (!(cause instanceof DOMException && cause.name === 'QuotaExceededError')) throw cause;
+  } catch {
+    // Cache persistence is optional; the downloaded file has already been verified.
   }
   return label;
 }
@@ -63,6 +63,7 @@ async function loadTargets(warehouseId: string): Promise<CloudPrintTarget[]> {
     .map(entry => entry.value)
     .filter(shipment => shipment.warehouseId === warehouseId && shipment.status === 'READY_TO_PRINT' && shipment.labelAsset)
     .map(shipment => ({
+      version: shipment.version,
       shipmentId: shipment.id,
       labelAssetId: shipment.labelAsset!.id,
       firstLegTrackingNo: shipment.firstLegTrackingNo,
@@ -134,6 +135,19 @@ export async function readCloudLabelFile(warehouseId: string, target: CloudPrint
   const cached = await downloadAndValidateLabel(warehouseId, target);
   const name = `${target.courierTrackingNo || target.firstLegTrackingNo}.pdf`;
   return new File([cached.blob], name, { type: 'application/pdf', lastModified: cached.cachedAt });
+}
+
+export async function resolveCloudPrintTarget(trackingNo: string): Promise<CloudPrintTarget | null> {
+  const shipment = await lookupWarehouseShipment(trackingNo);
+  if (!shipment) return null;
+  if (shipment.status !== 'READY_TO_PRINT' || !shipment.labelAsset) throw new Error('当前运单或面单不可打印，请核对客户推送状态。');
+  return {
+    version: shipment.version,
+    shipmentId: shipment.id, labelAssetId: shipment.labelAsset.id,
+    firstLegTrackingNo: shipment.firstLegTrackingNo, courierTrackingNo: shipment.courierTrackingNo,
+    labelSha256: shipment.labelAsset.sha256, labelByteSize: shipment.labelAsset.byteSize,
+    labelDownloadPath: shipment.labelAsset.downloadPath, updatedAt: shipment.updatedAt,
+  };
 }
 
 export function useWarehousePrintLibrary() {

@@ -16,7 +16,7 @@ const shipment = id => ({ id, firstLegTrackingNo: `ORIGINAL-${id}`, courierTrack
   status: 'READY_TO_PRINT', version: 1, updatedAt: '2026-09-25T00:00:00Z',
   labelAsset: { id: `asset-${id}`, sha256: hash, byteSize: blob.size, downloadPath: `/labels/${id}` } });
 
-function harness({ pages = [], download = async () => blob, failLabelWrite = false, fullCache = false } = {}) {
+function harness({ pages = [], download = async () => blob, lookup = async () => shipment('new'), failRead = false, failLabelWrite = false, fullCache = false } = {}) {
   const stores = new Map();
   const store = name => { if (!stores.has(name)) stores.set(name, new Map()); return stores.get(name); };
   const downloads = [];
@@ -26,7 +26,7 @@ function harness({ pages = [], download = async () => blob, failLabelWrite = fal
       for (const [key, value] of store('cloudLabels')) if (value.warehouseId === warehouseId) store('cloudLabels').delete(key);
       cacheFull = false;
     },
-    readLocalFirstValue: async (name, key) => store(name).get(key) ?? null,
+    readLocalFirstValue: async (name, key) => { if (failRead) throw new Error('Storage unavailable'); return store(name).get(key) ?? null; },
     readAllLocalFirstEntries: async name => [...store(name)].map(([key, value]) => ({ key, value })),
     writeLocalFirstValue: async (name, key, value) => {
       if (name === 'cloudLabels' && failLabelWrite) throw new DOMException('Full', 'QuotaExceededError');
@@ -40,6 +40,7 @@ function harness({ pages = [], download = async () => blob, failLabelWrite = fal
   };
   let pageIndex = 0;
   const api = {
+    lookupWarehouseShipment: lookup,
     listWarehouseShipments: async () => pages[pageIndex++],
     downloadWarehouseLabel: async path => { downloads.push(path); return download(path); },
   };
@@ -59,6 +60,28 @@ test('indexes later pages even when an earlier PDF cannot be downloaded', async 
   assert.equal((await h.loadTargets('warehouse')).length, 2);
   assert.equal(h.store('cloudSync').get('warehouse:warehouse').cursor, '2');
   assert.equal(h.downloads.length, 0);
+});
+
+test('resolves the current server label on every scan without a local shipment index', async () => {
+  let current = 'first';
+  const h = harness({ lookup: async () => shipment(current), failRead: true });
+  assert.equal((await h.resolveCloudPrintTarget('ORIGINAL')).labelAssetId, 'asset-first');
+  current = 'second';
+  assert.equal((await h.resolveCloudPrintTarget('ORIGINAL')).labelAssetId, 'asset-second');
+  assert.equal(h.store('cloudShipments').size, 0);
+});
+
+test('lookup failure never falls back to a cached shipment, and no match stays distinct', async () => {
+  const h = harness({ lookup: async () => { throw new Error('Lookup offline'); } });
+  await indexedTarget(h);
+  await assert.rejects(h.resolveCloudPrintTarget('ORIGINAL'), /Lookup offline/);
+  assert.equal(await harness({ lookup: async () => null }).resolveCloudPrintTarget('MISSING'), null);
+});
+
+test('unavailable browser storage does not block a validated online PDF', async () => {
+  const h = harness({ failRead: true });
+  const target = await indexedTarget(h);
+  assert.equal(await (await h.readCloudLabelFile('warehouse', target)).text(), await blob.text());
 });
 
 async function indexedTarget(h, id = 'new') {

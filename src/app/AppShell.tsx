@@ -177,7 +177,7 @@ function AppShellContent() {
         <div className="cmhub-sider-footer">
           <span className="cmhub-workspace-status"><i /> {warehouseSession.session?.warehouseName ?? '仓库工作台'}</span>
           <span className="cmhub-online-status cmhub-sider-online-status"><i /> {WAREHOUSE_MOCK_API_ENABLED ? '本地 Mock' : '云端已连接'} · QZ 本机打印</span>
-          <small>面单按仓库权限同步至当前浏览器；上游密钥不会进入本机。</small>
+          <small>扫描时实时查询云端单号，面单按需下载。</small>
           <Select
             aria-label="界面主题"
             className="cmhub-sider-theme-select"

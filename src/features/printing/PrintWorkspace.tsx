@@ -38,7 +38,7 @@ import {
 } from './printMatching';
 import { paginatePrintLogs } from './printLogPagination';
 import { PRINT_LOG_TABS, SCAN_FEEDBACK_COPY, type PrintLogTab, type PrintLogType, type PrintOutcome, type ScanFeedbackState } from './printingTypes';
-import { readCloudLabelFile, useWarehousePrintLibrary, type CloudPrintTarget } from './warehousePrintLibrary';
+import { readCloudLabelFile, resolveCloudPrintTarget, type CloudPrintTarget } from './warehousePrintLibrary';
 import { useWarehouseSession } from '../session/WarehouseSessionProvider';
 import { useWarehousePrintAudit } from './warehousePrintAudit';
 import { useSharedWorkPrintAudit } from './sharedWorkPrintAudit';
@@ -300,7 +300,6 @@ export default function App() {
   const location = useLocation();
   const warehouseSession = useWarehouseSession();
   const { session: activeWarehouse, workstation } = warehouseSession;
-  const cloudLibrary = useWarehousePrintLibrary();
   const cloudAudit = useWarehousePrintAudit(workstation?.id);
   const sharedAudit = useSharedWorkPrintAudit(workstation?.id);
   const [mapping, setMapping] = useState<Record<string, string>>({});
@@ -381,6 +380,8 @@ export default function App() {
   const [isPrecheckListOpen, setIsPrecheckListOpen] = useState(false);
   const interceptScanLockRef = useRef<string | null>(null);
   const inFlightScansRef = useRef<Set<string>>(new Set());
+  const inFlightCloudShipmentsRef = useRef<Set<string>>(new Set());
+  const recentCloudShipmentsRef = useRef<Map<string, number>>(new Map());
   const printerDropdownRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeAudioRef = useRef<ActiveAudio | null>(null);
@@ -1700,7 +1701,7 @@ export default function App() {
     const scannedValue = sanitizeBarcode(rawScannedValue);
     if (!scannedValue) return;
     const cleanedScannedValue = normalizeBarcode(scannedValue);
-    const cloudTarget = cloudLibrary.byBarcode.get(cleanedScannedValue) ?? null;
+    let cloudTarget: CloudPrintTarget | null = null;
 
     const reportCloudAttempt = async (
       target: CloudPrintTarget,
@@ -1790,7 +1791,20 @@ export default function App() {
         return;
       }
     }
-    const processLegacyScan = () => {
+    const processLegacyScan = async () => {
+    cloudTarget = await resolveCloudPrintTarget(scannedValue);
+    if (cloudTarget) {
+      if (inFlightCloudShipmentsRef.current.has(cloudTarget.shipmentId)) {
+        addLog(scannedValue, cloudTarget.courierTrackingNo ?? '-', '同一票运单正在提交打印，请等待结果。', 'error', 'system');
+        return;
+      }
+      if (!bypassDuplicateCheck && (recentCloudShipmentsRef.current.get(cloudTarget.shipmentId) ?? 0) > Date.now() - 5 * 60 * 1000) {
+        setDuplicateInfo({ code: scannedValue, show: true });
+        announceScanFeedback('error');
+        void playScanFeedback('failure');
+        return;
+      }
+    }
     // The lookup indexes are updated on import/restore. Exact matches no longer
     // scan thousands of mappings and file names on every scanner input.
     let finalExchangeNumber = cloudTarget?.courierTrackingNo ?? mappingIndexRef.current.get(cleanedScannedValue) ?? null;
@@ -1816,11 +1830,7 @@ export default function App() {
     if (!cloudTarget && !localPdfFile) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      const missingMessage = cloudLibrary.status === 'error'
-        ? `云端单号同步失败：${cloudLibrary.message} 请重新同步后重试。`
-        : cloudLibrary.status !== 'ready'
-          ? '云端单号仍在同步，当前单号尚未载入，请等待同步完成后重试。'
-          : '未找到对应的 PDF 文件，请核对单号及客户推送状态。';
+      const missingMessage = '服务器未找到该单号，本机会话也无对应面单，请核对单号及客户推送状态。';
       addLog(scannedValue, finalExchangeNumber ?? '-', missingMessage, 'error', 'print');
       return;
     }
@@ -1829,6 +1839,7 @@ export default function App() {
     finalExchangeNumber = finalExchangeNumber || '-';
     announceScanFeedback('processing');
     inFlightScansRef.current.add(cleanedScannedValue);
+    if (cloudTarget) inFlightCloudShipmentsRef.current.add(cloudTarget.shipmentId);
     const clientAttemptId = crypto.randomUUID();
 
     const recordPrintSubmission = (result: { message?: string; printerName?: string }) => {
@@ -1844,16 +1855,21 @@ export default function App() {
       );
       setStats(prev => ({ ...prev, printedCount: prev.printedCount + 1 }));
       const newTimestamp = Date.now();
+      if (cloudTarget) {
+        for (const [id, time] of recentCloudShipmentsRef.current) if (time < newTimestamp - 5 * 60 * 1000) recentCloudShipmentsRef.current.delete(id);
+        recentCloudShipmentsRef.current.set(cloudTarget.shipmentId, newTimestamp);
+      }
       setRecentlyPrinted(prev => [
         ...prev,
         { code: scannedValue, timestamp: newTimestamp }
       ].filter(item => item.timestamp > newTimestamp - 5 * 60 * 1000));
     };
 
-    void (async () => {
+    let submittingToPrinter = false;
+    await (async () => {
       try {
         try {
-          const trackingNumbers = [scannedValue, finalExchangeNumber]
+          const trackingNumbers = [scannedValue, finalExchangeNumber, cloudTarget?.firstLegTrackingNo]
             .filter((value): value is string => Boolean(value && value !== '-'));
           const liveIntercept = await checkGlobalIntercepts(trackingNumbers);
           if (liveIntercept.blocked) {
@@ -1874,7 +1890,7 @@ export default function App() {
             return;
           }
         } catch (interceptError) {
-          if (!emergencyOfflineEnabled) {
+          if (cloudTarget || !emergencyOfflineEnabled) {
             announceScanFeedback('error');
             void playScanFeedback('failure');
             addLog(scannedValue, finalExchangeNumber, `实时拦截校验失败，已阻断打印：${interceptError instanceof Error ? interceptError.message : '云端不可用'}`, 'error', 'system');
@@ -1886,6 +1902,14 @@ export default function App() {
         const pdfFile = cloudTarget && activeWarehouse?.warehouseId
           ? await readCloudLabelFile(activeWarehouse.warehouseId, cloudTarget)
           : localPdfFile!;
+        if (cloudTarget) {
+          const current = await resolveCloudPrintTarget(scannedValue);
+          if (!current || current.shipmentId !== cloudTarget.shipmentId || current.labelAssetId !== cloudTarget.labelAssetId || current.labelSha256 !== cloudTarget.labelSha256
+            || current.version !== cloudTarget.version || current.firstLegTrackingNo !== cloudTarget.firstLegTrackingNo || current.courierTrackingNo !== cloudTarget.courierTrackingNo) {
+            throw new Error('面单已更新，已停止本次打印，请重新扫描获取最新面单。');
+          }
+        }
+        submittingToPrinter = true;
         const result = await printPdfWithQz(await readPdfAsBase64(pdfFile));
         setQzConnectionHealth('healthy');
         recordPrintSubmission(result);
@@ -1893,28 +1917,31 @@ export default function App() {
       } catch (error) {
         announceScanFeedback('error');
         void playScanFeedback('failure');
-        const message = formatQzError(error);
+        const message = submittingToPrinter ? formatQzError(error) : (error instanceof Error ? error.message : '面单读取或校验失败，请重试。');
         const isUnknownOutcome = message.includes('超过 30 秒');
-        if (!isUnknownOutcome) setQzConnectionHealth('offline');
+        if (submittingToPrinter && !isUnknownOutcome) setQzConnectionHealth('offline');
         addLog(scannedValue, finalExchangeNumber, message, 'error', 'print', isUnknownOutcome ? 'TIMEOUT' : 'FAILED');
         if (cloudTarget) {
           void reportCloudAttempt(cloudTarget, clientAttemptId, isUnknownOutcome ? 'RESULT_UNKNOWN' : 'FAILED', { message });
         }
         if (isUnknownOutcome) {
           const timestamp = Date.now();
+          if (cloudTarget) recentCloudShipmentsRef.current.set(cloudTarget.shipmentId, timestamp);
           setRecentlyPrinted(previous => [
             ...previous,
             { code: scannedValue, timestamp }
           ].filter(item => item.timestamp > timestamp - 5 * 60 * 1000));
         }
       } finally {
+        if (cloudTarget) inFlightCloudShipmentsRef.current.delete(cloudTarget.shipmentId);
         inFlightScansRef.current.delete(cleanedScannedValue);
       }
     })();
     };
 
     if (!workstation) {
-      processLegacyScan();
+      announceScanFeedback('error');
+      addLog(scannedValue, '-', '工作站尚未就绪，请等待连接恢复后重试。', 'error', 'system');
       return;
     }
 
@@ -1927,17 +1954,15 @@ export default function App() {
           claim = await claimSharedWorkBatchItem({ trackingNo: scannedValue, workstationId: workstation.id });
         } catch (cause) {
           if (cause instanceof WarehouseApiError && cause.code === 'BATCH_ITEM_NOT_FOUND') {
-            inFlightScansRef.current.delete(cleanedScannedValue);
-            processLegacyScan();
+            await processLegacyScan();
             return;
           }
           const cloudUnavailable = cause instanceof WarehouseApiError
             ? cause.status >= 500
             : cause instanceof TypeError;
           if (emergencyOfflineEnabled && cloudUnavailable) {
-            inFlightScansRef.current.delete(cleanedScannedValue);
-            addLog(scannedValue, '-', '云端共享服务不可用，已按主管启用的单机应急模式使用本机已验证数据。', 'error', 'system');
-            processLegacyScan();
+            addLog(scannedValue, '-', '云端共享服务不可用，正在尝试服务器查号；查询失败将停止打印。', 'error', 'system');
+            await processLegacyScan();
             return;
           }
           throw cause;
@@ -2132,7 +2157,7 @@ export default function App() {
   const isWorkspacePreparing = uploadCacheStatus === 'restoring' || interceptStorageStatus === 'loading';
   const scanStatusCopy = isWorkspacePreparing ? '正在准备本机数据' : scanFeedbackCopy;
   const qzReadiness = qzConnectionHealth === 'healthy' ? '已连接' : qzConnectionHealth === 'offline' ? '需处理' : '检测中';
-  const libraryReadiness = cloudLibrary.status === 'ready' ? '已同步' : cloudLibrary.status === 'error' ? '需同步' : '准备中';
+  const libraryReadiness = '实时查号';
 
   useEffect(() => {
     if (isWorkspacePreparing || interceptedScan || duplicateInfo?.show) return;
@@ -2179,22 +2204,13 @@ export default function App() {
           </ArcoModal>
         )}
 
-        {(qzConnectionHealth === 'offline' || cloudLibrary.status === 'error' || interceptStorageStatus === 'corrupted' || interceptStorageStatus === 'unavailable' || (uploadCacheStatus === 'unavailable' && uploadCacheMessage) || (canEnableEmergencyOffline && emergencyOfflineEnabled)) && (
+        {(qzConnectionHealth === 'offline' || interceptStorageStatus === 'corrupted' || interceptStorageStatus === 'unavailable' || (uploadCacheStatus === 'unavailable' && uploadCacheMessage) || (canEnableEmergencyOffline && emergencyOfflineEnabled)) && (
           <aside className="cmhub-scan-notice-dock" aria-label="扫码打单系统提醒" aria-live="polite">
             {qzConnectionHealth === 'offline' && (
               <ArcoAlert
                 type="warning"
                 showIcon
                 content="QZ Tray 连接已中断，正在自动重连。请确认它仍在当前电脑运行。"
-              />
-            )}
-
-            {cloudLibrary.status === 'error' && (
-              <ArcoAlert
-                type="warning"
-                showIcon
-                content={`云端同步未完成：${cloudLibrary.message}`}
-                action={<ArcoButton size="small" onClick={() => void cloudLibrary.sync()}>重新同步</ArcoButton>}
               />
             )}
 
@@ -2229,7 +2245,7 @@ export default function App() {
                     <ArcoButton onClick={() => {
                       void Promise.all([
                         syncInterceptRules(),
-                        cloudLibrary.sync(),
+
                         cloudAudit.flushPending(),
                         sharedAudit.flushPending(),
                       ]);
@@ -2709,10 +2725,10 @@ export default function App() {
             <span data-state={qzConnectionHealth === 'offline' ? 'issue' : 'ready'}>
               <i aria-hidden="true" /><b>打印机</b><small>{selectedPrinter ? selectedPrinterLabel : '自动选择'}</small>
             </span>
-            <span data-state={cloudLibrary.status === 'ready' ? 'ready' : cloudLibrary.status === 'error' ? 'issue' : 'pending'}>
+            <span data-state="ready">
               <i aria-hidden="true" /><b>面单</b><small>{libraryReadiness}</small>
             </span>
-            <span><b>{(stats.pdfCount + cloudLibrary.count).toLocaleString()}</b><small>可打印</small></span>
+            <span><b>{stats.pdfCount.toLocaleString()}</b><small>本机面单</small></span>
             {emergencyOfflineEnabled && <span data-state="issue"><i aria-hidden="true" /><b>应急</b><small>本机模式</small></span>}
           </div>
           <div className="cmhub-scan-utility-actions" role="toolbar" aria-label="扫码打单工具">
