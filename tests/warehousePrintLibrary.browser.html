@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Warehouse label regression checks</title>
+<button id="run">Run browser checks</button>
+<pre id="result">Ready — synthetic labels only, no printer calls.</pre>
+<script type="module">
+import { readCloudLabelFile } from '/src/features/printing/warehousePrintLibrary.ts';
+import { clearWarehouseLabelCache, writeLocalFirstValue, readLocalFirstValue, deleteLocalFirstValue } from '/src/shared/storage/localFirstDatabase.ts';
+document.querySelector('#run').onclick = async () => {
+  const output = document.querySelector('#result');
+  const warehouseId = `regression-${crypto.randomUUID()}`;
+  const otherId = `${warehouseId}-other`;
+  const savedFetch = window.fetch;
+  const lines = [];
+  const check = (value, name) => { if (!value) throw Error(name); lines.push(`PASS ${name}`); output.textContent = lines.join('\n'); };
+  const blob = new Blob(['%PDF-1.4\nsynthetic test\n%%EOF'], {type:'application/pdf'});
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer())),v=>v.toString(16).padStart(2,'0')).join('');
+  const target = {shipmentId:'synthetic',labelAssetId:'synthetic',firstLegTrackingNo:'TEST-ORIGINAL',courierTrackingNo:'TEST-COURIER',labelSha256:hash,labelByteSize:blob.size,labelDownloadPath:'/warehouse/v1/label-assets/synthetic/content',updatedAt:new Date().toISOString()};
+  let downloads=0;
+  window.fetch = async (url, options) => {
+    if(String(url).endsWith(target.labelDownloadPath)){ downloads++; return new Response(blob,{status:200}); }
+    return savedFetch(url,options);
+  };
+  try {
+    const file = await readCloudLabelFile(warehouseId,target);
+    check(await file.text() === await blob.text(), 'on-demand PDF bytes and SHA-256');
+    await readCloudLabelFile(warehouseId,target);
+    check(downloads === 1,'cached scan does not redownload');
+    await writeLocalFirstValue('cloudLabels',`${otherId}:synthetic`,{warehouseId:otherId,blob});
+    await writeLocalFirstValue('printLogs',warehouseId,{outcome:'SUCCESS'});
+    await clearWarehouseLabelCache(warehouseId);
+    check(await readLocalFirstValue('cloudLabels',`${warehouseId}:synthetic`) === null,'real IndexedDB cursor removes current warehouse PDF cache');
+    check(await readLocalFirstValue('cloudLabels',`${otherId}:synthetic`) !== null,'other warehouse cache retained');
+    check(await readLocalFirstValue('printLogs',warehouseId) !== null,'print records retained');
+    await readCloudLabelFile(warehouseId,target);
+    check(downloads === 2,'evicted label can be downloaded again');
+    output.textContent += '\nBROWSER_CHECKS=PASS';
+  } catch(error) { output.textContent += `\nFAIL ${error.stack || error}`; }
+  finally {
+    window.fetch=savedFetch;
+    await clearWarehouseLabelCache(warehouseId);
+    await clearWarehouseLabelCache(otherId);
+    await deleteLocalFirstValue('printLogs',warehouseId);
+  }
+};
+</script>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  clearWarehouseLabelCache,
   deleteLocalFirstValue,
   readAllLocalFirstEntries,
   readLocalFirstValue,
@@ -16,6 +17,8 @@ export interface CloudPrintTarget {
   firstLegTrackingNo: string;
   courierTrackingNo: string | null;
   labelSha256: string;
+  labelByteSize: number;
+  labelDownloadPath: string;
   updatedAt: string;
 }
 
@@ -32,33 +35,26 @@ async function sha256(blob: Blob): Promise<string> {
   return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
 }
 
-async function downloadAndValidateLabel(warehouseId: string, shipment: WarehouseShipment): Promise<void> {
-  const asset = shipment.labelAsset;
-  if (!asset) return;
-  const key = labelKey(warehouseId, asset.id);
+async function downloadAndValidateLabel(warehouseId: string, target: CloudPrintTarget): Promise<CachedCloudLabel> {
+  const key = labelKey(warehouseId, target.labelAssetId);
   const existing = await readLocalFirstValue<CachedCloudLabel>('cloudLabels', key);
-  if (existing?.sha256 === asset.sha256 && existing.blob.size === asset.byteSize) return;
-  const blob = await downloadWarehouseLabel(asset.downloadPath);
-  if (blob.size !== asset.byteSize || await blob.slice(0, 5).text() !== '%PDF-') {
-    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的文件格式或大小校验失败。`);
+  if (existing?.sha256 === target.labelSha256.toLowerCase() && existing.blob.size === target.labelByteSize) return existing;
+  const blob = await downloadWarehouseLabel(target.labelDownloadPath);
+  if (blob.size !== target.labelByteSize || await blob.slice(0, 5).text() !== '%PDF-') {
+    throw new Error(`面单 ${target.firstLegTrackingNo} 的文件格式或大小校验失败。`);
   }
   const actualHash = await sha256(blob);
-  if (actualHash !== asset.sha256.toLowerCase()) {
-    throw new Error(`面单 ${shipment.firstLegTrackingNo} 的 SHA-256 校验失败。`);
+  if (actualHash !== target.labelSha256.toLowerCase()) {
+    throw new Error(`面单 ${target.firstLegTrackingNo} 的 SHA-256 校验失败。`);
   }
-  await writeLocalFirstValue('cloudLabels', key, {
-    warehouseId, assetId: asset.id, sha256: actualHash, blob, cachedAt: Date.now(),
-  } satisfies CachedCloudLabel);
-}
-
-async function mapWithConcurrency<T>(values: T[], concurrency: number, task: (value: T) => Promise<void>): Promise<void> {
-  let index = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (index < values.length) {
-      const current = values[index++];
-      await task(current);
-    }
-  }));
+  const label = { warehouseId, assetId: target.labelAssetId, sha256: actualHash, blob, cachedAt: Date.now() };
+  try {
+    await writeLocalFirstValue('cloudLabels', key, label);
+  } catch (cause) {
+    // The validated in-memory file remains usable when the optional PDF cache is full.
+    if (!(cause instanceof DOMException && cause.name === 'QuotaExceededError')) throw cause;
+  }
+  return label;
 }
 
 async function loadTargets(warehouseId: string): Promise<CloudPrintTarget[]> {
@@ -72,6 +68,8 @@ async function loadTargets(warehouseId: string): Promise<CloudPrintTarget[]> {
       firstLegTrackingNo: shipment.firstLegTrackingNo,
       courierTrackingNo: shipment.courierTrackingNo,
       labelSha256: shipment.labelAsset!.sha256,
+      labelByteSize: shipment.labelAsset!.byteSize,
+      labelDownloadPath: shipment.labelAsset!.downloadPath,
       updatedAt: shipment.updatedAt,
     }));
 }
@@ -82,11 +80,8 @@ async function synchronizeWarehouse(warehouseId: string, onPage: (targets: Cloud
   let synchronized = 0;
   do {
     const page = await listWarehouseShipments(state.cursor, 200);
-    await mapWithConcurrency(
-      page.data.filter(shipment => shipment.status === 'READY_TO_PRINT' && shipment.labelAsset),
-      4,
-      shipment => downloadAndValidateLabel(warehouseId, shipment)
-    );
+    // Index metadata independently of PDF downloads. A historical asset must not
+    // block every later shipment; PDFs are fetched and validated when scanned.
     const staleLabelKeys: string[] = [];
     for (const shipment of page.data) {
       const existing = await readLocalFirstValue<CachedCloudShipment>('cloudShipments', shipmentKey(warehouseId, shipment.id));
@@ -96,10 +91,17 @@ async function synchronizeWarehouse(warehouseId: string, onPage: (targets: Cloud
         staleLabelKeys.push(labelKey(warehouseId, existing.labelAsset.id));
       }
     }
-    await updateLocalFirstEntries('cloudShipments', page.data.map(shipment => ({
+    const entries = page.data.map(shipment => ({
       key: shipmentKey(warehouseId, shipment.id),
       value: { ...shipment, warehouseId } satisfies CachedCloudShipment,
-    })));
+    }));
+    try {
+      await updateLocalFirstEntries('cloudShipments', entries);
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'QuotaExceededError')) throw cause;
+      await clearWarehouseLabelCache(warehouseId);
+      await updateLocalFirstEntries('cloudShipments', entries);
+    }
     await Promise.all(staleLabelKeys.map(key => deleteLocalFirstValue('cloudLabels', key)));
     state = { cursor: page.cursor, syncedAt: Date.now() };
     await writeLocalFirstValue('cloudSync', syncKey, state);
@@ -111,8 +113,7 @@ async function synchronizeWarehouse(warehouseId: string, onPage: (targets: Cloud
 }
 
 export async function readCloudLabelFile(warehouseId: string, target: CloudPrintTarget): Promise<File> {
-  const cached = await readLocalFirstValue<CachedCloudLabel>('cloudLabels', labelKey(warehouseId, target.labelAssetId));
-  if (!cached || cached.sha256 !== target.labelSha256) throw new Error('云端面单尚未同步到本机，请等待同步完成后重试。');
+  const cached = await downloadAndValidateLabel(warehouseId, target);
   const name = `${target.courierTrackingNo || target.firstLegTrackingNo}.pdf`;
   return new File([cached.blob], name, { type: 'application/pdf', lastModified: cached.cachedAt });
 }
@@ -129,15 +130,18 @@ export function useWarehousePrintLibrary() {
     if (!warehouseId || runningRef.current) return runningRef.current ?? Promise.resolve();
     const run = (async () => {
       setStatus('syncing');
-      setMessage('正在同步云端单据与面单…');
+      setMessage('正在同步云端单号，PDF 将在扫描时按需下载…');
       try {
-        const count = await synchronizeWarehouse(warehouseId, setTargets);
+        const count = await synchronizeWarehouse(warehouseId, pageTargets => {
+          setTargets(pageTargets);
+          setMessage(`正在同步云端单号，已有 ${pageTargets.length.toLocaleString()} 票可匹配…`);
+        });
         setTargets(await loadTargets(warehouseId));
         setStatus('ready');
         setMessage(count > 0 ? `云端同步完成，本次处理 ${count} 条更新。` : '云端数据已是最新。');
       } catch (cause) {
         setStatus('error');
-        setMessage(cause instanceof Error ? cause.message : '云端面单同步失败。');
+        setMessage(cause instanceof Error && cause.message ? cause.message : '云端单号同步失败，请检查网络与浏览器存储空间后重试。');
       } finally {
         runningRef.current = null;
       }

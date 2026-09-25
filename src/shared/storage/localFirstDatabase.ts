@@ -21,7 +21,8 @@ const openDatabase = () => new Promise<IDBDatabase>((resolve, reject) => {
 const transactionAsPromise = (transaction: IDBTransaction) => new Promise<void>((resolve, reject) => {
   transaction.oncomplete = () => resolve();
   transaction.onabort = () => reject(transaction.error ?? new Error('本机数据保存失败。'));
-  transaction.onerror = () => reject(transaction.error ?? new Error('本机数据保存失败。'));
+  // Request errors bubble before transaction.error is populated. Wait for abort
+  // so callers receive QuotaExceededError and can recover disposable caches.
 });
 
 const requestAsPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
@@ -84,4 +85,23 @@ export async function deleteLocalFirstValue(storeName: LocalFirstStore, key: IDB
   const completed = transactionAsPromise(transaction);
   transaction.objectStore(storeName).delete(key);
   await completed;
+}
+
+// Only disposable server-backed PDFs are evicted; operational/offline records stay intact.
+export async function clearWarehouseLabelCache(warehouseId: string): Promise<void> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction('cloudLabels', 'readwrite');
+    const completed = transactionAsPromise(transaction);
+    const request = transaction.objectStore('cloudLabels').openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) return;
+      if (cursor.value?.warehouseId === warehouseId) cursor.delete();
+      cursor.continue();
+    };
+    await completed;
+  } finally {
+    database.close();
+  }
 }

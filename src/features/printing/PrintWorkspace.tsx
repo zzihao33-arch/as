@@ -1816,7 +1816,12 @@ export default function App() {
     if (!cloudTarget && !localPdfFile) {
       announceScanFeedback('error');
       void playScanFeedback('failure');
-      addLog(scannedValue, finalExchangeNumber ?? '-', '未找到对应的 PDF 文件', 'error', 'print');
+      const missingMessage = cloudLibrary.status === 'error'
+        ? `云端单号同步失败：${cloudLibrary.message} 请重新同步后重试。`
+        : cloudLibrary.status !== 'ready'
+          ? '云端单号仍在同步，当前单号尚未载入，请等待同步完成后重试。'
+          : '未找到对应的 PDF 文件，请核对单号及客户推送状态。';
+      addLog(scannedValue, finalExchangeNumber ?? '-', missingMessage, 'error', 'print');
       return;
     }
 
