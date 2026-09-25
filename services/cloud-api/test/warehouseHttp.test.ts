@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { NextFunction, Request, Response } from 'express';
 import { ApiError } from '../src/errors.js';
-import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseWorkspace } from '../src/warehouseAccess.js';
+import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseShipmentFeedPermission, requireWarehouseWorkspace } from '../src/warehouseAccess.js';
 import { createWarehouseHttpBoundary } from '../src/warehouseHttp.js';
 import type { WarehouseSession } from '../src/warehouseIdentity.js';
 
@@ -58,6 +58,13 @@ describe('warehouse permission middleware', () => {
     requireWarehouseAnyPermission(['attendance.review', 'attendance.team_view'])(request, {} as Response, ((error?: unknown) => { deniedError = error; }) as NextFunction);
     assert.ok(deniedError instanceof ApiError);
     assert.equal(deniedError.code, 'PERMISSION_DENIED');
+  });
+
+  it('allows scanner accounts to synchronize the shipment feed', () => {
+    const request = { warehouseSession: baseSession } as unknown as Request;
+    let result: unknown;
+    requireWarehouseShipmentFeedPermission(request, {} as Response, ((error?: unknown) => { result = error; }) as NextFunction);
+    assert.equal(result, undefined);
   });
 
   it('requires an explicitly selected warehouse for operational routes', () => {

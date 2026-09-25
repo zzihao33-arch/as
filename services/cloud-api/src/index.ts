@@ -21,7 +21,7 @@ import { createAttendanceOperations } from './attendanceOperations.js';
 import { createOutboundWebhooks } from './outboundWebhooks.js';
 import { shipmentWithLabelSelect, toShipment, type ShipmentRow } from './shipmentRecord.js';
 import { createWarehouseAdministration } from './warehouseAdministration.js';
-import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseWorkspace } from './warehouseAccess.js';
+import { requireWarehouseAnyPermission, requireWarehousePermission, requireWarehouseShipmentFeedPermission, requireWarehouseWorkspace } from './warehouseAccess.js';
 import { createWarehouseIdentity } from './warehouseIdentity.js';
 import { createWarehouseHttpBoundary } from './warehouseHttp.js';
 import { createWarehouseOperations } from './warehouseOperations.js';
@@ -912,7 +912,7 @@ warehouseRouter.get('/attendance/punch-attempts/:attemptId/photo', warehouseBoun
   } catch (error) { next(error); }
 });
 
-warehouseRouter.get('/shipments', warehouseBoundary.session, requireWarehousePermission('shipments.view'), requireWarehouseWorkspace, async (req, res, next) => {
+warehouseRouter.get('/shipments', warehouseBoundary.session, requireWarehouseShipmentFeedPermission, requireWarehouseWorkspace, async (req, res, next) => {
   try {
     const result = await warehouseOperations.listShipments(req.warehouseSession!, {
       cursor: req.query.cursor,

@@ -106,6 +106,11 @@ export function requireWarehouseAnyPermission(required: readonly WarehousePermis
   };
 }
 
+export const requireWarehouseShipmentFeedPermission = requireWarehouseAnyPermission([
+  'shipments.view',
+  'scan.use',
+]);
+
 export function requireWarehouseWorkspace(req: Request, _res: Response, next: NextFunction): void {
   const session = req.warehouseSession;
   if (!session) {
