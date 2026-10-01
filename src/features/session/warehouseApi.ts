@@ -711,7 +711,29 @@ export interface AttendancePayrollRow {
   totalPay: number | null;
   issues: string[];
   weeklyMinutes: Array<{ week: string; minutes: number }>;
-  days: Array<{ workDate: string; grossMinutes: number; status: string }>;
+  days: AttendancePayrollDay[];
+}
+
+export interface AttendancePayrollDay {
+  workDate: string; grossMinutes: number; status: string;
+  clockInAt?: string | null; clockOutAt?: string | null;
+  breakRule?: { id: string | null; startTime: string; endTime: string };
+  breakMinutes?: number; netMinutes?: number; regularMinutes?: number; overtimeMinutes?: number;
+  regularPay?: number | null; overtimePay?: number | null;
+}
+
+export interface AttendancePayrollBreakRule {
+  id: string; employeeReference: string | null; startTime: string; endTime: string; effectiveFrom: string;
+}
+
+export async function listAttendancePayrollBreakRules() {
+  return (await request<{ data: AttendancePayrollBreakRule[] }>('/warehouse/v1/attendance/payroll-break-rules')).data;
+}
+
+export async function saveAttendancePayrollBreakRule(input: Omit<AttendancePayrollBreakRule, 'id'>) {
+  return (await request<{ data: AttendancePayrollBreakRule[] }>('/warehouse/v1/attendance/payroll-break-rules', {
+    method: 'PUT', body: JSON.stringify(input),
+  })).data;
 }
 
 export interface AttendancePayrollResult {
@@ -880,6 +902,13 @@ function normalizeAttendancePayrollResult(value: unknown): AttendancePayrollResu
         workDate: String(day?.workDate ?? ''),
         grossMinutes: payrollNumber(day?.grossMinutes) ?? 0,
         status: String(day?.status ?? ''),
+        clockInAt: day?.clockInAt ?? null, clockOutAt: day?.clockOutAt ?? null,
+        breakRule: day?.breakRule,
+        breakMinutes: payrollNumber(day?.breakMinutes) ?? undefined,
+        netMinutes: payrollNumber(day?.netMinutes) ?? undefined,
+        regularMinutes: payrollNumber(day?.regularMinutes) ?? undefined,
+        overtimeMinutes: payrollNumber(day?.overtimeMinutes) ?? undefined,
+        regularPay: payrollNumber(day?.regularPay), overtimePay: payrollNumber(day?.overtimePay),
       }))
       : [];
     const requiredNumbers = [row.bonus, row.fuelDays, row.regularMinutes, row.overtimeMinutes, row.fuelAllowance];
@@ -891,7 +920,9 @@ function normalizeAttendancePayrollResult(value: unknown): AttendancePayrollResu
       || !Array.isArray(row.issues)
       || !Array.isArray(row.weeklyMinutes)
       || !Array.isArray(row.days)
-      || rawDays.some(day => payrollNumber(day?.grossMinutes) === null);
+      || rawDays.some(day => [day?.grossMinutes, day?.breakMinutes, day?.netMinutes, day?.regularMinutes, day?.overtimeMinutes].some(value => payrollNumber(value) === null)
+        || !day?.breakRule
+        || (day.status === 'COMPLETE' && (!day.clockInAt || !day.clockOutAt)));
     const issues = Array.isArray(row.issues) ? row.issues.map(String).filter(Boolean) : [];
     if (malformed) issues.push('薪酬数据格式异常，请联系管理员重新计算');
 

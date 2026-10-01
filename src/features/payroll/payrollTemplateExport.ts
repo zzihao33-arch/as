@@ -1,11 +1,13 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import * as XLSX from 'xlsx';
 import type { PayrollEmployeeBase, PayrollWeekRange } from './payrollTypes';
+import type { AttendancePayrollDay } from '../session/warehouseApi';
 
 const WEEK_COLUMN_KEYS = ['E', 'F', 'G', 'H', 'I', 'J'] as const;
 const CURRENCY_COLUMN_KEYS = new Set(['C', 'M', 'N', 'O', 'Q', 'R']);
 
 export interface PayrollTemplateExportRow extends PayrollEmployeeBase {
+  dailyDetails?: AttendancePayrollDay[];
   bonus: number;
   fuelDays: number;
   regularPay: number;
@@ -16,6 +18,8 @@ export interface PayrollTemplateExportRow extends PayrollEmployeeBase {
 
 export interface PayrollTemplateExportOptions {
   periodLabel: string;
+  dateFrom?: string;
+  dateTo?: string;
   weeks: PayrollWeekRange[];
   rows: PayrollTemplateExportRow[];
 }
@@ -135,8 +139,63 @@ const applyTemplateStyles = (workbookBytes: ArrayBuffer, totalRowNumber: number,
     const rowNumber = Number(rawRow);
     return `<c r="${column}${rawRow}" s="${getCellStyle(column, rowNumber, totalRowNumber, issueRows)}"`;
   }));
+  const dailyPath = 'xl/worksheets/sheet2.xml';
+  if (archive[dailyPath]) {
+    archive[dailyPath] = strToU8(strFromU8(archive[dailyPath]).replace(/<c r="([A-Z]+)(\d+)"(?: s="\d+")?/g, (_match, column: string, rawRow: string) => {
+      const row = Number(rawRow);
+      const style = row === 1 ? 1 : row === 2 ? 2 : row === 3 ? 3
+        : ['M', 'N', 'O', 'P'].includes(column) ? 7 : ['G', 'J', 'K', 'L'].includes(column) ? 16 : 4;
+      return `<c r="${column}${rawRow}" s="${style}"`;
+    }));
+  }
   return zipSync(archive, { level: 6 });
 };
+
+function createDailySheet(options: PayrollTemplateExportOptions) {
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const formatPunch = (value: string | null | undefined, workDate: string) => {
+    if (!value) return '';
+    const instant = new Date(value);
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+    const part = (type: string) => parts.find(item => item.type === type)?.value;
+    const date = `${part('year')}-${part('month')}-${part('day')}`;
+    return `${date === workDate ? '' : `${date} `}${clock.format(instant)}`;
+  };
+  const dates: string[] = [];
+  if (options.dateFrom && options.dateTo) {
+    for (const date = new Date(`${options.dateFrom}T12:00:00Z`); date.toISOString().slice(0, 10) <= options.dateTo; date.setUTCDate(date.getUTCDate() + 1)) {
+      dates.push(date.toISOString().slice(0, 10));
+      if (dates.length > 90) throw new Error('每日明细导出最多支持 90 天。');
+    }
+  }
+  const values: Array<Array<string | number>> = [
+    [`每日上班明细 · ${options.periodLabel}`],
+    ['America/New_York · 只扣出勤与休息时段重叠的分钟；工资按未舍入工时计算，每日工资尾差按累计金额分配。奖金和油补见汇总。'],
+    ['姓名', '员工标识', '日期', '星期', '上班时间', '下班时间', '出勤小时', '休息时段', '扣除分钟', '计薪小时', '正常小时', 'OT小时', '时薪', '正常工资', '加班工资', '当日工资', '考勤状态'],
+  ];
+  for (const row of options.rows) {
+    if (!row.dailyDetails?.length) throw new Error(`${row.name} 缺少每日明细，请更新服务端并重新计算。`);
+    const byDate = new Map(row.dailyDetails.map(day => [day.workDate, day]));
+    for (const date of dates.length ? dates : [...byDate.keys()].sort()) {
+      const day = byDate.get(date);
+      const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(`${date}T12:00:00Z`).getUTCDay()];
+      if (!day) { values.push([row.name, row.id, date, weekday, '', '', '', '', '', '', '', '', '', '', '', '', '无记录']); continue; }
+      if (!day.breakRule || [day.netMinutes, day.breakMinutes, day.regularMinutes, day.overtimeMinutes, day.regularPay, day.overtimePay].some(value => value == null || !Number.isFinite(value))) {
+        throw new Error(`${row.name} ${date} 计薪明细不完整，请重新计算。`);
+      }
+      values.push([row.name, row.id, date, weekday, formatPunch(day.clockInAt, date), formatPunch(day.clockOutAt, date),
+        day.grossMinutes / 60, `${day.breakRule.startTime}–${day.breakRule.endTime}`, day.breakMinutes!, day.netMinutes! / 60,
+        day.regularMinutes! / 60, day.overtimeMinutes! / 60, row.baseRate ?? '', day.regularPay!, day.overtimePay!,
+        asAmount(day.regularPay! + day.overtimePay!), day.status === 'COMPLETE' ? '完整' : day.status]);
+    }
+  }
+  const sheet = XLSX.utils.aoa_to_sheet(values);
+  sheet['!cols'] = [18, 42, 14, 9, 22, 22, 13, 18, 13, 13, 13, 13, 12, 14, 14, 14, 16].map(wch => ({ wch }));
+  sheet['!merges'] = [0, 1].map(r => ({ s: { r, c: 0 }, e: { r, c: 16 } }));
+  sheet['!rows'] = values.map((_, i) => ({ hpt: i === 0 ? 32 : i === 2 ? 30 : 24 }));
+  sheet['!autofilter'] = { ref: `A3:Q${values.length}` };
+  return sheet;
+}
 
 export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOptions) {
   const weeks = options.weeks.slice(0, WEEK_COLUMN_KEYS.length);
@@ -150,7 +209,7 @@ export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOpti
   const issueRows = new Set<number>();
   const values = [
     [formatExportTitle(options.periodLabel), ...Array(18).fill('')],
-    ['计算规则：1. 工时按上下班之间的实际分钟累计，不扣固定午休 | 2. 单周(周一至周日)工作超过 40 小时部分按 1.5 倍计算加班费', ...Array(18).fill('')],
+    ['计算规则：实际分钟扣除与休息时段重叠的时间，员工个人规则优先；扣除后每周(周一至周日)超过40小时按1.5倍计算。逐日打卡与工资见「每日上班明细」。', ...Array(18).fill('')],
     headers,
     ...options.rows.map((row, index) => {
       const rowNumber = firstDataRow + index;
@@ -213,6 +272,7 @@ export function createPayrollTemplateWorkbook(options: PayrollTemplateExportOpti
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, '考勤及工时汇总');
+  XLSX.utils.book_append_sheet(workbook, createDailySheet(options), '每日上班明细');
   const rawWorkbook = XLSX.write(workbook, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer;
   return applyTemplateStyles(rawWorkbook, totalRowNumber, issueRows);
 }

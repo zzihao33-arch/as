@@ -54,6 +54,7 @@ import {
   type AttendanceShiftRule,
 } from '../session/warehouseApi';
 import { AttendanceCapturePanel } from './AttendanceCapturePanel';
+import { PayrollBreakRuleModal } from './PayrollBreakRuleModal';
 import { formatAttendanceDecimalHours } from './attendanceTime';
 
 const ATTENDANCE_TIME_ZONE = 'America/New_York';
@@ -482,6 +483,7 @@ function PayrollPanel() {
   const [bonus, setBonus] = useState('0');
   const [fuelDays, setFuelDays] = useState('0');
   const [adjustNote, setAdjustNote] = useState('');
+  const [breakTarget, setBreakTarget] = useState<{ employeeReference: string | null; name: string; effectiveFrom: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -509,13 +511,16 @@ function PayrollPanel() {
         overtimeHours: row.overtimeMinutes / 60,
         attendanceDays: row.days.filter(day => day.grossMinutes > 0).length,
         weeklyHours: row.weeklyMinutes.map(item => ({ week: item.week, hours: item.minutes / 60 })),
+        dailyDetails: row.days,
+        attendanceDetails: row.days.map(day => ({ date: day.workDate, hours: (day.netMinutes ?? 0) / 60,
+          start: formatTime(day.clockInAt ?? null), end: formatTime(day.clockOutAt ?? null) })),
         issues: row.issues.map(message => ({ message, severity: 'blocking' as const })),
         regularPay: row.regularPay ?? 0,
         overtimePay: row.overtimePay ?? 0,
         fuelAllowance: row.fuelAllowance,
         totalPay: row.totalPay ?? 0,
       }));
-      downloadPayrollTemplateWorkbook({ periodLabel: `${from} 至 ${to}`, weeks, rows });
+      downloadPayrollTemplateWorkbook({ periodLabel: `${from} 至 ${to}`, dateFrom: from, dateTo: to, weeks, rows });
       Message.success(`薪酬快照已固化并导出${run.runId ? `（${run.runId.slice(0, 8)}）` : ''}。`);
       setResult(run);
     } catch (cause) { Message.error(cause instanceof Error ? cause.message : '薪酬导出失败。'); }
@@ -547,12 +552,14 @@ function PayrollPanel() {
 
   return (
     <Card className="cmhub-attendance-panel-card" title="薪酬核算" extra={session.hasPermission('payroll.export') && <Button type="primary" icon={<Download size={15} />} loading={loading} disabled={!result?.rows.length || result.rows.some(row => row.issues.length > 0)} onClick={() => void exportPayroll()}>固化并导出 Excel</Button>}>
-      <Alert type="info" content="考勤记录是唯一工时来源。完整上下班卡按实际分钟累计，不扣除固定午休；每周超过 40 小时按 1.5 倍计算，加油补贴按 $19.50/天。缺少时薪或考勤异常时禁止导出。" />
+      {breakTarget && <PayrollBreakRuleModal target={breakTarget} onClose={() => setBreakTarget(null)} onSaved={() => void load()} />}
+      <Alert type="info" content="计薪工时按实际分钟扣除与休息时段重叠的时间；员工个人规则优先，未配置时默认 12:00–13:00。扣除后每周超过 40 小时按 1.5 倍计算，油补 $19.50/天。Excel 包含每日明细，缺少时薪或考勤异常时禁止导出。" />
       <div className="cmhub-attendance-toolbar">
         <div className="cmhub-attendance-range">
           <label>开始日期<Input type="date" value={from} onChange={setFrom} /></label>
           <label>结束日期<Input type="date" value={to} onChange={setTo} /></label>
           <Button icon={<RefreshCw size={15} />} onClick={() => void load()}>重新计算</Button>
+          {session.hasPermission('payroll.manage') && <Button onClick={() => setBreakTarget({ employeeReference: null, name: '仓库默认规则', effectiveFrom: from })}>默认休息时间</Button>}
         </div>
         {result && <span>共 {result.rows.length} 人 · 规则版本已由服务端统一计算</span>}
       </div>
@@ -569,8 +576,8 @@ function PayrollPanel() {
           { title: '油补', width: 130, render: (_, row) => `${Number(row.fuelDays).toLocaleString('zh-CN')} 天 · $${Number(row.fuelAllowance).toFixed(2)}` },
           { title: '应发金额', dataIndex: 'totalPay', width: 120, render: value => value === null ? <Tag color="red">待核对</Tag> : <strong>${Number(value).toFixed(2)}</strong> },
           { title: '核对', width: 220, render: (_, row) => row.issues.length ? <Tag color="red">{row.issues.join('；')}</Tag> : <Tag color="green">已核对</Tag> },
-          { title: '操作', fixed: 'right', width: 170, render: (_, row) => session.hasPermission('payroll.manage')
-            ? <Space size="mini"><Button size="small" disabled={!row.userId} onClick={() => { setRateTarget(row); setRate(String(row.hourlyRate ?? '')); setRateEffectiveFrom(from); }}>时薪</Button><Button size="small" onClick={() => { setAdjustTarget(row); setBonus(String(row.bonus)); setFuelDays(String(row.fuelDays)); setAdjustNote(''); }}>奖金/油补</Button></Space>
+          { title: '操作', fixed: 'right', width: 250, render: (_, row) => session.hasPermission('payroll.manage')
+            ? <Space size="mini"><Button size="small" disabled={!row.userId} onClick={() => { setRateTarget(row); setRate(String(row.hourlyRate ?? '')); setRateEffectiveFrom(from); }}>时薪</Button><Button size="small" onClick={() => { setAdjustTarget(row); setBonus(String(row.bonus)); setFuelDays(String(row.fuelDays)); setAdjustNote(''); }}>奖金/油补</Button><Button size="small" onClick={() => setBreakTarget({ employeeReference: row.employeeReference, name: row.employeeName, effectiveFrom: from })}>休息</Button></Space>
             : '—' },
         ]}
         noDataElement={<Empty description="当前周期暂无可核算考勤" />}
