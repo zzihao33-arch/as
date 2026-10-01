@@ -1,6 +1,6 @@
 # 考勤申诉取消 72 小时时限
 
-状态：代码与发布补丁已完成；**尚未发布线上**。
+状态：**已于 2026-10-01 发布生产环境**。腾讯云执行记录显示成功，退出码 0；服务重载、文件哈希及健康检查通过。
 
 ## 改动
 
@@ -14,7 +14,10 @@
 - 修改前新增回归测试：历史记录和无日汇总记录两项均复现 `APPEAL_WINDOW_EXPIRED`。
 - 修改后后端完整测试 240/240 通过，22 项迁移检查通过；测试 TypeScript 编译及生产构建通过。
 - 发布补丁构建与脚本语法检查通过。构建脚本对照上次实际发布包校验源码和编译产物，确认仅移除期限拦截，没有夹带其他差异。
-- 尚未执行服务器预检、应用、线上历史考勤申诉验收。
+- 生产只读预检通过：命令 `cmd-1aeavgk6`，执行 `inv-w9ceip0hfb`，发布前文件哈希与预期版本一致。
+- 生产应用通过：命令 `cmd-pyrsx5um`，执行 `inv-w9cemr0b97`，控制台显示 2026-10-01 11:02:11–11:02:14，退出码 0。输出 `ATTENDANCE_UNLIMITED_DEPLOY={"status":"PASS","backup":"/root/attendance-unlimited-backup-spHHcq","health":true}` 及 `ATTENDANCE_RELEASE_COMPLETE=PASS`。
+- 在生产服务器导入实际部署模块，以内存数据库夹具验证 `2026-09-01`、`2000-01-01` 两个历史日期，各覆盖有/无日汇总记录，四项均通过；缺少修正时间仍拒绝。此检查没有连接或写入真实数据库，不能等同于真实员工的端到端申诉验收。
+- 实际 HTTP 申诉路由未登录返回 401，公网 `/healthz` 返回 `ok: true`。尚未代员工提交真实申诉；用户可刷新后重试原有申诉。
 
 ## 发布
 
@@ -40,4 +43,4 @@
 
 ## 浏览器访问恢复
 
-此前通过浏览器工具访问腾讯云控制台被安全检查拒绝：`saved browser permissions could not be verified` / `Browser Use could not request permission`。没有通过其他通道绕过该限制。2026-10-01 用户调整环境后正常权限验证已恢复，并完成腾讯云登录；生产实例 `ins-dmx8z3xt`（air-cargo-server，Virginia）可见且 Running。正在继续执行预检、发布和线上验证，最终状态以实际执行记录为准。
+此前通过浏览器工具访问腾讯云控制台被安全检查拒绝：`saved browser permissions could not be verified` / `Browser Use could not request permission`。没有通过其他通道绕过该限制。2026-10-01 用户调整环境后正常权限验证已恢复，并完成腾讯云登录；随后通过正常 Chrome 控制台完成上述生产预检、发布和验证。浏览器恢复的具体根因未被证明。
