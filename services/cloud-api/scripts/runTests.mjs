@@ -56,6 +56,7 @@ try {
       join(outputDirectory, 'test', 'inboundBatchIngest.test.js'),
       join(outputDirectory, 'test', 'tygV11.test.js'),
       join(outputDirectory, 'test', 'attendanceCalculations.test.js'),
+      join(outputDirectory, 'test', 'payrollRest.test.js'),
       join(packageDirectory, 'scripts', 'loadTygApi.test.mjs'),
     ], { cwd: packageDirectory, stdio: 'inherit' });
     process.exitCode = tests.status ?? 1;

@@ -157,3 +157,5 @@ Apply `015` before deploying pickup-document upload. These files are private ope
 ## Test-release integration for migrations 017–018
 
 The release branch already contains `015` and its legacy `air_pickup_document_assets` schema. Do not replace that table or rewrite its rows. Migration `017` extends the durable warehouse operation ledger; `018` adds checker-backed uploads, permissions, and the new `air_pickup_document_assets_v2` table while retaining the legacy table for authenticated downloads. Legacy upload and remove routes return `410`; all new writes use the checked v2 flow. Apply `017` and `018` only after verifying the test schema ledger and checksums, and keep `PICKUP_DOCUMENTS_ENABLED=false` in production.
+
+22. `022_add_payroll_break_rules.sql` adds effective-dated default/employee rest windows and daily payroll snapshots. Apply before deploying the payroll API and UI. Runtime access requires SELECT/INSERT/UPDATE on the new table. Existing payroll snapshots are not rewritten.

@@ -46,10 +46,8 @@ test('calculates weekly overtime, fuel allowance, and total pay from actual minu
     hourlyRate: 20,
     bonus: 50,
     fuelDays: 2,
-    days: [
-      { workDate: '2026-08-24', grossMinutes: 2_400, status: 'COMPLETE' },
-      { workDate: '2026-08-25', grossMinutes: 600, status: 'COMPLETE' },
-    ],
+    days: Array.from({ length: 5 }, (_, i) => ({ workDate: `2026-08-${24 + i}`, grossMinutes: 660, status: 'COMPLETE',
+      clockInAt: `2026-08-${24 + i}T08:00:00-04:00`, clockOutAt: `2026-08-${24 + i}T19:00:00-04:00` })),
   });
   assert.equal(row.regularMinutes, 2_400);
   assert.equal(row.overtimeMinutes, 600);
@@ -59,7 +57,7 @@ test('calculates weekly overtime, fuel allowance, and total pay from actual minu
   assert.equal(row.totalPay, 1_189);
 });
 
-test('counts a 45-minute shift as 0.75 payable hours without a fixed lunch deduction', () => {
+test('counts a 45-minute shift outside the rest window as 0.75 payable hours', () => {
   const row = calculatePayrollRow({
     employeeReference: 'user:45-minutes',
     employeeName: 'Minute Worker',
@@ -67,7 +65,7 @@ test('counts a 45-minute shift as 0.75 payable hours without a fixed lunch deduc
     hourlyRate: 20,
     bonus: 0,
     fuelDays: 0,
-    days: [{ workDate: '2026-09-02', grossMinutes: 45, status: 'COMPLETE' }],
+    days: [{ workDate: '2026-09-02', grossMinutes: 45, status: 'COMPLETE', clockInAt: '2026-09-02T09:00:00-04:00', clockOutAt: '2026-09-02T09:45:00-04:00' }],
   });
 
   assert.equal(row.regularMinutes, 45);

@@ -5,8 +5,10 @@ import { ApiError } from './errors.js';
 import type { LabelStorage, LabelStorageObject } from './labelStorage.js';
 import type { WarehouseSession } from './warehouseIdentity.js';
 import { validateAirEvidenceImage } from './airPickupOperations.js';
+import { resolvePayrollBreakRule, type PayrollBreakRule } from './payrollBreakRules.js';
 import {
   ATTENDANCE_TIME_ZONE,
+  DEFAULT_BREAK_RULE,
   FUEL_ALLOWANCE_PER_DAY,
   OVERTIME_MULTIPLIER,
   WEEKLY_REGULAR_MINUTES,
@@ -59,6 +61,19 @@ type PunchPhotoRow = RowDataPacket & {
   id: string; user_id: string | null; employee_reference: string; photo_storage_key: string | null;
   photo_content_type: 'image/jpeg' | 'image/png' | null; photo_byte_size: number | null;
 };
+type BreakRuleRow = RowDataPacket & {
+  id: string; employee_reference: string; start_time: string; end_time: string; effective_from: Date | string;
+};
+const toBreakRule = (row: BreakRuleRow): PayrollBreakRule => ({
+  id: row.id, employeeReference: row.employee_reference || null,
+  startTime: row.start_time.slice(0, 5), endTime: row.end_time.slice(0, 5), effectiveFrom: sqlDate(row.effective_from),
+});
+async function payrollBreakRules(mysql: Pool, warehouseId: string) {
+  const [rows] = await mysql.execute<BreakRuleRow[]>(
+    'SELECT * FROM attendance_payroll_break_rules WHERE warehouse_id = ? ORDER BY effective_from DESC, employee_reference', [warehouseId],
+  );
+  return rows.map(toBreakRule);
+}
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -794,9 +809,48 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
       return { employeeReference, periodStart: period.from, periodEnd: period.to, bonus, fuelDays: Math.round(fuelDays), note };
     },
 
+    async listPayrollBreakRules(session: WarehouseSession) {
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      return payrollBreakRules(mysql, session.warehouseId);
+    },
+
+    async savePayrollBreakRule(session: WarehouseSession, input: Record<string, unknown>) {
+      if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库。');
+      const employeeReference = text(input.employeeReference, 'employeeReference', 64, false);
+      const startTime = text(input.startTime, 'startTime', 5)!;
+      const endTime = text(input.endTime, 'endTime', 5)!;
+      const validTime = /^([01]\d|2[0-3]):[0-5]\d$/;
+      if (!validTime.test(startTime) || !validTime.test(endTime) || endTime <= startTime) {
+        throw new ApiError(400, 'VALIDATION_ERROR', '休息结束时间必须晚于开始时间，格式为 HH:mm（同一天）。');
+      }
+      const effectiveFrom = dateString(input.effectiveFrom, 'effectiveFrom');
+      if (new Date(`${effectiveFrom}T12:00:00Z`).toISOString().slice(0, 10) !== effectiveFrom) {
+        throw new ApiError(400, 'VALIDATION_ERROR', '生效日期无效。');
+      }
+      if (employeeReference) {
+        const [employees] = await mysql.execute<RowDataPacket[]>(
+          'SELECT id FROM attendance_daily_results WHERE warehouse_id = ? AND employee_reference = ? LIMIT 1',
+          [session.warehouseId, employeeReference],
+        );
+        if (!employees.length) throw new ApiError(404, 'EMPLOYEE_NOT_FOUND', '当前仓库未找到该员工的考勤记录。');
+      }
+      await mysql.execute(
+        `INSERT INTO attendance_payroll_break_rules
+          (id, warehouse_id, employee_reference, start_time, end_time, effective_from, created_by_reference)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE start_time = VALUES(start_time), end_time = VALUES(end_time), created_by_reference = VALUES(created_by_reference)`,
+        [randomUUID(), session.warehouseId, employeeReference ?? '', `${startTime}:00`, `${endTime}:00`, effectiveFrom, actor(session)],
+      );
+      return payrollBreakRules(mysql, session.warehouseId);
+    },
+
     async calculatePayroll(session: WarehouseSession, filters: { dateFrom?: unknown; dateTo?: unknown }, persist = false) {
       if (!session.warehouseId) throw new ApiError(409, 'WAREHOUSE_SELECTION_REQUIRED', '请先选择仓库');
       const dates = range(filters.dateFrom, filters.dateTo);
+      const breakRules = await payrollBreakRules(mysql, session.warehouseId);
+      const rule = { lunchDeductionMinutes: 60, breakDeductionMode: 'OVERLAP', timeZone: ATTENDANCE_TIME_ZONE,
+        defaultBreak: DEFAULT_BREAK_RULE, breakRules, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
+        overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY };
       await materializeDailyResults(session.warehouseId, dates);
       const [dailyRows] = await mysql.execute<DailyRow[]>(
         `SELECT * FROM attendance_daily_results WHERE warehouse_id = ? AND work_date BETWEEN ? AND ?
@@ -804,8 +858,7 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
       );
       const references = [...new Set(dailyRows.map(row => row.employee_reference))];
       if (references.length === 0) return { ...dates, rows: [], runId: null,
-        rule: { lunchDeductionMinutes: 0, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
-          overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY } };
+        rule };
       const placeholders = references.map(() => '?').join(',');
       const [profiles] = await mysql.execute<(RowDataPacket & { employee_reference: string; user_id: string | null; hourly_rate: number | string })[]>(
         `SELECT p.employee_reference, p.user_id, p.hourly_rate FROM attendance_pay_profiles p
@@ -829,15 +882,15 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
           employeeReference: reference, employeeName: days[0].employee_name_snapshot,
           employeeNo: days[0].employee_no_snapshot, hourlyRate: profile ? Number(profile.hourly_rate) : null,
           bonus: adjustment ? Number(adjustment.bonus) : 0, fuelDays: adjustment?.fuel_days ?? 0,
-          days: days.map(day => ({ workDate: sqlDate(day.work_date), grossMinutes: day.gross_minutes, status: day.result_status })),
+          days: days.map(day => ({ workDate: sqlDate(day.work_date), grossMinutes: day.gross_minutes, status: day.result_status,
+            clockInAt: day.clock_in_at?.toISOString() ?? null, clockOutAt: day.clock_out_at?.toISOString() ?? null,
+            breakRule: resolvePayrollBreakRule(breakRules, reference, sqlDate(day.work_date)) })),
         }) };
       });
       let runId: string | null = null;
-      const rule = { lunchDeductionMinutes: 0, weeklyRegularMinutes: WEEKLY_REGULAR_MINUTES,
-        overtimeMultiplier: OVERTIME_MULTIPLIER, fuelAllowancePerDay: FUEL_ALLOWANCE_PER_DAY };
       if (persist) {
-        const blocked = rows.find(row => row.totalPay === null);
-        if (blocked) throw new ApiError(409, 'PAYROLL_CALCULATION_BLOCKED', `${blocked.employeeName} 缺少有效基础时薪`);
+        const blocked = rows.find(row => row.totalPay === null || row.issues.length > 0);
+        if (blocked) throw new ApiError(409, 'PAYROLL_CALCULATION_BLOCKED', `${blocked.employeeName}：${blocked.issues.join('；')}`);
         runId = randomUUID();
         const connection = await mysql.getConnection();
         try {
@@ -856,11 +909,11 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
               `INSERT INTO attendance_payroll_run_rows
                  (id, payroll_run_id, employee_reference, employee_name_snapshot, employee_no_snapshot,
                   hourly_rate, regular_minutes, overtime_minutes, regular_pay, overtime_pay, bonus,
-                  fuel_days, fuel_allowance, total_pay, calculation_issues)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  fuel_days, fuel_allowance, total_pay, calculation_issues, daily_details_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [randomUUID(), runId, row.employeeReference, row.employeeName, row.employeeNo, row.hourlyRate,
                 row.regularMinutes, row.overtimeMinutes, row.regularPay, row.overtimePay, row.bonus,
-                row.fuelDays, row.fuelAllowance, row.totalPay, JSON.stringify(row.issues)],
+                row.fuelDays, row.fuelAllowance, row.totalPay, JSON.stringify(row.issues), JSON.stringify(row.days)],
             );
           }
           await connection.commit();

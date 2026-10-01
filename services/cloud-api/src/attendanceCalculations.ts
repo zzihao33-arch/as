@@ -27,7 +27,41 @@ export type PayrollDailyInput = {
   workDate: string;
   grossMinutes: number;
   status: string;
+  clockInAt?: string | null;
+  clockOutAt?: string | null;
+  breakRule?: { id: string | null; startTime: string; endTime: string };
 };
+
+export const DEFAULT_BREAK_RULE = { id: null, startTime: '12:00', endTime: '13:00' };
+
+export type PayrollDailyCalculation = PayrollDailyInput & {
+  breakRule: typeof DEFAULT_BREAK_RULE | { id: string; startTime: string; endTime: string };
+  breakMinutes: number;
+  netMinutes: number;
+  regularMinutes: number;
+  overtimeMinutes: number;
+  regularPay: number | null;
+  overtimePay: number | null;
+};
+
+const breakClock = new Intl.DateTimeFormat('en-GB', {
+  timeZone: ATTENDANCE_TIME_ZONE, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+// Walk real minute boundaries so partial minutes and DST transitions remain correct.
+export function calculateBreakOverlap(clockIn: Date, clockOut: Date, rule: NonNullable<PayrollDailyInput['breakRule']> = DEFAULT_BREAK_RULE): number {
+  let overlapMs = 0;
+  const start = clockIn.getTime();
+  const end = clockOut.getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || Math.round((end - start) / 60_000) > MAX_SHIFT_MINUTES) return 0;
+  for (let cursor = start; cursor < end;) {
+    const next = Math.min(end, (Math.floor(cursor / 60_000) + 1) * 60_000);
+    const time = breakClock.format(new Date(cursor));
+    if (time >= rule.startTime && time < rule.endTime) overlapMs += next - cursor;
+    cursor = next;
+  }
+  return Math.round(overlapMs / 60_000);
+}
 
 export type PayrollCalculationInput = {
   employeeReference: string;
@@ -39,7 +73,8 @@ export type PayrollCalculationInput = {
   days: PayrollDailyInput[];
 };
 
-export type PayrollCalculationRow = PayrollCalculationInput & {
+export type PayrollCalculationRow = Omit<PayrollCalculationInput, 'days'> & {
+  days: PayrollDailyCalculation[];
   regularMinutes: number;
   overtimeMinutes: number;
   regularPay: number | null;
@@ -113,7 +148,7 @@ export function calculateDailyAttendance(input: AttendanceDailyInput): Attendanc
   return {
     status: 'COMPLETE',
     grossMinutes,
-    netMinutes: Math.max(0, grossMinutes - LUNCH_DEDUCTION_MINUTES),
+    netMinutes: Math.max(0, grossMinutes - calculateBreakOverlap(input.clockInAt, input.clockOutAt)),
     isLate,
     isEarlyLeave,
   };
@@ -130,13 +165,41 @@ function mondayOf(workDate: string): string {
 export function calculatePayrollRow(input: PayrollCalculationInput): PayrollCalculationRow {
   const weekly = new Map<string, number>();
   const issues: string[] = [];
-  for (const day of input.days) {
+  const validRate = input.hourlyRate != null && Number.isFinite(input.hourlyRate) && input.hourlyRate > 0;
+  let runningRegular = 0;
+  let runningOvertime = 0;
+  const days: PayrollDailyCalculation[] = [];
+  for (const day of [...input.days].sort((a, b) => a.workDate.localeCompare(b.workDate))) {
+    const detail: PayrollDailyCalculation = { ...day, breakRule: day.breakRule ?? DEFAULT_BREAK_RULE,
+      breakMinutes: 0, netMinutes: 0, regularMinutes: 0, overtimeMinutes: 0,
+      regularPay: validRate ? 0 : null, overtimePay: validRate ? 0 : null };
+    days.push(detail);
     if (day.status !== 'COMPLETE') {
       issues.push(`${day.workDate} 考勤状态为 ${day.status}`);
       continue;
     }
+    const start = new Date(day.clockInAt ?? '');
+    const end = new Date(day.clockOutAt ?? '');
+    const elapsed = Math.round((end.getTime() - start.getTime()) / 60_000);
+    if (!Number.isFinite(elapsed) || elapsed <= 0 || elapsed > MAX_SHIFT_MINUTES) {
+      issues.push(`${day.workDate} 上下班时间缺失或无效`);
+      continue;
+    }
+    detail.grossMinutes = elapsed;
+    detail.breakMinutes = calculateBreakOverlap(start, end, detail.breakRule);
+    detail.netMinutes = Math.max(0, elapsed - detail.breakMinutes);
     const week = mondayOf(day.workDate);
-    weekly.set(week, (weekly.get(week) ?? 0) + Math.max(0, Math.round(day.grossMinutes)));
+    const previous = weekly.get(week) ?? 0;
+    detail.regularMinutes = Math.min(detail.netMinutes, Math.max(0, WEEKLY_REGULAR_MINUTES - previous));
+    detail.overtimeMinutes = detail.netMinutes - detail.regularMinutes;
+    // Allocate rounding differences cumulatively so daily wages reconcile to the summary.
+    if (validRate) {
+      detail.regularPay = money(money((runningRegular + detail.regularMinutes) / 60 * input.hourlyRate!) - money(runningRegular / 60 * input.hourlyRate!));
+      detail.overtimePay = money(money((runningOvertime + detail.overtimeMinutes) / 60 * input.hourlyRate! * OVERTIME_MULTIPLIER) - money(runningOvertime / 60 * input.hourlyRate! * OVERTIME_MULTIPLIER));
+    }
+    runningRegular += detail.regularMinutes;
+    runningOvertime += detail.overtimeMinutes;
+    weekly.set(week, previous + detail.netMinutes);
   }
   let regularMinutes = 0;
   let overtimeMinutes = 0;
@@ -146,12 +209,12 @@ export function calculatePayrollRow(input: PayrollCalculationInput): PayrollCalc
     return { week, minutes };
   });
   const fuelAllowance = money(Math.max(0, input.fuelDays) * FUEL_ALLOWANCE_PER_DAY);
-  const validRate = input.hourlyRate != null && Number.isFinite(input.hourlyRate) && input.hourlyRate > 0;
   if (!validRate) issues.push('缺少有效基础时薪');
   const regularPay = validRate ? money(regularMinutes / 60 * input.hourlyRate!) : null;
   const overtimePay = validRate ? money(overtimeMinutes / 60 * input.hourlyRate! * OVERTIME_MULTIPLIER) : null;
   return {
     ...input,
+    days,
     regularMinutes,
     overtimeMinutes,
     regularPay,

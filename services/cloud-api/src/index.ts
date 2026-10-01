@@ -875,6 +875,16 @@ warehouseRouter.put('/attendance/shift-rules', warehouseBoundary.session, requir
   catch (error) { next(error); }
 });
 
+warehouseRouter.get('/attendance/payroll-break-rules', warehouseBoundary.session, requireWarehousePermission('payroll.manage'), requireWarehouseWorkspace, async (req, res, next) => {
+  try { res.json({ data: await attendanceOperations.listPayrollBreakRules(req.warehouseSession!), requestId: req.requestId }); }
+  catch (error) { next(error); }
+});
+
+warehouseRouter.put('/attendance/payroll-break-rules', warehouseBoundary.session, requireWarehousePermission('payroll.manage'), requireWarehouseWorkspace, async (req, res, next) => {
+  try { res.json({ data: await attendanceOperations.savePayrollBreakRule(req.warehouseSession!, req.body ?? {}), requestId: req.requestId }); }
+  catch (error) { next(error); }
+});
+
 warehouseRouter.get('/attendance/payroll-preview', warehouseBoundary.session, requireWarehousePermission('payroll.view'), requireWarehouseWorkspace, async (req, res, next) => {
   try {
     res.json({ data: await attendanceOperations.calculatePayroll(req.warehouseSession!, {
