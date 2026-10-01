@@ -659,7 +659,8 @@ export function createAttendanceOperations(dependencies: { mysql: Pool; storage:
       );
       const referenceTime = dailyRows[0]?.updated_at ?? new Date(`${workDate}T23:59:59-04:00`);
       const expiresAt = new Date(referenceTime.getTime() + 72 * 60 * 60_000);
-      if (expiresAt.getTime() < Date.now()) throw new ApiError(409, 'APPEAL_WINDOW_EXPIRED', '该考勤记录已超过72小时申诉期限');
+      // Keep the legacy expires_at field for database/API compatibility only.
+      // Appeals have no submission deadline; never use it to reject a request.
       const id = randomUUID();
       await mysql.execute(
         `INSERT INTO attendance_appeals

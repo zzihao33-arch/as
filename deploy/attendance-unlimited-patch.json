@@ -1,0 +1,19 @@
+{
+  "base": "5ec3d6895034cae5e0797ee43e3c628d4d3a6434",
+  "files": [
+    {
+      "file": "src/attendanceOperations.ts",
+      "before": "4d621171d664756751336294d58e7839310b12c9be3cd42013314ab70bc28f49",
+      "after": "ca05e2981106fb500c002b27f7891a797d4aca5fbc16093022832eab9a957aff",
+      "oldBlock": "      if (expiresAt.getTime() < Date.now()) throw new ApiError(409, 'APPEAL_WINDOW_EXPIRED', '该考勤记录已超过72小时申诉期限');\n",
+      "newBlock": "      // Keep the legacy expires_at field for database/API compatibility only.\n      // Appeals have no submission deadline; never use it to reject a request.\n"
+    },
+    {
+      "file": "dist/attendanceOperations.js",
+      "before": "ffd9cd5581a6bc468f45db4da49af8f28a860c27aa283b98444c08bd37ef97fa",
+      "after": "c299e96b72f7904bb470093054fd49d22a7e3962c2ef1f13ea6572759dc39c33",
+      "oldBlock": "            if (expiresAt.getTime() < Date.now())\n                throw new ApiError(409, 'APPEAL_WINDOW_EXPIRED', '该考勤记录已超过72小时申诉期限');\n",
+      "newBlock": "            // Keep the legacy expires_at field for database/API compatibility only.\n            // Appeals have no submission deadline; never use it to reject a request.\n"
+    }
+  ]
+}
