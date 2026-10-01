@@ -40,6 +40,9 @@ assert.ok(process.env.DBA_PASSWORD, 'DBA_PASSWORD must be supplied locally; it i
 const require = createRequire(path.join(app, 'package.json'));
 const mysql = require('mysql2/promise');
 const { config } = await import(pathToFileURL(path.join(app, 'dist/config.js')));
+assert.equal(config.mysql.host, '127.0.0.1');
+assert.equal(config.mysql.database, 'cmhub');
+assert.equal(config.mysql.user, 'cmhub_api');
 const db = await mysql.createConnection({ ...config.mysql, user: 'root', password: process.env.DBA_PASSWORD, timezone: 'Z' });
 delete process.env.DBA_PASSWORD;
 const backup = fs.mkdtempSync('/root/payroll-rest-backup-');
@@ -64,8 +67,9 @@ try {
     for (const statement of statements) await db.query(statement);
     await db.execute('INSERT INTO schema_migrations (filename,sha256) VALUES (?,?)', [migration.filename, migration.sha256]);
   }
-  // Database-scoped grants already cover the new table. Table-scoped accounts
-  // must receive the same SELECT/INSERT/UPDATE privileges before this check.
+  // Production uses table-scoped privileges. Give the existing application
+  // account only the operations required on this new payroll configuration table.
+  await db.query("GRANT SELECT, INSERT, UPDATE ON cmhub.attendance_payroll_break_rules TO 'cmhub_api'@'127.0.0.1'");
   const runtime = await mysql.createConnection({ ...config.mysql, timezone: 'Z' });
   try {
     await runtime.query('SELECT id FROM attendance_payroll_break_rules LIMIT 0');
